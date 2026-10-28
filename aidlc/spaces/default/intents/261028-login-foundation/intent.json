@@ -4,7 +4,7 @@
   "branch": "codex/login-foundation",
   "baseSha": "962554668d12d1e36667b8073411152493dcfec9",
   "state": "frozen",
-  "frozenAt": "2026-10-28T15:16:01Z",
+  "frozenAt": "2026-10-28T15:18:15Z",
   "implementationPlanSha256": "67abbd48c9c0c627ab6676cda591ca2f14afcc6716c17536f88bc745bfb67f71",
   "approvedIssueSha256": "4f024a4d7b6713b981e32cc0fd1f345d661b3d0e97397a2dce350e79e665e6f7",
   "approvalEvidence": "approvals.json",
@@ -53,6 +53,11 @@
       "state": "reopened-and-frozen",
       "recordedAt": "2026-10-28T15:16:01Z",
       "reason": "c597449の再レビューでCIのブラウザ保存先とQA探索先の不一致を確認。job共通のPLAYWRIGHT_BROWSERS_PATHでinstall/QAを一致。"
+    },
+    {
+      "state": "reopened-and-frozen",
+      "recordedAt": "2026-10-28T15:18:15Z",
+      "reason": "job-level envで使えないrunner contextをactionlintで確認し、github.workspaceへ変更。修正版CIはactionlint成功。"
     }
   ],
   "priorIndependentReview": {
@@ -76,5 +81,11 @@
     "sha": "c5974496609a8636b384d698625844163bd732ae",
     "severity": "P2",
     "resolution": "CI jobでPLAYWRIGHT_BROWSERS_PATHを共通指定。新しいSHAの再レビュー待ち。"
+  },
+  "ciSyntaxValidation": {
+    "tool": "actionlint 1.7.7",
+    "integrity": "公式GitHub releaseのchecksumsで検証済み",
+    "result": "passed",
+    "previousJobRunnerContext": "rejected by actionlint, corrected to github.workspace"
   }
 }
