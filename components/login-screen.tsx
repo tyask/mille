@@ -1,7 +1,7 @@
 "use client";
 
 import { signIn } from "next-auth/react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageShell } from "./page-shell";
 
 type AuthMode = "google" | "test" | "disabled";
@@ -10,6 +10,16 @@ export function LoginScreen({ mode, error }: { mode: AuthMode; error?: string })
   const [pending, setPending] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const message = loginError ?? (error ? "ログインできませんでした。利用できるアカウントを確認し、もう一度お試しください。" : null);
+
+  useEffect(() => {
+    function resetAfterHistoryRestore(event: PageTransitionEvent) {
+      if (!event.persisted) return;
+      setPending(null);
+      setLoginError(null);
+    }
+    window.addEventListener("pageshow", resetAfterHistoryRestore);
+    return () => window.removeEventListener("pageshow", resetAfterHistoryRestore);
+  }, []);
 
   async function login(testUserKey?: "user-a" | "user-b") {
     if (pending) return;

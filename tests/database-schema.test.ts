@@ -31,7 +31,7 @@ test("initialization refuses an existing foreign database and does not leave Mil
   assert.equal((await database.query<{ marker: string | null }>("SELECT to_regclass('public.mille_environment')::text AS marker")).rows[0].marker, null);
 });
 
-test("wrong marker or modified migration checksum refuses setup, registration and seed", async t => {
+test("wrong marker refuses setup, registration and seed; a modified checksum refuses migration", async t => {
   const database = new PGlite(); t.after(() => database.close());
   await database.exec(migrationSql(preview, true));
   const other: DatabaseConfiguration = { ...preview, environmentId: "another-preview" };

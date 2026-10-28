@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { createServer } from "node:net";
 import { test } from "node:test";
-import { assertCloudStartupAllowed, assertPortAvailable, cloudChildEnvironment, cloudPort, isolatedEnvironment } from "../scripts/cloud/dev";
+import { assertCloudStartupAllowed, assertPortAvailable, cloudChildEnvironment, cloudPort, isolatedEnvironment, rootDirectory } from "../scripts/cloud/dev";
 import { previewOrigin, scopedProtectionHeaders, sourceUnchanged } from "../scripts/cloud/verify";
 
 test("Cloud rejects hosted/production execution before starting a database", () => {
@@ -87,4 +88,24 @@ test("A passing proof requires unchanged SHA, branch and clean source on both si
   assert.equal(sourceUnchanged({ ...before, clean: false }, before), false);
   assert.equal(sourceUnchanged(before, { ...before, clean: false }), false);
   assert.equal(sourceUnchanged(null, before), false);
+});
+
+test("Fresh QA processes resolve Chromium from the setup cache and respect an explicit cache override", () => {
+  const override = mkdtempSync(join(tmpdir(), "mille browser cache "));
+  try {
+    for (const configured of [undefined, override]) {
+      const environment = isolatedEnvironment(process.env);
+      if (configured === undefined) delete environment.PLAYWRIGHT_BROWSERS_PATH;
+      else environment.PLAYWRIGHT_BROWSERS_PATH = configured;
+      const output = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+        await import('./scripts/cloud/verify.ts');
+        const { chromium } = await import('playwright');
+        console.log(JSON.stringify({ configured: process.env.PLAYWRIGHT_BROWSERS_PATH, executable: chromium.executablePath() }));
+      `], { cwd: rootDirectory, env: environment, encoding: "utf8", timeout: 15_000 });
+      const actual = JSON.parse(output.trim()) as { configured: string; executable: string };
+      const expected = configured ?? resolve(rootDirectory, "../.cache/ms-playwright");
+      assert.equal(actual.configured, expected);
+      assert.ok(actual.executable.startsWith(expected + sep), actual.executable);
+    }
+  } finally { rmSync(override, { recursive: true, force: true }); }
 });

@@ -3,9 +3,13 @@ import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { TEST_USERS } from "../../lib/shared/test-users";
 import { CloudStartupError, cloudPort, isolatedEnvironment, rootDirectory, startCloudServer, type CloudServer } from "./dev";
+
+// Playwright resolves its executable registry on import, before launch({ env }) applies.
+// Keep this process's lookup aligned with setup:cloud and preserve an explicit override.
+process.env.PLAYWRIGHT_BROWSERS_PATH ??= resolve(rootDirectory, "../.cache/ms-playwright");
 
 const executeFile = promisify(execFile);
 type Source = { sha: string; branch: string; clean: boolean };
@@ -110,6 +114,7 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
     const origin = proof.target.origin;
     const protection = proof.target.kind === "preview" ? process.env.VERCEL_AUTOMATION_BYPASS_SECRET : undefined;
     stage = "launch";
+    const { chromium } = await import("playwright");
     browser = await chromium.launch({ headless: true, env: isolatedEnvironment(process.env) });
     proof.resources.browsers = 1; proof.environment.chromium = browser.version();
     for (const mobile of [false, true]) {
