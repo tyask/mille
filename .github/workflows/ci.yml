@@ -12,6 +12,9 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/mille-playwright
+      NEXT_TELEMETRY_DISABLED: "1"
     steps:
       - uses: actions/checkout@v4
         with:
