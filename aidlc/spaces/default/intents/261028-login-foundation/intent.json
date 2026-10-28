@@ -1,0 +1,41 @@
+{
+  "id": "261028-login-foundation",
+  "issue": "https://github.com/tyask/mille/issues/1",
+  "branch": "codex/login-foundation",
+  "baseSha": "962554668d12d1e36667b8073411152493dcfec9",
+  "state": "frozen",
+  "frozenAt": "2026-10-28T15:08:48Z",
+  "implementationPlanSha256": "67abbd48c9c0c627ab6676cda591ca2f14afcc6716c17536f88bc745bfb67f71",
+  "approvedIssueSha256": "4f024a4d7b6713b981e32cc0fd1f345d661b3d0e97397a2dce350e79e665e6f7",
+  "approvalEvidence": "approvals.json",
+  "selfReview": {
+    "complete": true,
+    "corrections": [
+      "運用SQLのドル区切りをデータから分離",
+      "ローカルDB起動失敗時のcleanup",
+      "ブラウザ履歴復元時のセッション再確認"
+    ]
+  },
+  "preCommitValidation": {
+    "npmCi": "passed",
+    "lint": "passed",
+    "typecheck": "passed",
+    "tests": {
+      "passed": 36,
+      "failed": 0,
+      "skipped": 0
+    },
+    "build": "passed before final commit",
+    "httpAuthSmoke": "passed A/B login/isolation/logout",
+    "productionTestAuthHttpGuard": "passed"
+  },
+  "remaining": [
+    "別Agentレビュー",
+    "最終SHAでの再検証",
+    "公式Chromium配布先の通信許可とPC/mobileブラウザQA",
+    "親側の専用DBと正式Preview",
+    "実Google OAuth設定と本人確認",
+    "draft PRと現在HEADのCI・検証証拠照合"
+  ],
+  "engine": "Cakeの手順を踏襲した記録。公式AI-DLC engineのreceiptではない。"
+}

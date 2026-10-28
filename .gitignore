@@ -1,0 +1,11 @@
+node_modules/
+.next/
+out/
+.vercel/
+.env*
+!.env.example
+.mille/
+*.tsbuildinfo
+next-env.d.ts
+playwright-report/
+test-results/
