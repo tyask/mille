@@ -45,6 +45,7 @@ Preview seed は重複登録や停止状態の解除をせず、Production で�
 ## 最終検証・初回 Preview
 
 最終 SHA と clean 状態を前後で照合し、check:node、lint、typecheck、test、build、qa:cloud を行う。
+依存更新時は `npm run audit:dependencies` も確認する。CI は全依存の high／critical を検出すると失敗する。[監査記録](dependency-security.md)も参照する。
 PC/mobile × A/B でログイン・再読込・本人表示・ログアウト・未認証拒否を確認する。
 無効化後の拒否・メール検証・mode・redirect・Production のテスト認証禁止を回帰テストする。
 初回 PR は main に未導入の管理 Workflow に依存せず、承認済み正規 CLI／API で専用 Preview を用意する。

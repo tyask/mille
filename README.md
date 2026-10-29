@@ -3,7 +3,7 @@
 毎日の献立を考えるアプリの最初の基盤です。現在は Google ログイン、ログアウト、認証済みホームのみを対象とします。
 ワークスペース、写真解析、栄養計算、献立提案は未実装です。将来は献立提案を最優先に開発します。
 
-Node.js **24.19.0** / Next.js **16.2.12** / React **19.2.8** / TypeScript **6.0.3** /
+Node.js **24.19.0** / Next.js **16.4.3** / React **19.2.8** / TypeScript **6.0.3** /
 Auth.js **5.0.0-beta.32** / Neon PostgreSQL / Vercel。
 
 ## ローカルで試す
@@ -23,6 +23,7 @@ npm run dev:cloud
 
 ```bash
 npm run check:node
+npm run audit:dependencies
 npm run lint
 npm run typecheck
 npm test

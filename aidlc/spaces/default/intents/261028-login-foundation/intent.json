@@ -4,7 +4,7 @@
   "branch": "codex/login-foundation",
   "baseSha": "962554668d12d1e36667b8073411152493dcfec9",
   "state": "frozen",
-  "frozenAt": "2026-10-28T15:18:15Z",
+  "frozenAt": "2026-10-29T10:32:34Z",
   "implementationPlanSha256": "67abbd48c9c0c627ab6676cda591ca2f14afcc6716c17536f88bc745bfb67f71",
   "approvedIssueSha256": "4f024a4d7b6713b981e32cc0fd1f345d661b3d0e97397a2dce350e79e665e6f7",
   "approvalEvidence": "approvals.json",
@@ -25,17 +25,17 @@
       "failed": 0,
       "skipped": 0
     },
-    "build": "passed before final commit",
+    "build": "Next.js 16.4.3 passed before final commit",
     "httpAuthSmoke": "passed A/B login/isolation/logout",
-    "productionTestAuthHttpGuard": "passed"
+    "productionTestAuthHttpGuard": "passed",
+    "dependencyAudit": "all/runtime 0"
   },
   "remaining": [
-    "別Agentレビュー",
-    "最終SHAでの再検証",
-    "公式Chromium配布先の通信許可とPC/mobileブラウザQA",
-    "親側の専用DBと正式Preview",
+    "依存修正commitの独立レビューと最終SHA検証",
+    "現在HEADのGitHub CI（ブラウザQA含む）の確認",
+    "正式Previewを新しいSHAで再配置して検証（親側）",
     "実Google OAuth設定と本人確認",
-    "draft PRと現在HEADのCI・検証証拠照合"
+    "Cloud内ブラウザQAは配布先403のため未実施、再試行しない"
   ],
   "engine": "Cakeの手順を踏襲した記録。公式AI-DLC engineのreceiptではない。",
   "revisionHistory": [
@@ -58,6 +58,11 @@
       "state": "reopened-and-frozen",
       "recordedAt": "2026-10-28T15:18:15Z",
       "reason": "job-level envで使えないrunner contextをactionlintで確認し、github.workspaceへ変更。修正版CIはactionlint成功。"
+    },
+    {
+      "state": "reopened-and-frozen",
+      "recordedAt": "2026-10-29T10:32:34Z",
+      "reason": "Vercel installでcritical1/high2を確認したため、親から明示依頼された必要最小限の依存修正。Next/sharp/ZodとNext同版ESLint設定・lockfileを更新し、CI監査を追加。"
     }
   ],
   "priorIndependentReview": {
@@ -87,5 +92,33 @@
     "integrity": "公式GitHub releaseのchecksumsで検証済み",
     "result": "passed",
     "previousJobRunnerContext": "rejected by actionlint, corrected to github.workspace"
+  },
+  "securityMaintenance": {
+    "authorization": "親タスクから依存監査、必要最小限の修正、lint/型/テスト/buildとCI確認、既存ブランチpushを明示依頼。merge/provider操作は対象外。",
+    "baseSha": "74f59c3ec0cc72ab38f83d091bd971eb1736fb53",
+    "before": {
+      "critical": 1,
+      "high": 2,
+      "runtimePackages": [
+        "next@16.2.12",
+        "sharp@0.35.3",
+        "zod@4.4.3"
+      ]
+    },
+    "updated": [
+      "next@16.4.3",
+      "sharp@0.35.5",
+      "zod@4.6.7",
+      "eslint-config-next@16.4.3 (dev版整合)"
+    ],
+    "auditAfter": {
+      "all": 0,
+      "runtime": 0
+    },
+    "documentation": "docs/dependency-security.md",
+    "lockfileSha256": "fbc32990161878e40609545f51ef87757a38a36cf86ec223104e2f1bce66e53a",
+    "npmCi": "passed",
+    "chromiumDownload": "禁止されたため再試行なし",
+    "providerOperations": "なし"
   }
 }
