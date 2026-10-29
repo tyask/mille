@@ -12,6 +12,8 @@
     "audit:dependencies": "npm audit --audit-level=high",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "node --no-wasm-code-gc --import tsx --test --test-concurrency=2 tests/*.test.ts",
+    "task:start": "node scripts/task/start.mjs",
+    "deps:sync": "node scripts/cloud/dependencies.mjs install",
     "setup:cloud": "node scripts/cloud/setup.mjs",
     "dev:cloud": "node --no-wasm-code-gc --import tsx scripts/cloud/dev.ts",
     "qa:cloud": "node --no-wasm-code-gc --import tsx scripts/cloud/verify.ts",

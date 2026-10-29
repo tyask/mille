@@ -23,8 +23,22 @@ Issue は `目的・背景`、`対象範囲・対象外`、`受入条件`、`関
 
 ## 実行環境と検証
 
-正本は `.node-version`。依存は `npm ci`。[開発手順](docs/development.md) を先に読む。
+正本は `.node-version`。[開発手順](docs/development.md) を先に読む。
 Cloud は隔離済みなので既存 checkout を使い、明示依頼なしに重複 worktree を作らない。
+作業開始時は status・branch・HEAD を確認し、`npm run task:start -- new codex/<name>` または
+`npm run task:start -- continue <expectedbranch>` を実行する。計画と保存済み Issue の両承認前は
+`continue` による調査・状態報告までとし、新規ブランチ作成や実装へ進まない。
+新規作業は clean かつ現在 HEAD が fetch 済み `origin/main` の祖先である場合に限り、
+その最新 SHA から既存 checkout に新しいブランチを作る。local main・旧ブランチ・ignored ファイルを保持する。
+継続は期待ブランチとの一致を必須にし、Git の変更は fetch のみにする。dirty・未公開コミット・
+main や自身の remote branch との差分を報告し、自動 pull / reset / stash / rebase をしない。
+fetch 失敗時は最新性を確認済みと扱わない。CLI の終了コードは `0` が確認条件成立、`2` が要対応、
+`1` が失敗・拒否。`0` は実装承認やアプリ動作検証を代替しない。
+依存導入記録が unknown / stale なら、両承認後に `npm run deps:sync` で `npm ci` による再導入を行い、
+同じブランチを `continue` で再確認する。`new` がブランチを作成済みなら、依存不足でも保持し、同名の `new` を繰り返さない。
+`deps:sync` は Chromium を取得しない。`setup:cloud` は依存・Chromium の準備だけを行い、Git を同期しない。
+Cloud のバックグラウンド repository refresh と、既存タスクの状態保持・開始時点の最新性確認を区別する。
+Cloud 起動指示の適用用本文と設定反映手順は [cloud-start-skill.md](docs/cloud-start-skill.md) を参照する。
 ローカルは `dev:cloud` / `qa:cloud` で PGlite と架空 A/B のみを使う。Cake の DB・実利用者・資格情報を流用しない。
 ローカル QA、正式 Neon／Vercel Preview、実 Google OAuth の結果を区別する。
 

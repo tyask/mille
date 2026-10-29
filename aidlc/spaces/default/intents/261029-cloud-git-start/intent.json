@@ -1,0 +1,49 @@
+{
+  "id": "261029-cloud-git-start",
+  "issue": "https://github.com/tyask/mille/issues/5",
+  "branch": "codex/cloud-git-start",
+  "baseSha": "58f7fbd1ef80c482ffd1b5c27c2cab11ccf8309f",
+  "state": "frozen",
+  "approvedIssueSha256": "026462e001196466ee089009ab1841925894844a7307586a3d10ac3a61afc18f",
+  "approvalEvidence": "approvals.json",
+  "engine": "Cakeの手順を踏襲した記録。公式AI-DLC engineのreceiptではない。",
+  "cloudConfiguration": {
+    "applied": false,
+    "reason": "この既存タスクでは旧公開版由来のdraft revision 2しか読めない。最新公開設定を保持して更新できると確認できず、設定変更・公開はしない。適用用start skillをrepoに用意する。"
+  },
+  "frozenAt": "2026-10-29T13:58:26.938714+00:00",
+  "implementationPlanSha256": "d71f554cb441874e71d4921dfcde300f74980db4f451396d713a4d7141fd40a8",
+  "selfReview": {
+    "complete": true,
+    "checks": [
+      "new/continueの変更範囲と明示refspecの照合",
+      "ignored衝突を拒否しlocal tag pruningを無効化",
+      "Git失敗stderrのURL/資格情報を表示しない",
+      "依存readyを標準fixtureにして各Git条件を単独検証",
+      "アプリ/DB/provider/並行workspaceコードの変更なし",
+      "旧Cloud draftは保存せず未反映を明示"
+    ]
+  },
+  "preCommitValidation": {
+    "isolatedGitTests": {
+      "passed": 45,
+      "failed": 0
+    },
+    "dependencyTests": {
+      "passed": 9,
+      "failed": 0
+    },
+    "depsSyncNpmCi": "passed; audit reported 0 vulnerabilities",
+    "dependencyReceipt": "ready",
+    "entryPointContinue": "dirty保持・exit2・HEAD/branch不変を実環境確認",
+    "entryPointNew": "dirty拒否・branch新設なしを実環境確認",
+    "lint": "passed before final test additions; final SHA validation pending",
+    "typecheck": "passed before final test additions; final SHA validation pending"
+  },
+  "remaining": [
+    "最終commitの独立レビュー",
+    "最終SHAでlint/typecheck/full test/build",
+    "Draft PRと同一SHAのCI確認",
+    "最新公開Cloud設定へのstart_skill統合・保存・公開は未反映、別操作"
+  ]
+}
