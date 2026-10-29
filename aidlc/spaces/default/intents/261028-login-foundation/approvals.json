@@ -1,0 +1,27 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/1",
+  "sourceThreadId": "01a172ea-5a94-7027-a275-a0a9c79c50f1",
+  "planApproval": {
+    "actor": "利用者",
+    "presentedText": "この計画で進めてよいですか？ 承認後、Cakeの手順どおりIssueに保存して本文とURLを提示し、その確認後に実装を開始します。",
+    "reply": "お願いします。",
+    "userMessageTime": "2026-10-28T14:47:00Z",
+    "source": "親タスクから共有された承認証拠。調査レポートのログイン専用計画を対象とする。",
+    "userMessageTimePrecision": "minute"
+  },
+  "issueApproval": {
+    "actor": "利用者",
+    "presentedAt": "2026-10-28T14:49:00Z",
+    "presentedText": "Mille Issue #1：ログイン基盤と専用Preview環境の初期構築 に保存しました。リンク先に実装範囲・受入条件・検証手順の全文を記載しています。主な内容は、Googleログイン／ログアウト、事前登録ユーザー限定の利用、Mille専用DB・Vercel環境、Preview専用A/Bユーザー、本番でのテスト認証禁止です。ワークスペース機能は含めていません。このIssue本文で実装を開始してよいですか？",
+    "reply": "お願いします。",
+    "userMessageTime": "2026-10-28T14:51:00Z",
+    "source": "親が保存本文を再取得して同一性確認後、このタスクへ原文と承認証拠を共有。",
+    "userMessageTimePrecision": "minute"
+  },
+  "recordedAt": "2026-10-28T15:06:24Z",
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sha256": "4f024a4d7b6713b981e32cc0fd1f345d661b3d0e97397a2dce350e79e665e6f7",
+    "source": "親が承認時点の保存本文と同一性を確認して共有した原文。改行はLF。"
+  }
+}
