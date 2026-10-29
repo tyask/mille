@@ -11,7 +11,7 @@
     "applied": false,
     "reason": "この既存タスクでは旧公開版由来のdraft revision 2しか読めない。最新公開設定を保持して更新できると確認できず、設定変更・公開はしない。適用用start skillをrepoに用意する。"
   },
-  "frozenAt": "2026-10-29T13:58:26.938714+00:00",
+  "frozenAt": "2026-10-29T14:03:40.097460+00:00",
   "implementationPlanSha256": "d71f554cb441874e71d4921dfcde300f74980db4f451396d713a4d7141fd40a8",
   "selfReview": {
     "complete": true,
@@ -21,12 +21,13 @@
       "Git失敗stderrのURL/資格情報を表示しない",
       "依存readyを標準fixtureにして各Git条件を単独検証",
       "アプリ/DB/provider/並行workspaceコードの変更なし",
-      "旧Cloud draftは保存せず未反映を明示"
+      "旧Cloud draftは保存せず未反映を明示",
+      "WHATWG/GitのURL解釈差をraw形式限定と補正しないorigin読取で拒否"
     ]
   },
   "preCommitValidation": {
     "isolatedGitTests": {
-      "passed": 45,
+      "passed": 46,
       "failed": 0
     },
     "dependencyTests": {
@@ -45,5 +46,26 @@
     "最終SHAでlint/typecheck/full test/build",
     "Draft PRと同一SHAのCI確認",
     "最新公開Cloud設定へのstart_skill統合・保存・公開は未反映、別操作"
-  ]
+  ],
+  "revisionHistory": [
+    {
+      "state": "reopened-and-frozen",
+      "recordedAt": "2026-10-29T14:03:40.097460+00:00",
+      "baseSha": "a148e6e3e96e44428536bc95e540d2858f74bda1",
+      "reason": "独立レビューP2: WHATWGが不正なhttps: URLを補正しGitのSCP解釈と異なる対象を許可。raw形式限定と非trimのorigin検証、実Git URL取得の回帰テストで修正。"
+    }
+  ],
+  "priorFinalValidation": {
+    "sha": "a148e6e3e96e44428536bc95e540d2858f74bda1",
+    "lint": "passed",
+    "typecheck": "passed",
+    "tests": {
+      "passed": 91,
+      "failed": 0,
+      "skipped": 0
+    },
+    "build": "passed",
+    "dependencyIndependentReview": "required fixes 0",
+    "gitIndependentReview": "P2 1件を修正済み。修正commitの再レビューを行う。"
+  }
 }

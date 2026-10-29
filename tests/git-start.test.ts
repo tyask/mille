@@ -387,6 +387,21 @@ test("lookalike or credential-bearing origins are rejected before any fetch", t 
   }
 });
 
+test("malformed URL forms are rejected before Git can reinterpret their transport", t => {
+  for (const url of ["https:github.com/tyask/mille.git", "https:/github.com/tyask/mille.git",
+    "https:///github.com/tyask/mille.git", "ssh:git@github.com/tyask/mille.git",
+    "https://github.com/other/../tyask/mille.git", "https://github.com\\/tyask/mille.git",
+    " https://github.com/tyask/mille.git", "https://github.com/tyask/mille.git\t"]) {
+    const f = fixture(t), before = snapshot(f);
+    f.git(f.checkout, "remote", "set-url", "origin", url);
+    // Actual Git URL discovery, file-only transport: no network even if this guard regresses.
+    assert.throws(() => startTask({ directory: f.checkout, mode: "new", branch: "codex/refused", runGit: f.runGit }), /origin/);
+    assert.deepEqual(snapshot(f), before);
+    assert.equal(f.calls.some(args => args[0] === "fetch"), false);
+    assertNoBranch(f, "codex/refused");
+  }
+});
+
 for (const remoteBranch of [false, true]) {
   test(`new rejects an existing ${remoteBranch ? "freshly fetched remote" : "local"} branch`, t => {
     const f = fixture(t);

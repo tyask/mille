@@ -9,13 +9,10 @@ const repository = "https://github.com/tyask/mille.git";
 
 function identity(value) {
   // Never include the configured URL in errors: it could contain credentials.
-  if (/^git@github\.com:/i.test(value)) value = value.replace(/^git@github\.com:/i, "https://github.com/");
-  try {
-    const url = new URL(value);
-    if (url.hostname.toLowerCase() !== "github.com" || !["https:", "ssh:"].includes(url.protocol)
-      || url.port || url.search || url.hash || (url.protocol === "https:" && (url.username || url.password))) return null;
-    return `github.com${url.pathname.replace(/\/$/, "").replace(/\.git$/i, "").toLowerCase()}`;
-  } catch { return null; }
+  if (/[\s\\]/.test(value)) return null;
+  // Git also accepts SCP syntax. Do not let WHATWG URL correction reinterpret it as HTTPS.
+  const match = /^(?:https:\/\/github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)([a-z0-9_-]+)\/([a-z0-9._-]+?)(?:\.git)?\/?$/i.exec(value);
+  return match ? `github.com/${match[1]}/${match[2]}`.toLowerCase() : null;
 }
 
 function gitAt(root, runGit) {
@@ -33,7 +30,8 @@ function gitAt(root, runGit) {
         : `終了状態 ${result.status ?? "不明"}`;
       throw new Error(`Git ${args[0]} が失敗しました（${reason}）。既存の作業を保持して停止します。最新性は確認できていません。`);
     }
-    return { code: result.status, output: String(result.stdout ?? "").trim() };
+    const rawOutput = String(result.stdout ?? "");
+    return { code: result.status, output: rawOutput.trim(), rawOutput };
   };
 }
 
@@ -77,7 +75,7 @@ export function startTask({ directory: root = directory, mode, branch, expectedR
   if (realpathSync(git(["rev-parse", "--show-toplevel"]).output) !== realpathSync(root)) {
     throw new Error("checkout の root で実行してください。");
   }
-  const urls = git(["remote", "get-url", "--all", "origin"]).output.split(/\r?\n/);
+  const urls = git(["remote", "get-url", "--all", "origin"]).rawOutput.replace(/\r?\n$/, "").split(/\r?\n/);
   const expectedIdentity = identity(expectedRemote);
   if (urls.length !== 1 || (expectedIdentity ? identity(urls[0]) !== expectedIdentity : urls[0] !== expectedRemote)) {
     throw new Error("origin が対象の Mille リポジトリと一致しません。通信せず停止します。");
