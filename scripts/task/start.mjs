@@ -10,6 +10,8 @@ const repository = "https://github.com/tyask/mille.git";
 function identity(value) {
   // Never include the configured URL in errors: it could contain credentials.
   if (/[\s\\]/.test(value)) return null;
+  // Git treats schemes and SSH usernames as case-sensitive; only the host/repository may casefold.
+  if (!["https://", "ssh://git@", "git@"].some(prefix => value.startsWith(prefix))) return null;
   // Git also accepts SCP syntax. Do not let WHATWG URL correction reinterpret it as HTTPS.
   const match = /^(?:https:\/\/github\.com\/|ssh:\/\/git@github\.com\/|git@github\.com:)([a-z0-9_-]+)\/([a-z0-9._-]+?)(?:\.git)?\/?$/i.exec(value);
   return match ? `github.com/${match[1]}/${match[2]}`.toLowerCase() : null;

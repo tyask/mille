@@ -11,7 +11,7 @@
     "applied": false,
     "reason": "この既存タスクでは旧公開版由来のdraft revision 2しか読めない。最新公開設定を保持して更新できると確認できず、設定変更・公開はしない。適用用start skillをrepoに用意する。"
   },
-  "frozenAt": "2026-10-29T14:03:40.097460+00:00",
+  "frozenAt": "2026-10-29T14:06:44.482614+00:00",
   "implementationPlanSha256": "d71f554cb441874e71d4921dfcde300f74980db4f451396d713a4d7141fd40a8",
   "selfReview": {
     "complete": true,
@@ -22,12 +22,13 @@
       "依存readyを標準fixtureにして各Git条件を単独検証",
       "アプリ/DB/provider/並行workspaceコードの変更なし",
       "旧Cloud draftは保存せず未反映を明示",
-      "WHATWG/GitのURL解釈差をraw形式限定と補正しないorigin読取で拒否"
+      "WHATWG/GitのURL解釈差をraw形式限定と補正しないorigin読取で拒否",
+      "Gitのcase-sensitiveなscheme/SSH userとGitHubのhost/repository casefoldを区別"
     ]
   },
   "preCommitValidation": {
     "isolatedGitTests": {
-      "passed": 46,
+      "passed": 47,
       "failed": 0
     },
     "dependencyTests": {
@@ -53,6 +54,12 @@
       "recordedAt": "2026-10-29T14:03:40.097460+00:00",
       "baseSha": "a148e6e3e96e44428536bc95e540d2858f74bda1",
       "reason": "独立レビューP2: WHATWGが不正なhttps: URLを補正しGitのSCP解釈と異なる対象を許可。raw形式限定と非trimのorigin検証、実Git URL取得の回帰テストで修正。"
+    },
+    {
+      "state": "reopened-and-frozen",
+      "recordedAt": "2026-10-29T14:06:44.482614+00:00",
+      "baseSha": "c377559df544003ef67084221764172b91146b85",
+      "reason": "再レビューP2: GitはschemeとSSH userの大小文字を区別するため、prefixをcase-sensitiveに制限し別transport解釈をfetch前に拒否。回帰テスト追加。"
     }
   ],
   "priorFinalValidation": {
@@ -67,5 +74,18 @@
     "build": "passed",
     "dependencyIndependentReview": "required fixes 0",
     "gitIndependentReview": "P2 1件を修正済み。修正commitの再レビューを行う。"
+  },
+  "additionalPriorValidation": {
+    "sha": "c377559df544003ef67084221764172b91146b85",
+    "lint": "passed",
+    "typecheck": "passed",
+    "tests": {
+      "passed": 92,
+      "failed": 0,
+      "skipped": 0
+    },
+    "build": "passed",
+    "dependencyIndependentReview": "required fixes 0",
+    "gitIndependentReview": "元不正URL問題の解消を確認。scheme/user大小文字のP2を追加修正し、次commitを再レビューする。"
   }
 }

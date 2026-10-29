@@ -402,6 +402,18 @@ test("malformed URL forms are rejected before Git can reinterpret their transpor
   }
 });
 
+test("noncanonical scheme or SSH username case cannot select a different Git transport", t => {
+  for (const url of ["HTTPS://github.com/tyask/mille.git", "Https://github.com/tyask/mille.git",
+    "SSH://git@github.com/tyask/mille.git", "ssh://GIT@github.com/tyask/mille.git", "GIT@github.com:tyask/mille.git"]) {
+    const f = fixture(t), before = snapshot(f);
+    f.git(f.checkout, "remote", "set-url", "origin", url);
+    assert.throws(() => startTask({ directory: f.checkout, mode: "new", branch: "codex/refused", runGit: f.runGit }), /origin/);
+    assert.deepEqual(snapshot(f), before);
+    assert.equal(f.calls.some(args => args[0] === "fetch"), false);
+    assertNoBranch(f, "codex/refused");
+  }
+});
+
 for (const remoteBranch of [false, true]) {
   test(`new rejects an existing ${remoteBranch ? "freshly fetched remote" : "local"} branch`, t => {
     const f = fixture(t);
