@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
@@ -8,7 +9,7 @@ import type { DatabaseConfiguration } from "../lib/server/database/environment";
 const preview: DatabaseConfiguration = { mode: "hosted", url: "", host: "", environment: "preview", environmentId: "mille-preview" };
 const production: DatabaseConfiguration = { ...preview, environment: "production", environmentId: "mille-production" };
 
-test("auth schema and preview fixtures initialize atomically, repeat without changing disabled users, and contain no workspace", async t => {
+test("auth and workspace schemas initialize atomically without changing disabled users or creating workspace data", async t => {
   const database = new PGlite(); t.after(() => database.close());
   await database.exec(migrationSql(preview, true));
   await database.exec(migrationSql(preview, true));
@@ -19,8 +20,34 @@ test("auth schema and preview fixtures initialize atomically, repeat without cha
   await database.exec(seedSql(preview));
   assert.equal((await database.query<{ is_enabled: boolean }>("SELECT is_enabled FROM app_users WHERE id = $1", [rows[0].id])).rows[0].is_enabled, false);
   assert.equal((await database.query<{ count: number }>("SELECT count(*)::int AS count FROM app_users")).rows[0].count, 2);
-  assert.equal((await database.query<{ name: string | null }>("SELECT to_regclass('public.workspaces')::text AS name")).rows[0].name, null);
+  assert.equal((await database.query<{ count: number }>("SELECT count(*)::int AS count FROM workspaces")).rows[0].count, 0);
+  assert.deepEqual((await database.query<{ name: string }>("SELECT name FROM schema_migrations ORDER BY name")).rows.map(row => row.name), ["001_auth.sql", "002_workspaces.sql"]);
   await assert.rejects(database.query("INSERT INTO app_users (id,email,name) VALUES ('upper','Upper@Example.invalid','Upper')"));
+});
+
+test("upgrading the original auth-only database preserves users, disabled state, ownership and applied migration history", async t => {
+  const database = new PGlite(); t.after(() => database.close());
+  const source = readFileSync(new URL("../db/migrations/001_auth.sql", import.meta.url), "utf8");
+  const checksum = createHash("sha256").update(source).digest("hex");
+  await database.exec(source);
+  await database.query("INSERT INTO mille_environment (project,environment,environment_id) VALUES ('tyask/mille','preview',$1)", [preview.environmentId]);
+  await database.exec("CREATE TABLE schema_migrations (name text PRIMARY KEY,sha256 text NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())");
+  await database.query("INSERT INTO schema_migrations (name,sha256) VALUES ('001_auth.sql',$1)", [checksum]);
+  await database.exec(registerUserSql(preview, "existing-user", "existing@example.invalid", "Existing"));
+  await database.exec(disableUserSql(preview, "existing-user"));
+  const users = (await database.query("SELECT * FROM app_users")).rows;
+  const marker = (await database.query("SELECT * FROM mille_environment")).rows;
+  const history = (await database.query("SELECT * FROM schema_migrations WHERE name = '001_auth.sql'")).rows;
+  await database.exec(migrationSql(preview));
+  assert.deepEqual((await database.query("SELECT * FROM app_users")).rows, users);
+  assert.deepEqual((await database.query("SELECT * FROM mille_environment")).rows, marker);
+  assert.deepEqual((await database.query("SELECT * FROM schema_migrations WHERE name = '001_auth.sql'")).rows, history);
+  const upgraded = (await database.query("SELECT * FROM schema_migrations ORDER BY name")).rows;
+  assert.equal(upgraded.length, 2);
+  await database.exec(migrationSql(preview));
+  assert.deepEqual((await database.query("SELECT * FROM schema_migrations ORDER BY name")).rows, upgraded);
+  await database.query("UPDATE schema_migrations SET sha256 = 'tampered' WHERE name = '002_workspaces.sql'");
+  await assert.rejects(database.exec(migrationSql(preview)), /checksum mismatch/);
 });
 
 test("initialization refuses an existing foreign database and does not leave Mille schema behind", async t => {

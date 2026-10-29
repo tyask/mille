@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import type { DatabaseConfiguration } from "../../lib/server/database/environment";
 import { TEST_USERS } from "../../lib/shared/test-users";
 
@@ -22,10 +22,17 @@ export function ownershipGuard(configuration: DatabaseConfiguration): string {
 }
 
 export function migrationSql(configuration: DatabaseConfiguration, initialize = false): string {
-  const source = readFileSync(new URL("../../db/migrations/001_auth.sql", import.meta.url), "utf8");
-  const checksum = createHash("sha256").update(source).digest("hex");
-  return `-- Mille auth schema. Verify the dedicated project, database and expected host before executing.
-DO $mille_migration$ BEGIN
+  const directory = new URL("../../db/migrations/", import.meta.url);
+  const migrations = readdirSync(directory).filter(name => /^\d{3}_[a-z0-9_]+\.sql$/.test(name)).sort().map(name => {
+    const source = readFileSync(new URL(name, directory), "utf8");
+    return { name, source, checksum: createHash("sha256").update(source).digest("hex") };
+  });
+  const first = migrations[0];
+  if (first?.name !== "001_auth.sql" || new Set(migrations.map(migration => migration.name.slice(0, 3))).size !== migrations.length) {
+    throw new Error("Migration sequence is invalid");
+  }
+  return `-- Mille schema. Verify the dedicated project, database and expected host before executing.
+${proceduralBlock("mille_migration", `BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('mille:schema'));
   IF to_regclass('public.mille_environment') IS NULL THEN
     IF NOT ${initialize ? "true" : "false"} THEN RAISE EXCEPTION 'Explicit empty-database initialization is required'; END IF;
@@ -34,19 +41,29 @@ DO $mille_migration$ BEGIN
         AND c.relkind IN ('r','p','v','m','S','f')) THEN
       RAISE EXCEPTION 'Mille initialization requires an empty dedicated database';
     END IF;
-    ${source}
+    EXECUTE ${sqlLiteral(first.source)};
     INSERT INTO mille_environment (singleton,project,environment,environment_id)
       VALUES (true,'tyask/mille',${sqlLiteral(configuration.environment)},${sqlLiteral(configuration.environmentId)});
     CREATE TABLE schema_migrations (name text PRIMARY KEY, sha256 text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now());
-    INSERT INTO schema_migrations (name,sha256) VALUES ('001_auth.sql',${sqlLiteral(checksum)});
+    INSERT INTO schema_migrations (name,sha256) VALUES ('001_auth.sql',${sqlLiteral(first.checksum)});
   ELSE
     ${ownershipGuard(configuration)}
     IF to_regclass('public.schema_migrations') IS NULL OR NOT EXISTS
-      (SELECT 1 FROM schema_migrations WHERE name = '001_auth.sql' AND sha256 = ${sqlLiteral(checksum)}) THEN
+      (SELECT 1 FROM schema_migrations WHERE name = '001_auth.sql' AND sha256 = ${sqlLiteral(first.checksum)}) THEN
       RAISE EXCEPTION 'Mille migration history or checksum mismatch';
     END IF;
   END IF;
-END; $mille_migration$;\n`;
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name NOT IN (${migrations.map(migration => sqlLiteral(migration.name)).join(", ")})) THEN
+    RAISE EXCEPTION 'Mille migration history or checksum mismatch';
+  END IF;
+${migrations.map(migration => `  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = ${sqlLiteral(migration.name)} AND sha256 <> ${sqlLiteral(migration.checksum)}) THEN
+    RAISE EXCEPTION 'Mille migration history or checksum mismatch';
+  END IF;`).join("\n")}
+${migrations.slice(1).map(migration => `  IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = ${sqlLiteral(migration.name)}) THEN
+    EXECUTE ${sqlLiteral(migration.source)};
+    INSERT INTO schema_migrations (name,sha256) VALUES (${sqlLiteral(migration.name)},${sqlLiteral(migration.checksum)});
+  END IF;`).join("\n")}
+END;`)}\n`;
 }
 
 export function seedSql(configuration: DatabaseConfiguration): string {

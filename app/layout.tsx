@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import "./workspaces.css";
 
 export const metadata: Metadata = {
   title: "Mille — 食卓の、その先へ。",

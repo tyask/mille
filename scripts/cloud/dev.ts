@@ -86,10 +86,11 @@ function terminate(child: ChildProcess | undefined, signal: NodeJS.Signals): voi
   }
 }
 
-function forwardLogs(stream: NodeJS.ReadableStream, target: NodeJS.WritableStream, secrets: readonly string[]): void {
+export function forwardLogs(stream: NodeJS.ReadableStream, target: NodeJS.WritableStream, secrets: readonly string[]): void {
   let pending = "", dropping = false;
   const write = (line: string) => {
     for (const secret of secrets) line = line.replaceAll(secret, "[redacted]");
+    line = line.replace(/(\/(?:invite|api\/invitations)\/)[a-f0-9]{64}(?=[/?\s]|$)/g, "$1[redacted]");
     target.write(line);
   };
   stream.setEncoding("utf8");

@@ -24,8 +24,22 @@ Preview が `tyask/mille / preview / mille-preview`。
 初期化は別用途の既存テーブルがあるDBを拒否する。同一環境・同一 SQL hash の再適用は無変更。
 seed は同一IDの別メール等の衝突を拒否し、既存の停止状態や表示名を上書きしない。
 
-SQL 原本は `db/migrations/001_auth.sql`。standalone SQL は `node --import tsx scripts/db/generate-sql.ts` で生成する。
-適用後の原本は編集せず新 migration を追加する。初回構築中の SQL と生成物の一致は回帰テストで確認する。
+SQL 原本は `db/migrations/` の連番ファイル。`001_auth.sql` は認証、`002_workspaces.sql` はワークスペース・所属・招待を定義する。
+standalone SQL は `node --import tsx scripts/db/generate-sql.ts` で生成する。
+適用後の原本は編集せず新 migration を追加する。migration は専用DBの識別と適用済み原文 hash を確認し、
+advisory transaction lock の下で未適用分だけを番号順に適用する。SQL と履歴は一括で確定する。
+未知の適用履歴や hash の不一致は拒否し、既存利用者・停止状態・環境 marker を保持する。
+生成物と原本の一致、認証だけを適用済みのDBからの更新は回帰テストで確認する。
+
+既存の Mille DB を更新するときは対象照合後に `db:setup` を `--initialize` なしで実行する。
+Cloud の使い捨て PGlite も同じ migration を使い、seed は架空 A/B のみを登録する。
+build や通常のアプリ起動は hosted DB の migration・seed を実行しない。
+
+ワークスペースの操作は `mille_workspace_command` の1回の呼び出し内で、現在有効な内部ID・メール・所属を確認する。
+初期の個人用作成は利用者行、招待の再発行・参加・削除はワークスペース行をロックして原子的に処理する。
+個人用は作成者本人のみ、共有用の参加人数には固定上限を設けない。
+招待リンクは7日間有効で、DBにはトークンの SHA-256 のみを保存する。同じ宛先への再発行は旧リンクを無効にする。
+通常の一覧にトークンや hash は含めない。利用者の事前登録・有効状態の条件は招待でも変更しない。
 
 ## CLI を使う場合
 

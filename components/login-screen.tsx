@@ -6,7 +6,8 @@ import { PageShell } from "./page-shell";
 
 type AuthMode = "google" | "test" | "disabled";
 
-export function LoginScreen({ mode, error }: { mode: AuthMode; error?: string }) {
+export function LoginScreen({ mode, error, callbackUrl = "/" }: { mode: AuthMode; error?: string; callbackUrl?: string }) {
+  const redirectTo = /^\/invite\/[a-f0-9]{64}$/.test(callbackUrl) ? callbackUrl : "/";
   const [pending, setPending] = useState<string | null>(null);
   const [loginError, setLoginError] = useState<string | null>(null);
   const message = loginError ?? (error ? "ログインできませんでした。利用できるアカウントを確認し、もう一度お試しください。" : null);
@@ -27,9 +28,9 @@ export function LoginScreen({ mode, error }: { mode: AuthMode; error?: string })
     setLoginError(null);
     try {
       if (testUserKey) {
-        await signIn("test-login", { testUserKey, redirectTo: "/" });
+        await signIn("test-login", { testUserKey, redirectTo });
       } else {
-        await signIn("google", { redirectTo: "/" });
+        await signIn("google", { redirectTo });
       }
     } catch {
       setLoginError("ログインできませんでした。時間をおいて、もう一度お試しください。");
