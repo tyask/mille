@@ -9,7 +9,7 @@
   "approvedIssueSnapshot": "issue.md",
   "sharedMembershipLimit": null,
   "personalMembershipLimit": 1,
-  "frozenAt": "2026-10-29T13:09:41.380153+00:00",
+  "frozenAt": "2026-10-29T13:20:03.824503+00:00",
   "implementationPlanSha256": "bc78ced18fc3bf15e7bc6c835aa79ce041d284e9458123418ea751d9ba1232e5",
   "approvedIssueSha256": "a55f932dae3915f292a0037472a7ce480e2bf5e0d4ed24d5806d91e2cef9c963",
   "selfReview": {
@@ -19,7 +19,9 @@
       "招待参加後のworkspace queryを消費して選択復元を保持",
       "未正規tokenの招待ページを入力エラーとして処理",
       "モバイル文字とタッチ領域を拡大",
-      "Cloud転送ログで招待capabilityを伏せる"
+      "Cloud転送ログで招待capabilityを伏せる",
+      "画面拡幅時にメニューを閉じて本文inertを解除",
+      "同一origin確認済みの取り消し済CDP要求によるQA誤判定を解消"
     ],
     "preserved": [
       "Auth.js・事前登録制・毎回の有効状態確認",
@@ -35,8 +37,9 @@
     "lint": "passed",
     "typecheck": "passed",
     "tests": {
-      "passedBeforeFinalLogRedactionTest": 55,
-      "failed": 0
+      "passed": 56,
+      "failed": 0,
+      "source": "44be669164ed0685ca2ce56334edaf23dafda281で最終検証済み。追加修正はUI・ブラウザQAとこの記録のみ。"
     },
     "build": "passed Next.js16.4.3",
     "browser": {
@@ -47,8 +50,10 @@
       "resourcesAllReleased": true,
       "extraCoverage": [
         "未認証の招待リンクからログイン後復帰",
-        "本人宛招待一覧から参加"
-      ]
+        "本人宛招待一覧から参加",
+        "モバイルメニューを開いたまま390→844→390へ画面幅変更し、更新・作成を操作"
+      ],
+      "canceledSameOriginRequestsObserved": 1
     },
     "concurrentMembershipCoverage": "PGlite単一engineへの同時要求。実Neon複数session検証とは区別。"
   },
@@ -57,5 +62,30 @@
     "独立Agentレビューと必要な修正",
     "draft PRと現在HEADのCI",
     "既存専用Preview migration・配置・検証。保護されたPreviewへ利用可能な既存認証が現在未確認。"
-  ]
+  ],
+  "revisionHistory": [
+    {
+      "state": "reopened",
+      "recordedAt": "2026-10-29T13:20:03.824503+00:00",
+      "reason": "44be669164ed0685ca2ce56334edaf23dafda281の独立UIレビューP2: モバイルメニューを開いたまま701px以上へ拡幅すると本文inertが残る。承認済み範囲で修正。"
+    },
+    {
+      "state": "frozen",
+      "recordedAt": "2026-10-29T13:20:03.824503+00:00",
+      "reason": "matchMediaで拡幅時にメニューを閉じ、390→844→390の実ブラウザ回帰を追加・成功。同一originの取り消し済CDP要求だけをキャンセルとして扱い、他origin拒否は維持。"
+    }
+  ],
+  "priorIndependentReview": {
+    "sha": "44be669164ed0685ca2ce56334edaf23dafda281",
+    "baseSha": "58f7fbd1ef80c482ffd1b5c27c2cab11ccf8309f",
+    "databaseApi": {
+      "findings": 0,
+      "isolatedTestsPassed": true
+    },
+    "ui": {
+      "p2Findings": 1,
+      "correction": "matchMedia change handlerとPC/スマホの画面回転回帰",
+      "newShaReview": "次のcommitを同じ独立レビュー担当が再確認する"
+    }
+  }
 }

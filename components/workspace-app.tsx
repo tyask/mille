@@ -120,6 +120,13 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId }:
   }, [initialState.workspaces, initialWorkspaceId, storageKey]);
 
   useEffect(() => {
+    const mobileViewport = window.matchMedia("(max-width: 700px)");
+    function closeOnDesktop(event: MediaQueryListEvent) { if (!event.matches) setMobileOpen(false); }
+    mobileViewport.addEventListener("change", closeOnDesktop);
+    return () => mobileViewport.removeEventListener("change", closeOnDesktop);
+  }, []);
+
+  useEffect(() => {
     if (!mobileOpen) return;
     const previousFocus = document.activeElement;
     const closeButton = document.getElementById("ws-mobile-close");

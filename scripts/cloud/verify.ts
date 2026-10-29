@@ -14,10 +14,16 @@ process.env.PLAYWRIGHT_BROWSERS_PATH ??= resolve(rootDirectory, "../.cache/ms-pl
 
 const executeFile = promisify(execFile);
 type Source = { sha: string; branch: string; clean: boolean };
+type InterceptionFailure = {
+  operation: "parse-request" | "foreign-origin" | "continue-request";
+  reason: "foreign-origin" | "invalid-interception-id" | "target-closed" | "other";
+};
 type CheckCase = {
   name: string; userKey: string; mobile: boolean; status: "not-run" | "running" | "passed" | "failed";
   checks: string[]; screenshots: string[]; durationMs: number;
   history?: { restoredFromCache: boolean };
+  interceptionFailures?: InterceptionFailure[];
+  canceledInterceptions?: number;
 };
 export type BrowserProof = {
   protocol: "mille-browser/v1"; success: boolean; startedAt: string; finishedAt: string; durationMs: number;
@@ -173,17 +179,32 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         // CDP observes every redirect hop; context-wide headers would leak to other origins.
         const interception = await context.newCDPSession(page);
         interception.on("Fetch.requestPaused", async event => {
+          let operation: InterceptionFailure["operation"] = "parse-request";
           try {
             if (new URL(event.request.url).origin !== origin) {
               requestBoundaryFailed = true;
+              operation = "foreign-origin";
+              (item.interceptionFailures ??= []).push({ operation, reason: "foreign-origin" });
               await interception.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" });
             } else {
+              operation = "continue-request";
               const headers = Object.entries(event.request.headers).filter(([name]) => name.toLowerCase() !== "x-vercel-protection-bypass");
               headers.push(...Object.entries(scopedProtectionHeaders(event.request.url, origin, protection)));
               await interception.send("Fetch.continueRequest", { requestId: event.requestId, headers: headers.map(([name, value]) => ({ name, value: String(value) })) });
             }
-          } catch {
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "";
+            const reason: InterceptionFailure["reason"] = /Invalid InterceptionId|Invalid interception id/i.test(message) ? "invalid-interception-id"
+              : /Target closed|Session closed|Target page, context or browser has been closed/i.test(message) ? "target-closed" : "other";
+            if (operation === "continue-request" && reason === "invalid-interception-id") {
+              // Navigation canceled this already verified same-origin request before CDP resumed it.
+              // A stale interception ID cannot forward headers; foreign requests still fail above.
+              item.canceledInterceptions = (item.canceledInterceptions ?? 0) + 1;
+              return;
+            }
             requestBoundaryFailed = true;
+            // Retain only bounded enums: protocol errors may otherwise include capability URLs.
+            if ((item.interceptionFailures?.length ?? 0) < 20) (item.interceptionFailures ??= []).push({ operation, reason });
             try { await interception.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "Failed" }); } catch { /* Context may already be closed. */ }
           }
         });
@@ -216,6 +237,26 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         await page.reload({ waitUntil: "networkidle" }); await page.getByTestId("authenticated-home").waitFor();
         requireCondition((await readIdentity(page)).body.user?.id === user.id);
         item.checks.push("session-after-reload");
+        if (mobile) {
+          stage = "mobile-menu-resize";
+          const menu = page.getByRole("button", { name: "ワークスペースメニューを開く", exact: true, includeHidden: true });
+          await menu.click();
+          await page.waitForFunction(() => document.querySelector(".ws-main-shell")?.hasAttribute("inert") === true);
+          await page.setViewportSize({ width: 844, height: 390 });
+          await page.waitForFunction(() => {
+            const shell = document.querySelector(".ws-main-shell");
+            return shell !== null && !shell.hasAttribute("inert");
+          });
+          await workspaceMutation(page, "/api/workspaces", "GET", () => page.getByTestId("workspace-refresh").click());
+          await page.getByTestId("workspace-create-open").click();
+          await page.getByTestId("workspace-create-dialog").getByRole("button", { name: "キャンセル", exact: true }).click();
+          await page.getByTestId("workspace-create-dialog").waitFor({ state: "hidden" });
+          await page.setViewportSize({ width: 390, height: 844 });
+          requireCondition(await menu.getAttribute("aria-expanded") === "false"
+            && !await page.locator(".ws-main-shell").evaluate(element => element.hasAttribute("inert")));
+          await page.getByTestId("workspace-create-open").waitFor();
+          item.checks.push("mobile-menu-resize-restores-main");
+        }
         const filename = `${item.name}-home.png`;
         await page.screenshot({ path: resolve(directory, filename), fullPage: true }); item.screenshots.push(filename);
         requireCondition(!requestBoundaryFailed && !interrupted);
@@ -393,8 +434,12 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         entry.item.history = { restoredFromCache: history.restoredFromCache };
         entry.item.checks.push("logout-history-denied");
         const other = loggedIn.find(value => value !== entry && value.item.status === "running");
+        stage = "logout-other-context-identity";
         if (other) requireCondition((await readIdentity(other.page)).body.user?.id === other.user.id);
-        requireCondition(!entry.boundaryFailed() && !interrupted);
+        stage = "logout-request-origin-boundary";
+        requireCondition(!entry.boundaryFailed());
+        stage = "logout-interruption";
+        requireCondition(!interrupted);
         entry.item.status = "passed"; entry.item.durationMs = Date.now() - entry.started;
         await entry.context.close(); contexts.delete(entry.context); proof.resources.browserContexts = contexts.size;
       }
