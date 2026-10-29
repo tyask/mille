@@ -1,0 +1,61 @@
+{
+  "id": "261029-workspaces",
+  "issue": "https://github.com/tyask/mille/issues/3",
+  "branch": "codex/workspaces",
+  "baseSha": "58f7fbd1ef80c482ffd1b5c27c2cab11ccf8309f",
+  "state": "frozen",
+  "approvalEvidence": "approvals.json",
+  "implementationPlan": "plan.md",
+  "approvedIssueSnapshot": "issue.md",
+  "sharedMembershipLimit": null,
+  "personalMembershipLimit": 1,
+  "frozenAt": "2026-10-29T13:09:41.380153+00:00",
+  "implementationPlanSha256": "bc78ced18fc3bf15e7bc6c835aa79ce041d284e9458123418ea751d9ba1232e5",
+  "approvedIssueSha256": "a55f932dae3915f292a0037472a7ce480e2bf5e0d4ed24d5806d91e2cef9c963",
+  "selfReview": {
+    "complete": true,
+    "findingsResolved": [
+      "保存後の再取得失敗通知をダイアログ終了後も保持",
+      "招待参加後のworkspace queryを消費して選択復元を保持",
+      "未正規tokenの招待ページを入力エラーとして処理",
+      "モバイル文字とタッチ領域を拡大",
+      "Cloud転送ログで招待capabilityを伏せる"
+    ],
+    "preserved": [
+      "Auth.js・事前登録制・毎回の有効状態確認",
+      "001_auth.sql原文・既存利用者・停止状態・環境識別",
+      "Production test拒否・Previewの本番fallback禁止",
+      "共有人数の固定上限なし"
+    ]
+  },
+  "preCommitValidation": {
+    "node": "24.19.0 passed",
+    "npmCi": "passed",
+    "audit": "0 vulnerabilities",
+    "lint": "passed",
+    "typecheck": "passed",
+    "tests": {
+      "passedBeforeFinalLogRedactionTest": 55,
+      "failed": 0
+    },
+    "build": "passed Next.js16.4.3",
+    "browser": {
+      "cases": 4,
+      "allFlowCasesPassed": true,
+      "overallProofPassed": false,
+      "expectedFailureStage": "source-after (dirty pre-commit source)",
+      "resourcesAllReleased": true,
+      "extraCoverage": [
+        "未認証の招待リンクからログイン後復帰",
+        "本人宛招待一覧から参加"
+      ]
+    },
+    "concurrentMembershipCoverage": "PGlite単一engineへの同時要求。実Neon複数session検証とは区別。"
+  },
+  "remaining": [
+    "最終SHAでのclean検証",
+    "独立Agentレビューと必要な修正",
+    "draft PRと現在HEADのCI",
+    "既存専用Preview migration・配置・検証。保護されたPreviewへ利用可能な既存認証が現在未確認。"
+  ]
+}

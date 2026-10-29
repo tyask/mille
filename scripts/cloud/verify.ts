@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { Browser, BrowserContext, Page } from "playwright";
 import { TEST_USERS } from "../../lib/shared/test-users";
+import type { IssuedInvitation, Workspace, WorkspaceState } from "../../lib/shared/workspaces";
 import { CloudStartupError, cloudPort, isolatedEnvironment, rootDirectory, startCloudServer, type CloudServer } from "./dev";
 
 // Playwright resolves its executable registry on import, before launch({ env }) applies.
@@ -24,7 +25,7 @@ export type BrowserProof = {
   target: { kind: "local" | "preview"; origin: string | null; expectedSha: string | null; runtimeSha: string | null };
   environment: { platform: string; node: string; chromium: string | null };
   cases: CheckCase[]; failure?: { stage: string; case?: string };
-  resources: { browserContexts: number; browsers: number; servers: number | null; databases: number | null };
+  resources: { browserContexts: number; browsers: number; servers: number | null; databases: number | null; workspaces: number };
 };
 
 export function previewOrigin(value: string): string {
@@ -67,6 +68,31 @@ async function readIdentity(page: Page, path = "/api/me") {
   }, path);
 }
 
+async function workspaceRequest<T>(page: Page, path: string, method = "GET", body?: unknown) {
+  const response = await page.evaluate(async ({ target, verb, payload }) => {
+    const result = await fetch(target, {
+      method: verb, cache: "no-store", redirect: "error", signal: AbortSignal.timeout(15_000),
+      ...(payload === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }),
+    });
+    return { status: result.status, body: result.status === 204 ? null : await result.json(), cacheControl: result.headers.get("cache-control") };
+  }, { target: path, verb: method, payload: body });
+  return response as { status: number; body: T; cacheControl: string | null };
+}
+
+async function workspaceMutation<T>(page: Page, path: string, method: string, action: () => Promise<unknown>) {
+  const [response] = await Promise.all([
+    page.waitForResponse(value => new URL(value.url()).pathname === path && value.request().method() === method),
+    action(),
+  ]);
+  requireCondition(response.status() >= 200 && response.status() < 300);
+  return (response.status() === 204 ? null : await response.json()) as T;
+}
+
+async function selectedWorkspace(page: Page, name: string) {
+  await page.getByTestId("workspace-selected-name").waitFor();
+  await page.waitForFunction(expected => document.querySelector('[data-testid="workspace-selected-name"]')?.textContent?.trim() === expected, name);
+}
+
 export async function verifyBrowser(args: readonly string[] = []): Promise<BrowserProof> {
   const directory = resolve(rootDirectory, ".mille/cloud"), proofPath = resolve(directory, "verification.json");
   const started = Date.now();
@@ -79,12 +105,13 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
       name: `${mobile ? "mobile" : "desktop"}-${user.key}`, userKey: user.key, mobile,
       status: "not-run" as const, checks: [], screenshots: [], durationMs: 0,
     }))),
-    resources: { browserContexts: 0, browsers: 0, servers: 0, databases: 0 },
+    resources: { browserContexts: 0, browsers: 0, servers: 0, databases: 0, workspaces: 0 },
   };
   let stage = "proof", currentCase: CheckCase | undefined;
   let server: CloudServer | undefined, browser: Browser | undefined;
   let interrupted = false;
   const contexts = new Set<BrowserContext>();
+  const disposableWorkspaces = new Map<string, Page>();
   const interrupt = () => { interrupted = true; void browser?.close().catch(() => undefined); };
   process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
   const fail = (failureStage: string) => {
@@ -106,7 +133,8 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
       proof.target.origin = previewOrigin(process.env.MILLE_QA_BASE_URL);
     } else {
       stage = "server"; proof.resources.servers = null; proof.resources.databases = null;
-      server = await startCloudServer({ port: cloudPort(args[1] ?? process.env.PORT ?? 3000), hostname: "127.0.0.1", quiet: false, handleSignals: false });
+      // Invitation URLs contain bearer capabilities; Next's request logs must not retain them.
+      server = await startCloudServer({ port: cloudPort(args[1] ?? process.env.PORT ?? 3000), hostname: "127.0.0.1", quiet: true, handleSignals: false });
       proof.resources.servers = 1; proof.resources.databases = 1;
       proof.target.origin = new URL(server.url).origin;
     }
@@ -172,6 +200,8 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         proof.target.runtimeSha = runtime.body.sha; item.checks.push("runtime-sha");
         const anonymous = await readIdentity(page);
         requireCondition(anonymous.status === 401); item.checks.push("anonymous-api-denied");
+        requireCondition((await workspaceRequest(page, "/api/workspaces")).status === 401);
+        item.checks.push("anonymous-workspaces-denied");
         stage = "login";
         await page.getByRole("button", { name: `${user.name}でログイン`, exact: true }).click();
         await page.getByTestId("authenticated-home").waitFor();
@@ -198,6 +228,134 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         requireCondition(identity.status === 200 && identity.body.user?.id === entry.user.id && identity.body.user?.email === entry.user.email);
         entry.item.checks.push("separate-context-identity");
       }
+
+      const [owner, member] = loggedIn;
+      currentCase = owner.item; stage = "workspace-personal-isolation";
+      const [ownerState, memberState] = await Promise.all([
+        workspaceRequest<WorkspaceState>(owner.page, "/api/workspaces"),
+        workspaceRequest<WorkspaceState>(member.page, "/api/workspaces"),
+      ]);
+      requireCondition(ownerState.status === 200 && memberState.status === 200
+        && ownerState.cacheControl?.includes("no-store") && memberState.cacheControl?.includes("no-store"));
+      const ownerPersonal = ownerState.body.workspaces.find(workspace => workspace.type === "PERSONAL");
+      const memberPersonal = memberState.body.workspaces.find(workspace => workspace.type === "PERSONAL");
+      requireCondition(ownerPersonal && memberPersonal && ownerPersonal.id !== memberPersonal.id
+        && ownerPersonal.members.length === 1 && ownerPersonal.members[0].userId === owner.user.id
+        && memberPersonal.members.length === 1 && memberPersonal.members[0].userId === member.user.id
+        && !ownerState.body.workspaces.some(workspace => workspace.id === memberPersonal.id)
+        && !memberState.body.workspaces.some(workspace => workspace.id === ownerPersonal.id));
+      for (const entry of loggedIn) entry.item.checks.push("personal-workspace-isolation");
+
+      stage = "workspace-create";
+      const workspaceName = `QA ${mobile ? "mobile" : "desktop"} ${Date.now()}`;
+      await owner.page.getByRole("button", { name: "新しく作成", exact: true }).click();
+      await owner.page.getByTestId("workspace-create-dialog").getByLabel("ワークスペース名", { exact: true }).fill(workspaceName);
+      await owner.page.getByTestId("workspace-create-dialog").getByRole("radio", { name: /共有用/ }).check();
+      const created = await workspaceMutation<Workspace>(owner.page, "/api/workspaces", "POST", () => owner.page.getByTestId("workspace-create-submit").click());
+      disposableWorkspaces.set(created.id, owner.page); proof.resources.workspaces = disposableWorkspaces.size;
+      requireCondition(created.name === workspaceName && created.type === "SHARED");
+      await selectedWorkspace(owner.page, workspaceName);
+      owner.item.checks.push("shared-workspace-create-ui");
+
+      stage = "workspace-switch-persistence";
+      await owner.page.locator(`[data-testid="workspace-card"][data-workspace-id="${ownerPersonal.id}"]`).click();
+      await selectedWorkspace(owner.page, ownerPersonal.name);
+      await owner.page.locator(`[data-testid="workspace-card"][data-workspace-id="${created.id}"]`).click();
+      await selectedWorkspace(owner.page, workspaceName);
+      await owner.page.reload({ waitUntil: "networkidle" });
+      await selectedWorkspace(owner.page, workspaceName);
+      owner.item.checks.push("workspace-switch-ui", "workspace-selection-after-reload");
+
+      stage = "workspace-rename-open";
+      const renamed = `${workspaceName} 変更`;
+      await owner.page.getByRole("button", { name: "名前を変更", exact: true }).click();
+      stage = "workspace-rename-fill";
+      await owner.page.getByTestId("workspace-rename-dialog").getByLabel("ワークスペース名", { exact: true }).fill(renamed);
+      stage = "workspace-rename-save";
+      await workspaceMutation<Workspace>(owner.page, `/api/workspaces/${created.id}`, "PATCH", () => owner.page.getByTestId("workspace-rename-dialog").getByRole("button", { name: "変更を保存", exact: true }).click());
+      stage = "workspace-rename-result";
+      await selectedWorkspace(owner.page, renamed);
+      owner.item.checks.push("workspace-rename-ui");
+
+      stage = "workspace-invite";
+      await owner.page.getByRole("button", { name: "メンバーを招待", exact: true }).click();
+      await owner.page.getByTestId("workspace-invite-dialog").getByLabel("相手のメールアドレス", { exact: true }).fill(member.user.email);
+      const invitation = await workspaceMutation<IssuedInvitation>(owner.page, `/api/workspaces/${created.id}/invitations`, "POST", () => owner.page.getByTestId("workspace-invite-dialog").getByRole("button", { name: "招待リンクを発行", exact: true }).click());
+      requireCondition(/^[a-f0-9]{64}$/.test(invitation.token) && invitation.invitation.email === member.user.email);
+      owner.item.checks.push("workspace-invite-ui");
+      // The capability is used in memory only, and no screenshot is taken on these screens.
+      currentCase = member.item;
+      if (mobile) {
+        stage = "workspace-incoming-invitation";
+        await member.page.reload({ waitUntil: "networkidle" });
+        const incoming = member.page.getByRole("region", { name: "届いている招待", exact: true }).getByRole("article").filter({ hasText: renamed });
+        await incoming.getByRole("heading", { name: `「${renamed}」への招待`, exact: true }).waitFor();
+        stage = "workspace-incoming-join";
+        await workspaceMutation(member.page, `/api/invitations/${invitation.invitation.id}/join`, "POST", () => incoming.getByRole("button", { name: "参加する", exact: true }).click());
+        await selectedWorkspace(member.page, renamed);
+        member.item.checks.push("incoming-invitation-join-ui");
+      } else {
+        stage = "workspace-invitation-login";
+        await member.page.getByRole("button", { name: "ログアウト", exact: true }).click();
+        await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).waitFor();
+        requireCondition((await readIdentity(member.page)).status === 401);
+        await member.page.goto(`${origin}/invite/${invitation.token}`, { waitUntil: "networkidle" });
+        await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).click();
+        await member.page.getByTestId("workspace-join-submit").waitFor();
+        requireCondition(new URL(member.page.url()).pathname === `/invite/${invitation.token}`
+          && (await readIdentity(member.page)).body.user?.id === member.user.id);
+        member.item.checks.push("invitation-login-return");
+        stage = "workspace-join";
+        await workspaceMutation(member.page, `/api/invitations/${invitation.token}/accept`, "POST", () => member.page.getByTestId("workspace-join-submit").click());
+        await member.page.getByRole("link", { name: "ワークスペースを開く", exact: true }).click();
+        await selectedWorkspace(member.page, renamed);
+        member.item.checks.push("invitation-link-join-ui");
+      }
+      await owner.page.reload({ waitUntil: "networkidle" });
+      await selectedWorkspace(owner.page, renamed);
+      const shared = await workspaceRequest<WorkspaceState>(owner.page, "/api/workspaces");
+      const sharedWorkspace = shared.body.workspaces.find(workspace => workspace.id === created.id);
+      requireCondition(shared.status === 200 && sharedWorkspace?.members.length === 2
+        && sharedWorkspace.members.some(value => value.userId === owner.user.id)
+        && sharedWorkspace.members.some(value => value.userId === member.user.id));
+      requireCondition((await owner.page.getByTestId("workspace-member-count").textContent())?.trim() === "2");
+      await owner.page.getByText(member.user.email, { exact: true }).waitFor();
+      owner.item.checks.push("shared-members-after-join"); member.item.checks.push("shared-members-after-join");
+
+      stage = "workspace-api-isolation";
+      const forbidden = await workspaceRequest(member.page, `/api/workspaces/${ownerPersonal.id}`, "PATCH", { name: "不正な変更" });
+      requireCondition(forbidden.status === 403 || forbidden.status === 404);
+      const unchangedOwner = await workspaceRequest<WorkspaceState>(owner.page, "/api/workspaces");
+      requireCondition(unchangedOwner.body.workspaces.find(workspace => workspace.id === ownerPersonal.id)?.name === ownerPersonal.name);
+      member.item.checks.push("non-member-workspace-write-denied");
+
+      stage = "workspace-member-rename";
+      const memberRenamed = `${workspaceName} 共有`;
+      await member.page.getByRole("button", { name: "名前を変更", exact: true }).click();
+      await member.page.getByTestId("workspace-rename-dialog").getByLabel("ワークスペース名", { exact: true }).fill(memberRenamed);
+      await workspaceMutation(member.page, `/api/workspaces/${created.id}`, "PATCH", () => member.page.getByTestId("workspace-rename-dialog").getByRole("button", { name: "変更を保存", exact: true }).click());
+      await selectedWorkspace(member.page, memberRenamed);
+      await owner.page.reload({ waitUntil: "networkidle" });
+      await selectedWorkspace(owner.page, memberRenamed);
+      member.item.checks.push("member-rename-ui"); owner.item.checks.push("member-update-visible");
+
+      stage = "workspace-delete";
+      await member.page.getByRole("button", { name: "削除する", exact: true }).click();
+      await member.page.locator("#ws-delete-confirmation").fill(memberRenamed);
+      await workspaceMutation(member.page, `/api/workspaces/${created.id}`, "DELETE", () => member.page.getByTestId("workspace-delete-submit").click());
+      disposableWorkspaces.delete(created.id); proof.resources.workspaces = disposableWorkspaces.size;
+      await owner.page.reload({ waitUntil: "networkidle" });
+      for (const entry of loggedIn) {
+        const state = await workspaceRequest<WorkspaceState>(entry.page, "/api/workspaces");
+        requireCondition(state.status === 200 && !state.body.workspaces.some(workspace => workspace.id === created.id));
+        const fallback = state.body.workspaces[0];
+        requireCondition(fallback);
+        await selectedWorkspace(entry.page, fallback.name);
+        requireCondition(await entry.page.getByTestId("workspace-selected-name").getAttribute("data-workspace-id") === fallback.id);
+        entry.item.checks.push("workspace-delete-ui-and-fallback");
+        const filename = `${entry.item.name}-workspaces.png`;
+        await entry.page.screenshot({ path: resolve(directory, filename), fullPage: true }); entry.item.screenshots.push(filename);
+      }
       for (const entry of loggedIn) {
         currentCase = entry.item; stage = "history-setup";
         await entry.page.evaluate(() => {
@@ -211,6 +369,9 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
           requireCondition((await readIdentity(entry.page)).body.user?.id === entry.user.id);
         }
         stage = "logout";
+        if (!await entry.page.getByRole("button", { name: "ログアウト", exact: true }).isVisible()) {
+          await entry.page.getByRole("button", { name: "ワークスペースメニューを開く", exact: true }).click();
+        }
         await entry.page.getByRole("button", { name: "ログアウト", exact: true }).click();
         await entry.page.getByRole("button", { name: `${entry.user.name}でログイン`, exact: true }).waitFor();
         requireCondition((await readIdentity(entry.page)).status === 401);
@@ -245,6 +406,20 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
     fail(interrupted ? "interrupted" : stage);
   } finally {
     stage = "cleanup";
+    // A failed Preview run must also remove only the workspaces created by this run.
+    for (const [workspaceId, page] of disposableWorkspaces) {
+      try {
+        const state = await workspaceRequest<WorkspaceState>(page, "/api/workspaces");
+        requireCondition(state.status === 200);
+        const workspace = state.body.workspaces.find(value => value.id === workspaceId);
+        if (workspace) {
+          const removed = await workspaceRequest(page, `/api/workspaces/${workspaceId}`, "DELETE", { confirmationName: workspace.name });
+          requireCondition(removed.status === 204);
+        }
+        disposableWorkspaces.delete(workspaceId);
+      } catch { fail(stage); }
+    }
+    proof.resources.workspaces = disposableWorkspaces.size;
     for (const context of contexts) {
       try { await context.close(); contexts.delete(context); } catch { fail(stage); }
     }

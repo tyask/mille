@@ -1,0 +1,22 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/3",
+  "planApproval": {
+    "actor": "利用者",
+    "presentedText": "共有ワークスペースには人数の固定上限を設けない計画に修正します。招待・参加・参加者一覧は3人以上に対応し、複数人での権限確認も検証します。個人用は本人のみとします。この修正後の計画で進めてよいですか？",
+    "reply": "お願いします",
+    "source": "このチャットの修正計画提示に対する利用者返信",
+    "date": "2026-10-29"
+  },
+  "issueApproval": {
+    "actor": "利用者",
+    "presentedText": "Issue #3を作成し、保存後に再取得して本文の一致を確認しました。保存済み本文の全文を提示し、このIssue本文を承認いただけますか？と確認。",
+    "reply": "ok",
+    "source": "このチャットで保存済みIssue本文の全文提示に対する利用者返信",
+    "date": "2026-10-29"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "source": "GitHub Issue#3を保存後に再取得し、作成した本文と完全一致を確認した内容。LF。",
+    "sha256": "a55f932dae3915f292a0037472a7ce480e2bf5e0d4ed24d5806d91e2cef9c963"
+  }
+}

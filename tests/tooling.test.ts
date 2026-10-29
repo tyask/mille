@@ -4,8 +4,9 @@ import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { createServer } from "node:net";
+import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { assertCloudStartupAllowed, assertPortAvailable, cloudChildEnvironment, cloudPort, isolatedEnvironment, rootDirectory } from "../scripts/cloud/dev";
+import { assertCloudStartupAllowed, assertPortAvailable, cloudChildEnvironment, cloudPort, forwardLogs, isolatedEnvironment, rootDirectory } from "../scripts/cloud/dev";
 import { previewOrigin, scopedProtectionHeaders, sourceUnchanged } from "../scripts/cloud/verify";
 
 test("Cloud rejects hosted/production execution before starting a database", () => {
@@ -51,6 +52,23 @@ test("Next/browser child environments retain trust settings and drop foreign cre
   assert.equal(child.AUTH_URL, "http://localhost:3000"); assert.match(child.AUTH_SECRET!, /^[a-f0-9]{64}$/);
   assert.notEqual(child.AUTH_SECRET, original.AUTH_SECRET);
   assert.notEqual(child.AUTH_SECRET, cloudChildEnvironment(original, database, "http://localhost:3000").AUTH_SECRET);
+});
+
+test("Cloud logs redact invitation capabilities and secrets across stream chunk boundaries", async () => {
+  const input = new PassThrough(), output = new PassThrough();
+  let captured = "";
+  output.on("data", chunk => { captured += String(chunk); });
+  forwardLogs(input, output, ["fixture-secret"]);
+  const token = "a".repeat(64);
+  input.write(`GET /invite/${token.slice(0, 31)}`);
+  input.write(`${token.slice(31)} 200\nPOST /api/invitations/${token}/accept 200\n`);
+  input.end("fixture-secret\nGET /api/workspaces 200\n");
+  await new Promise<void>(resolve => input.once("end", resolve));
+  assert.equal(captured.includes(token), false);
+  assert.equal(captured.includes("fixture-secret"), false);
+  assert.match(captured, /GET \/invite\/\[redacted\] 200/);
+  assert.match(captured, /POST \/api\/invitations\/\[redacted\]\/accept 200/);
+  assert.match(captured, /GET \/api\/workspaces 200/);
 });
 
 test("Port validation refuses ambiguous numbers and occupied ports", async () => {

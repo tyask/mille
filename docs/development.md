@@ -47,6 +47,8 @@ Preview seed は重複登録や停止状態の解除をせず、Production で�
 最終 SHA と clean 状態を前後で照合し、check:node、lint、typecheck、test、build、qa:cloud を行う。
 依存更新時は `npm run audit:dependencies` も確認する。CI は全依存の high／critical を検出すると失敗する。[監査記録](dependency-security.md)も参照する。
 PC/mobile × A/B でログイン・再読込・本人表示・ログアウト・未認証拒否を確認する。
+ワークスペースは個人用分離、作成・選択復元、招待・参加、所属者による名称変更・削除も確認する。
+共有の3人以上の参加は単体テスト用PGliteの架空fixtureで検証し、正式利用者やA/Bログイン対象は変更しない。
 無効化後の拒否・メール検証・mode・redirect・Production のテスト認証禁止を回帰テストする。
 初回 PR は main に未導入の管理 Workflow に依存せず、承認済み正規 CLI／API で専用 Preview を用意する。
 DB 初期化は対象照合後の専用工程にし、build が勝手に migration/seed しない。
