@@ -1,0 +1,23 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/5",
+  "sourceThreadId": "01a172ea-5a94-7027-a275-a0a9c79c50f1",
+  "source": "親タスクが共有した利用者の原文と秒精度の時刻。本文はGitHubの通常Issueページから取得し、承認後の変更がない更新日時を確認。",
+  "planApproval": {
+    "presentedAt": "2026-10-29T13:10:07Z",
+    "presentedText": "開始時にfetchし、最新mainと比較する／新規作業は最新mainから開始する／継続作業は変更を保護し、勝手にpullやresetをしない／依存関係が変わっていれば再インストールする。この方針で、作業開始手順とCloudの起動指示を整備してよいですか？",
+    "userMessageTime": "2026-10-29T13:40:44Z",
+    "reply": "お願いします"
+  },
+  "issueApproval": {
+    "presentedAt": "2026-10-29T13:42:14Z",
+    "presentedText": "Issue #5「Cloud作業開始時のGit最新化確認」を作成しました。開始時のfetch・最新main確認、作業中の変更の保護、依存関係の再導入、Cloud起動指示の整備を対象にしています。進行中のワークスペース機能には触れません。このIssueの内容で実装を進めてよいですか？",
+    "userMessageTime": "2026-10-29T13:44:17Z",
+    "reply": "お願いします"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sha256": "026462e001196466ee089009ab1841925894844a7307586a3d10ac3a61afc18f",
+    "updatedAt": "2026-10-29T13:42:05Z",
+    "sourceMetadata": "issue-source.json"
+  }
+}

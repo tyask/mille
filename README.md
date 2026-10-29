@@ -19,15 +19,16 @@ Auth.js **5.0.0-beta.32** / Neon PostgreSQL / Vercel。
 ## ローカルで試す
 
 外部 DB・Google・Vercel の秘密値は不要です。Node を `.node-version` に合わせて実行します。
+作業開始時の Git 確認は [開発手順](docs/development.md) に従います。
 
 ```bash
-npm ci
 npm run setup:cloud
 npm run dev:cloud
 ```
 
 専用 PGlite と架空 A/B で通常の Auth.js セッションを発行します。停止すると DB は破棄されます。
 実 Google OAuth／Neon／Vercel の検証とは異なります。runner 用 checkout に `.env` 等を置かないでください。
+ブラウザの再取得が不要な依存再導入には `npm run deps:sync` を使えます。
 
 ## 検証
 

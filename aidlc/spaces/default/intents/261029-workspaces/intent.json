@@ -2,14 +2,14 @@
   "id": "261029-workspaces",
   "issue": "https://github.com/tyask/mille/issues/3",
   "branch": "codex/workspaces",
-  "baseSha": "58f7fbd1ef80c482ffd1b5c27c2cab11ccf8309f",
+  "baseSha": "4ea1e6dddd664ecb28dd3111a08c54b98640338d",
   "state": "frozen",
   "approvalEvidence": "approvals.json",
   "implementationPlan": "plan.md",
   "approvedIssueSnapshot": "issue.md",
   "sharedMembershipLimit": null,
   "personalMembershipLimit": 1,
-  "frozenAt": "2026-10-29T13:20:03.824503+00:00",
+  "frozenAt": "2026-10-29T14:27:24.461Z",
   "implementationPlanSha256": "bc78ced18fc3bf15e7bc6c835aa79ce041d284e9458123418ea751d9ba1232e5",
   "approvedIssueSha256": "a55f932dae3915f292a0037472a7ce480e2bf5e0d4ed24d5806d91e2cef9c963",
   "selfReview": {
@@ -28,40 +28,39 @@
       "001_auth.sql原文・既存利用者・停止状態・環境識別",
       "Production test拒否・Previewの本番fallback禁止",
       "共有人数の固定上限なし"
-    ]
+    ],
+    "mainIntegration": {
+      "conflicts": 0,
+      "incomingMain": "4ea1e6dddd664ecb28dd3111a08c54b98640338d",
+      "runtimeSourcesUnchanged": true,
+      "packageChange": "task:start・deps:syncのscript追加のみ。dependenciesとlockfileは不変。",
+      "documentation": "workspace機能説明と新Cloud手順の両方を保持。",
+      "completed": true
+    }
   },
   "preCommitValidation": {
     "node": "24.19.0 passed",
-    "npmCi": "passed",
+    "npmCi": "deps:sync passed with /workspace/.npm-cache; dependency receipt ready",
     "audit": "0 vulnerabilities",
     "lint": "passed",
     "typecheck": "passed",
     "tests": {
-      "passed": 56,
+      "passed": 112,
       "failed": 0,
-      "source": "44be669164ed0685ca2ce56334edaf23dafda281で最終検証済み。追加修正はUI・ブラウザQAとこの記録のみ。"
+      "source": "利用者依頼のmain取り込み後のmerge treeで実行"
     },
     "build": "passed Next.js16.4.3",
     "browser": {
-      "cases": 4,
-      "allFlowCasesPassed": true,
-      "overallProofPassed": false,
-      "expectedFailureStage": "source-after (dirty pre-commit source)",
-      "resourcesAllReleased": true,
-      "extraCoverage": [
-        "未認証の招待リンクからログイン後復帰",
-        "本人宛招待一覧から参加",
-        "モバイルメニューを開いたまま390→844→390へ画面幅変更し、更新・作成を操作"
-      ],
-      "canceledSameOriginRequestsObserved": 1
+      "source": "6a5d150628276081387c14a39e14ca8094571f0aのlocal4件成功。新SHAのclean QAはcommit後に再実行。"
     },
-    "concurrentMembershipCoverage": "PGlite単一engineへの同時要求。実Neon複数session検証とは区別。"
+    "dependencyRecovery": "既定npm cacheの書込先がsandbox外のため失敗。docs指定の書込可能cacheをプロセス限定指定して再導入成功。",
+    "taskStart": "merge進行中なので安全guardにより停止。merge commit後にcontinueを再実行する。"
   },
   "remaining": [
-    "最終SHAでのclean検証",
-    "独立Agentレビューと必要な修正",
-    "draft PRと現在HEADのCI",
-    "既存専用Preview migration・配置・検証。保護されたPreviewへ利用可能な既存認証が現在未確認。"
+    "追加main取り込み後の自己レビューと凍結commit",
+    "新SHAで独立レビュー・clean検証・CI",
+    "最終SHAの既存Preview環境への再配置・runtimeとブラウザ確認",
+    "実Google OAuthは別途未実施。対象設定と承認範囲が整うまでdraft維持。"
   ],
   "revisionHistory": [
     {
@@ -73,6 +72,16 @@
       "state": "frozen",
       "recordedAt": "2026-10-29T13:20:03.824503+00:00",
       "reason": "matchMediaで拡幅時にメニューを閉じ、390→844→390の実ブラウザ回帰を追加・成功。同一originの取り消し済CDP要求だけをキャンセルとして扱い、他origin拒否は維持。"
+    },
+    {
+      "state": "reopened",
+      "recordedAt": "2026-10-29T14:24:26.855Z",
+      "reason": "利用者の追加コミット取り込み依頼によりmainのCloud作業開始手順をマージ。新SHAで独立レビュー・clean検証・CI・Previewを再確認する。"
+    },
+    {
+      "state": "frozen",
+      "recordedAt": "2026-10-29T14:27:24.461Z",
+      "reason": "main追加分を競合なく取り込み、runtime source不変・依存再導入・lint/型/112件/build成功を自己確認。新SHAの独立レビューとclean検証へ進む。"
     }
   ],
   "priorIndependentReview": {
@@ -87,5 +96,24 @@
       "correction": "matchMedia change handlerとPC/スマホの画面回転回帰",
       "newShaReview": "次のcommitを同じ独立レビュー担当が再確認する"
     }
+  },
+  "approvedBaseSha": "58f7fbd1ef80c482ffd1b5c27c2cab11ccf8309f",
+  "integratedMain": {
+    "sha": "4ea1e6dddd664ecb28dd3111a08c54b98640338d",
+    "userInstruction": "一見コミットしたので、取り込んでおいて",
+    "source": "このチャットの追加コミット取り込み依頼",
+    "incomingPullRequest": "https://github.com/tyask/mille/pull/6",
+    "implementationScopeChanged": false
+  },
+  "priorFinalVerification": {
+    "sha": "6a5d150628276081387c14a39e14ca8094571f0a",
+    "lint": "passed",
+    "typecheck": "passed",
+    "testsPassed": 56,
+    "build": "passed",
+    "browserCasesPassed": 4,
+    "ci": "https://github.com/tyask/mille/actions/runs/40881495674",
+    "previewDeployment": "dpl_BFH8LHh5tVzYQpFCjbeBtBchHnpM",
+    "formalBrowserQa": "TinyFish run4502a091-1532-402c-9313-ba2a1a178fb2実行中。新SHAの証跡へ流用しない。"
   }
 }
