@@ -6,7 +6,62 @@
 → 記録を凍結して commit → 別 Agent レビュー → 最終 SHA の検証 → draft PR → CI・正式 Preview → Ready。
 merge と Production 操作は別判断。詳細は [AGENTS.md](../AGENTS.md)。Cloud は既存 checkout を使う。
 
-Node は `.node-version`、依存は `npm ci`。`setup:cloud` は依存と公式 Playwright Chromium を準備する。
+## Cloud タスクの開始
+
+[Issue #5](https://github.com/tyask/mille/issues/5) の開始手順を使う。
+Cloud の公式仕様には[バックグラウンドでの repository refresh](https://learn.chatgpt.com/docs/environments/cloud-environments#reuse-and-update-saved-state)がある。
+これは既存タスクの作業状態を保持することや、作業開始時点で最新 main と同期済みであることの保証とは区別する。
+各タスクで既存 checkout を使い、重複 worktree を作らない。
+
+`/workspace/mille` で `AGENTS.md` を読み、`git status --short`、`git branch --show-current`、
+`git rev-parse HEAD` を確認する。Node を `.node-version` に合わせ、開始の意図に応じて次を選ぶ。
+
+| 意図 | コマンド | 条件と動作 |
+| --- | --- | --- |
+| 承認済みの新規作業 | `npm run task:start -- new codex/<name>` | 計画・保存済み Issue の両承認後。clean で現在 HEAD が fetch 済み `origin/main` の祖先の場合だけ、その最新 SHA から新しいブランチを作る。local main は動かさない。 |
+| 継続作業・調査 | `npm run task:start -- continue <expectedbranch>` | 現在ブランチが期待値と一致することを必須にし、fetch 後に状態を報告する。checkout や作業ファイルを同期しない。 |
+
+`<name>` と `<expectedbranch>` は実際の承認済み作業名・期待ブランチ名に置き換える。
+両承認前は `continue` の調査・状態報告までにする。新規か継続か、または期待ブランチが不明なら現在ブランチを確認用に使って
+`continue` で確認・報告し、編集やブランチ作成を止める。この確認を継続作業への承認とは扱わない。
+現在ブランチを特定できない場合や detached HEAD の場合は状態を報告して止める。
+新規開始元は main に限らず、main に取り込まれた旧 feature branch でも祖先条件を満たせばよい。
+切替先の追跡ファイルと ignored ファイルが衝突する場合は、上書きせず拒否する。
+
+結果 JSON で fetch の成否、HEAD、基準となる `origin/main` の完全 SHA、差分、依存状態を確認する。
+`new` はブランチ作成結果も報告する。dirty、未公開コミット、main や自身の remote branch との
+遅れ・先行・分岐があれば、その内容と必要な判断を報告する。SHA が異なるだけで内容が古いとは断定しない。
+fetch 失敗時は古い remote-tracking ref を最新確認済みと扱わず、原因と阻害要因を報告する。
+`continue` の Git 変更は fetch のみで、pull / reset / stash / rebase は自動実行しない。
+旧ブランチ、未コミット変更、ignored ファイルを削除しない。
+最新 main を含み、自身の remote branch と一致する公開済み feature branch は、main より先行していても通常の継続として扱う。
+main への遅れ、自身の remote との差、dirty、未公開コミット、依存状態が unknown / stale の場合は要対応になる。
+
+| 終了コード | 意味 |
+| --- | --- |
+| `0` | CLI の確認条件成立。実装の両承認やアプリ動作検証を代替しない。 |
+| `2` | 要対応で ready ではない。JSON の状態と、既に行われたブランチ作成の有無を確認する。 |
+| `1` | 失敗・拒否。原因を確認し、同じ条件のまま繰り返さない。 |
+
+## 依存とブラウザの準備
+
+依存の状態は `node_modules/.mille-dependencies.json` の導入記録を照合する。
+記録がない `unknown` や依存定義・lockfile・Node 等との不一致を示す
+`stale` は、`node_modules` が存在していても導入済みと扱わない。両承認後、次を実行する。
+
+```bash
+cd /workspace/mille
+npm run deps:sync
+npm run task:start -- continue codex/task-name
+```
+
+最後のブランチ名は現在の承認済みブランチに置き換える。`deps:sync` は `npm ci` で依存を再導入し、
+成功した内容を記録する。Chromium は取得しない。再確認で他の要対応事項が残る場合は解消済みと扱わない。
+`new` がブランチ作成後に依存不足を報告した場合も、そのブランチを保持してこの手順に進む。
+同名の `new` を繰り返したり、ブランチを削除してやり直したりしない。
+
+`npm run setup:cloud` は依存と公式 Playwright Chromium を準備する。Git の fetch・ブランチ作成・同期は行わない。
+Git 確認は `task:start`、ブラウザが不要な依存再導入は `deps:sync` に分ける。
 配布先 `registry.npmjs.org`、`cdn.playwright.dev`、`storage.googleapis.com` が必要。
 拒否はサポートされるネットワーク設定で解消し、CA・proxy・download 経路を変更しない。
 書込可能なキャッシュにはプロセスだけ `npm_config_cache=/workspace/.npm-cache`、
@@ -15,6 +70,14 @@ Node は `.node-version`、依存は `npm ci`。`setup:cloud` は依存と公式
 `dev:cloud` はプロバイダーの資格情報を子プロセスへ引き継がず、ループバック PGlite と架空 A/B を使う。
 `.env` 系ファイルがある場合は起動を拒否する。既存ファイルを勝手に削除・移動しない。
 停止すると自分で起動した DB・アプリを終了する。
+起動したプロセスは公開 snapshot からの復元後も動いているとは仮定しない。
+必要なタスクで `npm run dev:cloud` を起動し、HTTP 200 のログイン画面に架空 A/B の選択肢があり、
+未認証の `/api/me` が HTTP 401 を返すことを確認する。ブラウザでの機能確認は `npm run qa:cloud` を使う。
+
+Cloud の `start_skill` へ統合する本文と反映手順は [Cloud 起動指示](cloud-start-skill.md) を参照する。
+この変更では公開環境へ起動指示を反映していない。最新の公開設定を確認できず、取得できる旧ドラフトだけで
+最新設定を置き換えない。設定の保存・公開、既存タスクへの反映、新規タスクでの復元検証は別々の証拠で報告する。
+既存タスクが最新公開版へ自動移行したとは主張しない。Issue #3 / PR #4 のワークスペース機能は本件の対象外。
 
 ## 正式環境
 
