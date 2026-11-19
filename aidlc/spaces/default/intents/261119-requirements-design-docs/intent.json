@@ -1,0 +1,82 @@
+{
+  "id": "261119-requirements-design-docs",
+  "issue": "https://github.com/tyask/mille/issues/7",
+  "branch": "codex/docs-requirements-design-20261119",
+  "baseSha": "44f3d11b765e3f3645471e80c0ccbf2c82d7f9e9",
+  "state": "frozen",
+  "approvedIssueSha256": "39f535b302e0b9993b73f3b72a5887b02192ed8cc273183f6e03eec1bc50d83d",
+  "approvalEvidence": "approvals.json",
+  "implementationPlanSha256": "d495f7a02ccc59c2366b1d7bd02284ddb17a878d0333da664f9cedd7f856e775",
+  "engine": "Cakeの手順を踏襲した記録。公式AI-DLC engineのreceiptではない。",
+  "frozenAt": "2026-11-19T12:51:15Z",
+  "selfReview": {
+    "complete": true,
+    "checks": [
+      "既存実装とP1〜P4の計画・提案値を区別",
+      "家族共通の朝昼夕・人数任意・量不明を0にしない要件の整合",
+      "追加・更新するMarkdown全体の相対参照36件に欠落なし",
+      "技術設計のJSON例3件をparse",
+      "画面HTMLは11ビュー、JavaScript・iframe・外部読込なし",
+      "SVG構成図3件とミルフィーユ配色を保存",
+      "変更対象をREADME/docs/aidlcへ限定",
+      "静的HTMLの外側レイアウトCSSをbody直下とsample直下へ限定",
+      "食事全体と料理だけのコピーを区別し、後者のPOST/PUT・人数・コピー先競合と再送を具体化"
+    ]
+  },
+  "preCommitValidation": {
+    "relativeLinks": {
+      "checked": 36,
+      "missing": 0
+    },
+    "jsonExamples": {
+      "passed": 3,
+      "failed": 0
+    },
+    "requirementsAcceptanceCriteria": {
+      "unchecked": 21,
+      "note": "アプリの受入条件。文書保存では完了扱いしない。"
+    },
+    "staticVisuals": {
+      "svgDiagrams": 3,
+      "htmlViews": 11,
+      "scripts": 0
+    },
+    "cloudEnvironment": {
+      "state": "failed",
+      "reason": "起動タイムアウトによりexecutorへ接続できない。GitHub connectorを利用。"
+    },
+    "unperformed": [
+      "ローカルstatus/branch/HEAD/task:start",
+      "依存導入・最終SHAのclean checkout",
+      "lint・型検査・テスト・build",
+      "ブラウザでの描画・操作QA",
+      "正式Preview/実Google OAuth"
+    ],
+    "sourceProvenance": {
+      "technical": "承認済み技術詳細設計v0.1",
+      "screens": "承認済み画面設計v0.2と操作サンプル画面の静的資料",
+      "originalMockSourceSha256": "21a7ed883d83bc3e60107179de09a3000619159c925a2011cdcd8e111054f45e"
+    }
+  },
+  "remaining": [
+    "最終commitの新しい文脈での別Agent読み取りレビュー",
+    "最終SHAと差分の再取得・確認",
+    "draft PRと同一HEADのCI確認",
+    "不足する最終SHA/ブラウザ/正式Previewの検証。揃うまでdraft維持"
+  ],
+  "scopeExclusions": [
+    "アプリ機能実装",
+    "DB適用",
+    "依存更新",
+    "Production操作",
+    "PR merge"
+  ],
+  "revisionHistory": [
+    {
+      "recordedAt": "2026-11-19T12:51:15Z",
+      "state": "reopened-and-frozen",
+      "priorSha": "2bd9adef91f21f050a87859a825a0b06ec900f2a",
+      "reason": "静的HTML資料のギャラリー用header/nav/h2のCSSを外側要素へ限定し、画面モック内へ作用しないよう修正。ブラウザ描画検証は未実施のまま。 独立レビューで判明した料理単位のコピー契約の不足を、詳細GETからコピー先のPOST/PUTへ進む入力補助、人数・対象版・再送の扱いとして追記。"
+    }
+  ]
+}
