@@ -4,8 +4,8 @@
   "baseSha": "fd2ae2fb450e34ac882647c345e81e3e53f479dd",
   "branch": "codex/node-24-22-3",
   "state": "frozen",
-  "phase": "node-update",
-  "frozenAt": "2026-11-19T15:37:17Z",
+  "phase": "next-generate-lock",
+  "frozenAt": "2026-11-19T15:42:31Z",
   "approvedIssueSha256": "895101b3981329fba90474b36ffd3dd4c4c255c9650e10e49a7ee916ad7088cd",
   "implementationPlanSha256": "50ef17a5fd3f558a464dce31ac28bde4fc87d67ebce075976a012881267aeffa",
   "approvalEvidence": "approvals.json",
@@ -25,5 +25,15 @@
     "Nodeの独立レビューと最終SHAのCI",
     "NodeのCI成功後に別のNext更新PRを作成",
     "正式Previewは未実施のためdraftを維持"
+  ],
+  "nextBranch": "codex/next-16-4-6",
+  "nextBaseSha": "c4d328e0f2f2cfb498457f0e7c3dc4c8b3b859f7",
+  "revisionHistory": [
+    {
+      "state": "reopened-and-frozen",
+      "recordedAt": "2026-11-19T15:42:31Z",
+      "priorSha": "c4d328e0f2f2cfb498457f0e7c3dc4c8b3b859f7",
+      "reason": "Node PRのCI成功後、別のNextブランチで公開npm lockfile生成用の一時CIを開始。固定Node/npmを使い、生成したSHAを照合後にCI定義を除去する。"
+    }
   ]
 }

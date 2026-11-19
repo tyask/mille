@@ -1,0 +1,64 @@
+name: Next lockfile generation
+on:
+  pull_request:
+    branches: [codex/node-24-22-3]
+permissions:
+  contents: read
+jobs:
+  generate:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'codex/next-16-4-6'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Generate and report public npm lockfile
+        env:
+          npm_config_registry: https://registry.npmjs.org
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const source = fs.readFileSync('package.json', 'utf8');
+          if ((source.match(/"16\.4\.3"/g) || []).length !== 2) throw Error('Unexpected source versions');
+          const target = source.replaceAll('"16.4.3"', '"16.4.6"');
+          const expected = JSON.parse(source);
+          if (expected.dependencies.next !== '16.4.3' || expected.devDependencies['eslint-config-next'] !== '16.4.3') throw Error('Unexpected starting manifest');
+          expected.dependencies.next = '16.4.6';
+          expected.devDependencies['eslint-config-next'] = '16.4.6';
+          if (JSON.stringify(JSON.parse(target)) !== JSON.stringify(expected)) throw Error('Unexpected manifest changes');
+          fs.writeFileSync('package.json', target);
+          NODE
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { execFileSync } = require('node:child_process');
+          const { createHash } = require('node:crypto');
+          const bytes = fs.readFileSync('package-lock.json');
+          const raw = bytes.toString('utf8');
+          if (!Buffer.from(raw, 'utf8').equals(bytes) || !raw.endsWith('\n')) throw Error('Unexpected lockfile encoding');
+          const lock = JSON.parse(raw);
+          const manifest = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (lock.lockfileVersion !== 3 || !lock.packages?.['']) throw Error('Unexpected lockfile format');
+          const specs = object => JSON.stringify(Object.entries(object).sort(([a], [b]) => a.localeCompare(b)));
+          if (specs(lock.packages[''].dependencies) !== specs(manifest.dependencies) || specs(lock.packages[''].devDependencies) !== specs(manifest.devDependencies)) throw Error('Lock root differs from package.json');
+          for (const name of ['next', 'eslint-config-next']) if (lock.packages['node_modules/' + name]?.version !== '16.4.6') throw Error('Expected package version missing');
+          for (const entry of Object.values(lock.packages)) {
+            if (!entry.resolved) continue;
+            const url = new URL(entry.resolved);
+            if (url.origin !== 'https://registry.npmjs.org' || url.username || url.password || url.search || url.hash) throw Error('Unapproved lockfile URL');
+          }
+          const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim();
+          const chunkSize = 3000;
+          console.log('MILLE_LOCK_MANIFEST ' + JSON.stringify({
+            head: git('rev-parse', 'HEAD'), baseLockBlob: git('rev-parse', 'HEAD:package-lock.json'),
+            manifestBlob: git('hash-object', 'package.json'), lockBlob: git('hash-object', 'package-lock.json'),
+            sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length, chunks: Math.ceil(raw.length / chunkSize),
+            node: process.version, npm: execFileSync('npm', ['--version'], { encoding: 'utf8' }).trim(),
+          }));
+          for (let i = 0; i < raw.length; i += chunkSize) console.log('MILLE_LOCK_CHUNK ' + i / chunkSize + ' ' + JSON.stringify(raw.slice(i, i + chunkSize)));
+          NODE
