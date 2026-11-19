@@ -13,7 +13,7 @@
 
 操作と権限の詳細は [ワークスペース仕様](docs/workspaces.md) を参照してください。
 
-Node.js **24.22.3** / Next.js **16.4.3** / React **19.2.8** / TypeScript **6.0.3** /
+Node.js **24.22.3** / Next.js **16.4.6** / React **19.2.8** / TypeScript **6.0.3** /
 Auth.js **5.0.0-beta.32** / Neon PostgreSQL / Vercel。
 
 ## ローカルで試す
