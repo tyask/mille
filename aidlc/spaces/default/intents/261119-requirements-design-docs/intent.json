@@ -8,7 +8,7 @@
   "approvalEvidence": "approvals.json",
   "implementationPlanSha256": "d495f7a02ccc59c2366b1d7bd02284ddb17a878d0333da664f9cedd7f856e775",
   "engine": "Cakeの手順を踏襲した記録。公式AI-DLC engineのreceiptではない。",
-  "frozenAt": "2026-11-19T12:44:10Z",
+  "frozenAt": "2026-11-19T12:51:15Z",
   "selfReview": {
     "complete": true,
     "checks": [
@@ -18,7 +18,9 @@
       "技術設計のJSON例3件をparse",
       "画面HTMLは11ビュー、JavaScript・iframe・外部読込なし",
       "SVG構成図3件とミルフィーユ配色を保存",
-      "変更対象をREADME/docs/aidlcへ限定"
+      "変更対象をREADME/docs/aidlcへ限定",
+      "静的HTMLの外側レイアウトCSSをbody直下とsample直下へ限定",
+      "食事全体と料理だけのコピーを区別し、後者のPOST/PUT・人数・コピー先競合と再送を具体化"
     ]
   },
   "preCommitValidation": {
@@ -68,5 +70,13 @@
     "依存更新",
     "Production操作",
     "PR merge"
+  ],
+  "revisionHistory": [
+    {
+      "recordedAt": "2026-11-19T12:51:15Z",
+      "state": "reopened-and-frozen",
+      "priorSha": "2bd9adef91f21f050a87859a825a0b06ec900f2a",
+      "reason": "静的HTML資料のギャラリー用header/nav/h2のCSSを外側要素へ限定し、画面モック内へ作用しないよう修正。ブラウザ描画検証は未実施のまま。 独立レビューで判明した料理単位のコピー契約の不足を、詳細GETからコピー先のPOST/PUTへ進む入力補助、人数・対象版・再送の扱いとして追記。"
+    }
   ]
 }
