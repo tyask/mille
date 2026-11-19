@@ -4,12 +4,12 @@
   "branch": "codex/fix-qa-dev-indicator",
   "baseSha": "44f3d11b765e3f3645471e80c0ccbf2c82d7f9e9",
   "state": "frozen",
-  "frozenAt": "2026-11-19T15:09:50Z",
+  "frozenAt": "2026-11-19T15:14:35Z",
   "approvedIssueSha256": "5916e49c872dfee36b85bae8d6fdb7fc7258446d237811a436937ab4ab0bbdd4",
   "implementationPlanSha256": "9c728d58458bf907a0ebc50ebddfb917b4ec87948fec780a37646c933d01508f",
   "approvalEvidence": "approvals.json",
   "engine": "Cakeの手順を踏襲した記録。公式AI-DLC engineのreceiptではない。",
-  "phase": "temporary-runner-matrix",
+  "phase": "normal-ci",
   "preCommitValidation": {
     "configFlag": [
       {
@@ -31,14 +31,14 @@
       "performed": false,
       "reason": "Cloud作業環境の起動タイムアウトでcheckoutと実行が利用できない。GitHub Actionsを利用。"
     },
-    "temporaryDiagnostic": "出力は固定分類・真偽値・既存で確認済みの限定HTTP情報に限定。ログ全文・例外本文・実URL・トークンを出力しない。",
-    "ciFlag": "QA時かつ親CIが厳密にtrueと一致する場合だけ、Next子プロセスへCI=trueを設定。"
+    "temporaryDiagnostic": "最終差分から削除。",
+    "ciFlag": "QA時かつ親CIが厳密にtrueと一致する場合だけ、Next子プロセスへCI=trueを設定。",
+    "originalWorkflowBlob": "90c9912f1768ce188b54a0635c4768777a69adf8"
   },
   "remaining": [
-    "完全SHAでの独立レビュー",
-    "Ubuntu 24.04・26.04で同じSHAのQAを実行",
-    "CI設定復元後に完全SHAを再レビューして通常CIを確認",
-    "正式Previewは本修正の検証範囲外。マージせずdraftとする"
+    "最終SHAの独立再レビュー",
+    "最終SHAの通常CI",
+    "正式Previewとローカルcheckoutは未実施のためdraftを維持"
   ],
   "revisionHistory": [
     {
@@ -52,6 +52,12 @@
       "state": "reopened-and-frozen",
       "priorSha": "bb4374b882a8372e2ea324a93e87785c0b142e3e",
       "reason": "両Ubuntuで通常インジケーターが消えていたが、残ったInsight通知が同じクリックを遮断した。QAのNext子プロセスにだけ実際の親CI=trueを反映し、NextのCI既定の通知動作を使う。依存監査、通常の開発起動、既存のQA操作は維持。"
+    },
+    {
+      "recordedAt": "2026-11-19T15:14:35Z",
+      "state": "reopened-and-frozen",
+      "priorSha": "bb1b4dff3363d27477307d3b83e2796ffda19649",
+      "reason": "承認済み計画に沿い、比較後に一時診断を削除し、CI設定を基準mainの同一blobに復元する。修正の設定フラグとNext子へのCI情報反映を維持。実行結果はPRに記録する。"
     }
   ]
 }

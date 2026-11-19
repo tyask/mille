@@ -3,7 +3,7 @@ import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type { Browser, BrowserContext, Page, Response } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { TEST_USERS } from "../../lib/shared/test-users";
 import type { IssuedInvitation, Workspace, WorkspaceState } from "../../lib/shared/workspaces";
 import { CloudStartupError, cloudPort, isolatedEnvironment, rootDirectory, startCloudServer, type CloudServer } from "./dev";
@@ -159,7 +159,6 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
     browser = await chromium.launch({ headless: true, env: isolatedEnvironment(process.env) });
     proof.resources.browsers = 1; proof.environment.chromium = browser.version();
     for (const mobile of [false, true]) {
-      const memberClientErrors: string[] = [];
       const loggedIn: { page: Page; context: BrowserContext; item: CheckCase; user: (typeof TEST_USERS)[number]; started: number; boundaryFailed(): boolean }[] = [];
       for (const user of TEST_USERS) {
         const item = proof.cases.find(entry => entry.mobile === mobile && entry.userKey === user.key)!;
@@ -172,18 +171,6 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         });
         contexts.add(context); proof.resources.browserContexts = contexts.size;
         const page = await context.newPage(); page.setDefaultTimeout(30_000);
-        if (!mobile && user.key === "user-b") {
-          function classifyClientError(message: string) {
-            const kind = /hydrat|server rendered (HTML|text)/i.test(message) ? "hydration"
-              : /server action/i.test(message) ? "server-action"
-              : /failed to fetch|networkerror/i.test(message) ? "network"
-              : /resource.*(404|500)/i.test(message) ? "resource"
-              : "other";
-            if (!memberClientErrors.includes(kind)) memberClientErrors.push(kind);
-          }
-          page.on("pageerror", error => classifyClientError(error.message));
-          page.on("console", message => { if (message.type() === "error") classifyClientError(message.text()); });
-        }
         await page.addInitScript(() => {
           window.addEventListener("pageshow", event => {
             if (!event.persisted) return;
@@ -356,121 +343,15 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         await selectedWorkspace(member.page, renamed);
         member.item.checks.push("incoming-invitation-join-ui");
       } else {
-        const startedInvitation = Date.now();
-        const responses: Array<{ operation: string; elapsedMs: number; route: string; method: string; status: number }> = [];
-        const diagnosticRoutes = new Set([
-          "/api/auth/csrf", "/api/auth/providers", "/api/auth/signout",
-          "/api/auth/callback/test-login", "/api/auth/session", "/api/me",
-        ]);
-        let startedStep = startedInvitation;
-        let errorKind: "timeout" | "other" | null = null;
-        let signoutBlocker: string | null = null;
-        let signoutDom: Record<string, unknown> | null = null;
-        function invitationStep(operation: string) {
-          stage = operation;
-          startedStep = Date.now();
-        }
-        function recordInvitationResponse(response: Response) {
-          if (responses.length >= 32) return;
-          try {
-            const url = new URL(response.url());
-            if (url.origin !== origin) return;
-            const route = url.pathname === `/invite/${invitation.token}` ? "/invite/[token]"
-              : diagnosticRoutes.has(url.pathname) ? url.pathname : null;
-            const method = response.request().method();
-            const status = response.status();
-            if (route && (method === "GET" || method === "POST") && Number.isInteger(status) && status >= 100 && status <= 599) {
-              responses.push({ operation: stage, elapsedMs: Date.now() - startedInvitation, route, method, status });
-            }
-          } catch { /* Diagnostic observations do not affect the browser check. */ }
-        }
-        member.page.on("response", recordInvitationResponse);
-        try {
-          invitationStep("workspace-invitation-signout-click");
-          await member.page.getByRole("button", { name: "ログアウト", exact: true }).click();
-          invitationStep("workspace-invitation-signedout-screen");
-          await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).waitFor();
-          invitationStep("workspace-invitation-signedout-identity");
-          requireCondition((await readIdentity(member.page)).status === 401);
-          invitationStep("workspace-invitation-open");
-          await member.page.goto(`${origin}/invite/${invitation.token}`, { waitUntil: "networkidle" });
-          invitationStep("workspace-invitation-signin-click");
-          await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).click();
-          invitationStep("workspace-invitation-join-visible");
-          await member.page.getByTestId("workspace-join-submit").waitFor();
-          invitationStep("workspace-invitation-return-identity");
-          requireCondition(new URL(member.page.url()).pathname === `/invite/${invitation.token}`
-            && (await readIdentity(member.page)).body.user?.id === member.user.id);
-        } catch (error) {
-          errorKind = error instanceof Error && error.name === "TimeoutError" ? "timeout" : "other";
-          if (errorKind === "timeout" && stage === "workspace-invitation-signout-click" && error instanceof Error) {
-            // Inspect Playwright's action log in memory. Emit only fixed labels.
-            const actionLog = error.message;
-            if (actionLog.includes("intercepts pointer events")) {
-              signoutBlocker = actionLog.includes("<nextjs-portal") ? "next-dev-overlay" : "pointer-interception";
-            } else if (actionLog.includes("element is not enabled")) signoutBlocker = "disabled";
-            else if (actionLog.includes("element is not visible")) signoutBlocker = "hidden";
-            else if (actionLog.includes("element is not stable")) signoutBlocker = "unstable";
-            else if (actionLog.includes("element is outside of the viewport")) signoutBlocker = "outside-viewport";
-            else if (actionLog.includes("strict mode violation")) signoutBlocker = "multiple-matches";
-            else if (!actionLog.includes("locator resolved to")) signoutBlocker = "no-locator-match";
-            else signoutBlocker = "other";
-
-            // Snapshot only properties that distinguish visibility and hit testing.
-            let timeout: ReturnType<typeof setTimeout> | undefined;
-            try {
-              signoutDom = await Promise.race([
-                member.page.evaluate(() => {
-                  const button = document.querySelector<HTMLButtonElement>("button.ws-logout");
-                  const content = document.querySelector<HTMLElement>(".session-content");
-                  const rect = button?.getBoundingClientRect();
-                  const hit = rect && document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-                  const badge = document.querySelector("nextjs-portal")?.shadowRoot?.querySelector("[data-next-badge]");
-                  const badgeRoot = badge?.closest("[data-next-badge-root]");
-                  return {
-                    buttonPresent: Boolean(button),
-                    disabled: button?.disabled ?? null,
-                    hidden: button ? Boolean(button.closest("[hidden]")) || getComputedStyle(button).visibility === "hidden" : null,
-                    sessionHidden: content ? content.hidden || getComputedStyle(content).visibility === "hidden" : null,
-                    devBadgeVisible: badgeRoot ? getComputedStyle(badgeRoot).display !== "none" : null,
-                    devLogoPresent: Boolean(badge?.querySelector("[data-next-mark]")),
-                    devErrorBadge: badge?.getAttribute("data-error") === "true",
-                    devInsightsBadge: badge?.getAttribute("data-insights-only") === "true",
-                    devIssueControl: Boolean(badge?.querySelector("[data-issues-open]")),
-                    centerHit: !hit ? "none" : button?.contains(hit) ? "button"
-                      : hit.closest("nextjs-portal") ? "next-dev-overlay" : "other",
-                  };
-                }).catch(() => null),
-                new Promise<null>(resolveTimeout => { timeout = setTimeout(() => resolveTimeout(null), 1_000); }),
-              ]);
-            } finally {
-              clearTimeout(timeout);
-            }
-          }
-          throw error;
-        } finally {
-          member.page.off("response", recordInvitationResponse);
-          let destination = "other";
-          try {
-            const url = new URL(member.page.url());
-            if (url.origin === origin) {
-              if (url.pathname === `/invite/${invitation.token}`) destination = "expected-invitation";
-              else if (url.pathname === "/") destination = "home";
-            }
-          } catch { /* Never record raw URLs. */ }
-          console.log(`MILLE_INVITATION_QA ${JSON.stringify({
-            outcome: errorKind === null ? "passed" : "failed",
-            operation: stage,
-            stepElapsedMs: Date.now() - startedStep,
-            totalElapsedMs: Date.now() - startedInvitation,
-            errorKind,
-            signoutBlocker,
-            signoutDom,
-            destination,
-            responses,
-            observedClientErrors: memberClientErrors,
-          })}`);
-        }
+        stage = "workspace-invitation-login";
+        await member.page.getByRole("button", { name: "ログアウト", exact: true }).click();
+        await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).waitFor();
+        requireCondition((await readIdentity(member.page)).status === 401);
+        await member.page.goto(`${origin}/invite/${invitation.token}`, { waitUntil: "networkidle" });
+        await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).click();
+        await member.page.getByTestId("workspace-join-submit").waitFor();
+        requireCondition(new URL(member.page.url()).pathname === `/invite/${invitation.token}`
+          && (await readIdentity(member.page)).body.user?.id === member.user.id);
         member.item.checks.push("invitation-login-return");
         stage = "workspace-join";
         await workspaceMutation(member.page, `/api/invitations/${invitation.token}/accept`, "POST", () => member.page.getByTestId("workspace-join-submit").click());
