@@ -1,0 +1,19 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/11",
+  "sourceThreadId": "01a1c049-8d45-73fd-a5ab-1cd4330f209e",
+  "recordedAt": "2026-11-19T14:59:50Z",
+  "planApproval": {
+    "reply": "修正を進めてください",
+    "scope": "診断したログアウト遮断をQAのローカル起動に限定して修正する。"
+  },
+  "issueApproval": {
+    "question": "Issue #11の本文で実装と検証を進めてよいですか？",
+    "reply": "はい"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "sha256": "5916e49c872dfee36b85bae8d6fdb7fc7258446d237811a436937ab4ab0bbdd4",
+    "updatedAt": "2026-11-19T14:57:10Z"
+  }
+}

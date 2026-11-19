@@ -17,6 +17,7 @@ function sourceSha() {
 const config: NextConfig = {
   env: { MILLE_SOURCE_SHA: sourceSha() },
   poweredByHeader: false,
+  ...(process.env.MILLE_CLOUD_QA_DISABLE_DEV_INDICATOR === "1" ? { devIndicators: false as const } : {}),
   async headers() {
     return [{
       source: "/:path*",
