@@ -4,8 +4,8 @@
   "baseSha": "fd2ae2fb450e34ac882647c345e81e3e53f479dd",
   "branch": "codex/node-24-22-3",
   "state": "frozen",
-  "phase": "next-generate-lock",
-  "frozenAt": "2026-11-19T15:42:31Z",
+  "phase": "next-update",
+  "frozenAt": "2026-11-19T15:45:05Z",
   "approvedIssueSha256": "895101b3981329fba90474b36ffd3dd4c4c255c9650e10e49a7ee916ad7088cd",
   "implementationPlanSha256": "50ef17a5fd3f558a464dce31ac28bde4fc87d67ebce075976a012881267aeffa",
   "approvalEvidence": "approvals.json",
@@ -19,12 +19,23 @@
     "localExecution": {
       "performed": false,
       "reason": "Cloud起動失敗のためcheckoutと実行を使えない。最終HEADでGitHub Actionsを確認する。"
+    },
+    "nextGeneration": {
+      "run": "https://github.com/tyask/mille/actions/runs/44558145250",
+      "head": "ea528b64b00794d0980c743dc682c4b1801c4964",
+      "node": "v24.22.3",
+      "npm": "11.19.1",
+      "lockSha256": "91bd70d05cb516960b997bc54ab021e34f8f235181389ae94a5cc50be28ac1b0",
+      "lockBlob": "03aa52159ba0ccc32cf93c3fb6842c913803617f",
+      "manifestBlob": "4637b0ffe5b13f818515a10b1b041bc669810363",
+      "versionChanges": 12,
+      "publicRegistry": "https://registry.npmjs.org",
+      "temporaryWorkflow": "removed"
     }
   },
   "remaining": [
-    "Nodeの独立レビューと最終SHAのCI",
-    "NodeのCI成功後に別のNext更新PRを作成",
-    "正式Previewは未実施のためdraftを維持"
+    "最終Next SHAの独立レビューと通常CI、および監査比較",
+    "正式Previewは未確認のためNode/Nextともdraftを維持"
   ],
   "nextBranch": "codex/next-16-4-6",
   "nextBaseSha": "c4d328e0f2f2cfb498457f0e7c3dc4c8b3b859f7",
@@ -34,6 +45,12 @@
       "recordedAt": "2026-11-19T15:42:31Z",
       "priorSha": "c4d328e0f2f2cfb498457f0e7c3dc4c8b3b859f7",
       "reason": "Node PRのCI成功後、別のNextブランチで公開npm lockfile生成用の一時CIを開始。固定Node/npmを使い、生成したSHAを照合後にCI定義を除去する。"
+    },
+    {
+      "recordedAt": "2026-11-19T15:45:05Z",
+      "state": "reopened-and-frozen",
+      "priorSha": "ea528b64b00794d0980c743dc682c4b1801c4964",
+      "reason": "Node 24.22.3/npm 11.19.1で生成したNext 16.4.6 lockfileを79チャンクから復元し、生成時のSHA-256と一致を確認。一時CIを削除して通常CIに戻す。"
     }
   ]
 }
