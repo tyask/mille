@@ -1,0 +1,41 @@
+{
+  "id": "261119-qa-dev-indicator",
+  "issue": "https://github.com/tyask/mille/issues/11",
+  "branch": "codex/fix-qa-dev-indicator",
+  "baseSha": "44f3d11b765e3f3645471e80c0ccbf2c82d7f9e9",
+  "state": "frozen",
+  "frozenAt": "2026-11-19T14:59:50Z",
+  "approvedIssueSha256": "5916e49c872dfee36b85bae8d6fdb7fc7258446d237811a436937ab4ab0bbdd4",
+  "implementationPlanSha256": "9c728d58458bf907a0ebc50ebddfb917b4ec87948fec780a37646c933d01508f",
+  "approvalEvidence": "approvals.json",
+  "engine": "Cakeの手順を踏襲した記録。公式AI-DLC engineのreceiptではない。",
+  "phase": "temporary-runner-matrix",
+  "preCommitValidation": {
+    "configFlag": [
+      {
+        "input": "unset",
+        "devIndicators": "default"
+      },
+      {
+        "input": "0",
+        "devIndicators": "default"
+      },
+      {
+        "input": "1",
+        "devIndicators": false
+      }
+    ],
+    "testOperationsUnchanged": true,
+    "environmentScope": "親の環境変数を継承せず、ローカルQAが明示指定した場合のみNextの子プロセスへ渡す。",
+    "localExecution": {
+      "performed": false,
+      "reason": "Cloud作業環境の起動タイムアウトでcheckoutと実行が利用できない。GitHub Actionsを利用。"
+    }
+  },
+  "remaining": [
+    "完全SHAでの独立レビュー",
+    "Ubuntu 24.04・26.04で同じSHAのQAを実行",
+    "CI設定復元後に完全SHAを再レビューして通常CIを確認",
+    "正式Previewは本修正の検証範囲外。マージせずdraftとする"
+  ]
+}

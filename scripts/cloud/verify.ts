@@ -140,7 +140,14 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
     } else {
       stage = "server"; proof.resources.servers = null; proof.resources.databases = null;
       // Invitation URLs contain bearer capabilities; Next's request logs must not retain them.
-      server = await startCloudServer({ port: cloudPort(args[1] ?? process.env.PORT ?? 3000), hostname: "127.0.0.1", quiet: true, handleSignals: false });
+      server = await startCloudServer({
+        port: cloudPort(args[1] ?? process.env.PORT ?? 3000),
+        hostname: "127.0.0.1",
+        quiet: true,
+        handleSignals: false,
+        // The Next dev indicator can intercept clicks on the workspace's lower-left controls.
+        disableDevIndicator: true,
+      });
       proof.resources.servers = 1; proof.resources.databases = 1;
       proof.target.origin = new URL(server.url).origin;
     }

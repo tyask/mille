@@ -108,8 +108,15 @@ export function forwardLogs(stream: NodeJS.ReadableStream, target: NodeJS.Writab
 }
 
 /** Parent-owned, disposable PGlite survives Next worker reloads and is closed with Next. */
-export async function startCloudServer({ port: requestedPort, hostname = "0.0.0.0", quiet = false, handleSignals = true }: {
+export async function startCloudServer({
+  port: requestedPort,
+  hostname = "0.0.0.0",
+  quiet = false,
+  handleSignals = true,
+  disableDevIndicator = false,
+}: {
   port?: number; hostname?: "0.0.0.0" | "127.0.0.1"; quiet?: boolean; handleSignals?: boolean;
+  disableDevIndicator?: boolean;
 } = {}): Promise<CloudServer> {
   let port: number;
   try {
@@ -159,6 +166,7 @@ export async function startCloudServer({ port: requestedPort, hostname = "0.0.0.
     if (closing) throw new Error("起動を中断しました。");
     assertCloudStartupAllowed(process.env);
     const environment = cloudChildEnvironment(process.env, database, url);
+    if (disableDevIndicator) environment.MILLE_CLOUD_QA_DISABLE_DEV_INDICATOR = "1";
     const next = createRequire(import.meta.url).resolve("next/dist/bin/next");
     child = spawn(process.execPath, [next, "dev", "--hostname", hostname, "--port", String(port)], {
       cwd: rootDirectory, env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"],
