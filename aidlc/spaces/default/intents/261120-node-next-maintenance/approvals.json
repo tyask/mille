@@ -1,0 +1,19 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/13",
+  "sourceThreadId": "01a1c049-8d45-73fd-a5ab-1cd4330f209e",
+  "recordedAt": "2026-11-19T15:37:17Z",
+  "planApproval": {
+    "reply": "じゃあそうして",
+    "scope": "Node.jsを先に24.22.3へ更新し、CI成功後にNext.jsを別PRで16.4.6へ更新する。"
+  },
+  "issueApproval": {
+    "question": "Issue #13の本文で実装と検証を進めてよいですか？",
+    "reply": "はい"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-19T15:35:28Z",
+    "sha256": "895101b3981329fba90474b36ffd3dd4c4c255c9650e10e49a7ee916ad7088cd"
+  }
+}
