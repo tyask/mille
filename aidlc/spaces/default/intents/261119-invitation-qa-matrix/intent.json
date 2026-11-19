@@ -1,0 +1,36 @@
+{
+  "id": "261119-invitation-qa-matrix",
+  "issue": "https://github.com/tyask/mille/issues/9",
+  "baseSha": "44f3d11b765e3f3645471e80c0ccbf2c82d7f9e9",
+  "branch": "codex/qa-invitation-ubuntu-matrix",
+  "state": "frozen",
+  "frozenAt": "2026-11-19T14:38:45Z",
+  "approvedIssueSha256": "ee3112da3be8716a779b1fcdc4cf85899e79d4027f70aa4c4ef6c76a570c5840",
+  "implementationPlanSha256": "7a49818cc612b9bf6be76164b301d35c0bec87cdbe3b0570b6941b260bf625cc",
+  "approvalEvidence": "approvals.json",
+  "engine": "Cakeの手順を踏襲した記録。公式AI-DLC engineのreceiptではない。",
+  "preCommitValidation": {
+    "staticReview": {
+      "assertions": 8,
+      "stageCount": 7,
+      "matrix": [
+        "ubuntu-24.04",
+        "ubuntu-26.04"
+      ],
+      "headCheckout": true,
+      "artifactNamesSeparated": true,
+      "stopOnFirstFailure": false,
+      "responseLimit": 32,
+      "redaction": "許可route・GET/POST・整数statusと経過時間のみ。招待パスは固定文字列。生のURLや例外本文は出力しない。"
+    },
+    "localCheck": {
+      "ran": false,
+      "reason": "選択されたCloud環境の起動失敗。GitHub Actionsで実行検証する。"
+    }
+  },
+  "remaining": [
+    "完全SHAを指定した独立した読み取りレビュー",
+    "両UbuntuのCI結果、実ランナー画像、QA診断を確認",
+    "正式Previewは比較実験の対象外。マージせず診断結果を読めるdraftで維持"
+  ]
+}

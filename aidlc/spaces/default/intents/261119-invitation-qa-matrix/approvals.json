@@ -1,0 +1,19 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/9",
+  "sourceThreadId": "01a1c049-8d45-73fd-a5ab-1cd4330f209e",
+  "recordedAt": "2026-11-19T14:38:45Z",
+  "planApproval": {
+    "reply": "了解です。別PRで検証してください。",
+    "scope": "別の診断用draft PRで、Ubuntu 24.04と26.04のCIを比較し、招待トークンを出さずに失敗箇所を特定する。"
+  },
+  "issueApproval": {
+    "reply": "お願いします",
+    "question": "Issue #9の本文で進めてよいですか？"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-19T14:36:19Z",
+    "sha256": "ee3112da3be8716a779b1fcdc4cf85899e79d4027f70aa4c4ef6c76a570c5840"
+  }
+}

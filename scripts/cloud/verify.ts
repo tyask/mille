@@ -3,7 +3,7 @@ import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type { Browser, BrowserContext, Page } from "playwright";
+import type { Browser, BrowserContext, Page, Response } from "playwright";
 import { TEST_USERS } from "../../lib/shared/test-users";
 import type { IssuedInvitation, Workspace, WorkspaceState } from "../../lib/shared/workspaces";
 import { CloudStartupError, cloudPort, isolatedEnvironment, rootDirectory, startCloudServer, type CloudServer } from "./dev";
@@ -336,15 +336,72 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         await selectedWorkspace(member.page, renamed);
         member.item.checks.push("incoming-invitation-join-ui");
       } else {
-        stage = "workspace-invitation-login";
-        await member.page.getByRole("button", { name: "ログアウト", exact: true }).click();
-        await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).waitFor();
-        requireCondition((await readIdentity(member.page)).status === 401);
-        await member.page.goto(`${origin}/invite/${invitation.token}`, { waitUntil: "networkidle" });
-        await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).click();
-        await member.page.getByTestId("workspace-join-submit").waitFor();
-        requireCondition(new URL(member.page.url()).pathname === `/invite/${invitation.token}`
-          && (await readIdentity(member.page)).body.user?.id === member.user.id);
+        const startedInvitation = Date.now();
+        const responses: Array<{ operation: string; elapsedMs: number; route: string; method: string; status: number }> = [];
+        const diagnosticRoutes = new Set([
+          "/api/auth/csrf", "/api/auth/providers", "/api/auth/signout",
+          "/api/auth/callback/test-login", "/api/auth/session", "/api/me",
+        ]);
+        let startedStep = startedInvitation;
+        let errorKind: "timeout" | "other" | null = null;
+        function invitationStep(operation: string) {
+          stage = operation;
+          startedStep = Date.now();
+        }
+        function recordInvitationResponse(response: Response) {
+          if (responses.length >= 32) return;
+          try {
+            const url = new URL(response.url());
+            if (url.origin !== origin) return;
+            const route = url.pathname === `/invite/${invitation.token}` ? "/invite/[token]"
+              : diagnosticRoutes.has(url.pathname) ? url.pathname : null;
+            const method = response.request().method();
+            const status = response.status();
+            if (route && (method === "GET" || method === "POST") && Number.isInteger(status) && status >= 100 && status <= 599) {
+              responses.push({ operation: stage, elapsedMs: Date.now() - startedInvitation, route, method, status });
+            }
+          } catch { /* Diagnostic observations do not affect the browser check. */ }
+        }
+        member.page.on("response", recordInvitationResponse);
+        try {
+          invitationStep("workspace-invitation-signout-click");
+          await member.page.getByRole("button", { name: "ログアウト", exact: true }).click();
+          invitationStep("workspace-invitation-signedout-screen");
+          await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).waitFor();
+          invitationStep("workspace-invitation-signedout-identity");
+          requireCondition((await readIdentity(member.page)).status === 401);
+          invitationStep("workspace-invitation-open");
+          await member.page.goto(`${origin}/invite/${invitation.token}`, { waitUntil: "networkidle" });
+          invitationStep("workspace-invitation-signin-click");
+          await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).click();
+          invitationStep("workspace-invitation-join-visible");
+          await member.page.getByTestId("workspace-join-submit").waitFor();
+          invitationStep("workspace-invitation-return-identity");
+          requireCondition(new URL(member.page.url()).pathname === `/invite/${invitation.token}`
+            && (await readIdentity(member.page)).body.user?.id === member.user.id);
+        } catch (error) {
+          errorKind = error instanceof Error && error.name === "TimeoutError" ? "timeout" : "other";
+          throw error;
+        } finally {
+          member.page.off("response", recordInvitationResponse);
+          let destination = "other";
+          try {
+            const url = new URL(member.page.url());
+            if (url.origin === origin) {
+              if (url.pathname === `/invite/${invitation.token}`) destination = "expected-invitation";
+              else if (url.pathname === "/") destination = "home";
+            }
+          } catch { /* Never record raw URLs. */ }
+          console.log(`MILLE_INVITATION_QA ${JSON.stringify({
+            outcome: errorKind === null ? "passed" : "failed",
+            operation: stage,
+            stepElapsedMs: Date.now() - startedStep,
+            totalElapsedMs: Date.now() - startedInvitation,
+            errorKind,
+            destination,
+            responses,
+          })}`);
+        }
         member.item.checks.push("invitation-login-return");
         stage = "workspace-join";
         await workspaceMutation(member.page, `/api/invitations/${invitation.token}/accept`, "POST", () => member.page.getByTestId("workspace-join-submit").click());
