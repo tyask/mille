@@ -1,0 +1,30 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/7",
+  "sourceThreadId": "01a1c049-8d45-73fd-a5ab-1cd4330f209e",
+  "recordedAt": "2026-11-19T12:44:10Z",
+  "timestampNote": "記録時刻。利用者メッセージの正確な送信時刻は提供されていないため記載しない。",
+  "planApproval": {
+    "source": "利用者の文書commit/PR作成の直接指示",
+    "reply": "では、いったん要件書と設計書をコミットするPRを作成してください",
+    "scope": "要件書・画面設計書・技術詳細設計書と関連画像・索引・追跡記録の文書PR"
+  },
+  "issueApproval": {
+    "source": "request_user_input_async_reply",
+    "question": "GitHubに保存済みの Issue #7（https://github.com/tyask/mille/issues/7）の本文の範囲で、文書のコミットとdraft PR作成へ進めてよいですか？",
+    "reply": "このIssue本文で進める",
+    "questionItemId": "[\"request_user_input_async\",\"call_8893fec829744ca3a4dcb4bd094b7ef8\",0]"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sha256": "39f535b302e0b9993b73f3b72a5887b02192ed8cc273183f6e03eec1bc50d83d",
+    "updatedAt": "2026-11-19T12:14:49Z",
+    "sourceMetadata": "issue-source.json"
+  },
+  "exclusions": [
+    "アプリ機能実装",
+    "DB適用",
+    "依存更新",
+    "Production操作",
+    "PR merge"
+  ]
+}

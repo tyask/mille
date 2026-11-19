@@ -1,0 +1,11 @@
+{
+  "url": "https://github.com/tyask/mille/issues/7",
+  "title": "要件書と画面・技術詳細設計書を文書として保存する",
+  "updatedAt": "2026-11-19T12:14:49Z",
+  "retrievedAt": "2026-11-19T12:44:10Z",
+  "timestampNote": "retrievedAtは保存記録時刻。利用者メッセージの送信時刻を示さない。",
+  "source": "GitHub connector fetch_issueで取得した承認提示時の保存済み本文",
+  "sha256": "39f535b302e0b9993b73f3b72a5887b02192ed8cc273183f6e03eec1bc50d83d",
+  "bytes": 2830,
+  "snapshotNote": "issue.mdは承認を求めた時点の原文を保持するため、末尾の承認未取得表記も変更しない。実際の承認はapprovals.jsonへ別記。"
+}
