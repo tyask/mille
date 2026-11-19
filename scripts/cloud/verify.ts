@@ -344,6 +344,8 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         ]);
         let startedStep = startedInvitation;
         let errorKind: "timeout" | "other" | null = null;
+        let signoutBlocker: string | null = null;
+        let signoutDom: Record<string, unknown> | null = null;
         function invitationStep(operation: string) {
           stage = operation;
           startedStep = Date.now();
@@ -381,6 +383,43 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
             && (await readIdentity(member.page)).body.user?.id === member.user.id);
         } catch (error) {
           errorKind = error instanceof Error && error.name === "TimeoutError" ? "timeout" : "other";
+          if (errorKind === "timeout" && stage === "workspace-invitation-signout-click" && error instanceof Error) {
+            // Inspect Playwright's action log in memory. Emit only fixed labels.
+            const actionLog = error.message;
+            if (actionLog.includes("intercepts pointer events")) {
+              signoutBlocker = actionLog.includes("<nextjs-portal") ? "next-dev-overlay" : "pointer-interception";
+            } else if (actionLog.includes("element is not enabled")) signoutBlocker = "disabled";
+            else if (actionLog.includes("element is not visible")) signoutBlocker = "hidden";
+            else if (actionLog.includes("element is not stable")) signoutBlocker = "unstable";
+            else if (actionLog.includes("element is outside of the viewport")) signoutBlocker = "outside-viewport";
+            else if (actionLog.includes("strict mode violation")) signoutBlocker = "multiple-matches";
+            else if (!actionLog.includes("locator resolved to")) signoutBlocker = "no-locator-match";
+            else signoutBlocker = "other";
+
+            // Snapshot only properties that distinguish visibility and hit testing.
+            let timeout: ReturnType<typeof setTimeout> | undefined;
+            try {
+              signoutDom = await Promise.race([
+                member.page.evaluate(() => {
+                  const button = document.querySelector<HTMLButtonElement>("button.ws-logout");
+                  const content = document.querySelector<HTMLElement>(".session-content");
+                  const rect = button?.getBoundingClientRect();
+                  const hit = rect && document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+                  return {
+                    buttonPresent: Boolean(button),
+                    disabled: button?.disabled ?? null,
+                    hidden: button ? Boolean(button.closest("[hidden]")) || getComputedStyle(button).visibility === "hidden" : null,
+                    sessionHidden: content ? content.hidden || getComputedStyle(content).visibility === "hidden" : null,
+                    centerHit: !hit ? "none" : button?.contains(hit) ? "button"
+                      : hit.closest("nextjs-portal") ? "next-dev-overlay" : "other",
+                  };
+                }).catch(() => null),
+                new Promise<null>(resolveTimeout => { timeout = setTimeout(() => resolveTimeout(null), 1_000); }),
+              ]);
+            } finally {
+              clearTimeout(timeout);
+            }
+          }
           throw error;
         } finally {
           member.page.off("response", recordInvitationResponse);
@@ -398,6 +437,8 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
             stepElapsedMs: Date.now() - startedStep,
             totalElapsedMs: Date.now() - startedInvitation,
             errorKind,
+            signoutBlocker,
+            signoutDom,
             destination,
             responses,
           })}`);
