@@ -146,7 +146,7 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         quiet: true,
         handleSignals: false,
         // The Next dev indicator can intercept clicks on the workspace's lower-left controls.
-        disableDevIndicator: true,
+        browserQa: true,
       });
       proof.resources.servers = 1; proof.resources.databases = 1;
       proof.target.origin = new URL(server.url).origin;

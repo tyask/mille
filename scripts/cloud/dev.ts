@@ -113,10 +113,10 @@ export async function startCloudServer({
   hostname = "0.0.0.0",
   quiet = false,
   handleSignals = true,
-  disableDevIndicator = false,
+  browserQa = false,
 }: {
   port?: number; hostname?: "0.0.0.0" | "127.0.0.1"; quiet?: boolean; handleSignals?: boolean;
-  disableDevIndicator?: boolean;
+  browserQa?: boolean;
 } = {}): Promise<CloudServer> {
   let port: number;
   try {
@@ -166,7 +166,11 @@ export async function startCloudServer({
     if (closing) throw new Error("起動を中断しました。");
     assertCloudStartupAllowed(process.env);
     const environment = cloudChildEnvironment(process.env, database, url);
-    if (disableDevIndicator) environment.MILLE_CLOUD_QA_DISABLE_DEV_INDICATOR = "1";
+    if (browserQa) {
+      environment.MILLE_CLOUD_QA_DISABLE_DEV_INDICATOR = "1";
+      // Preserve Next's own non-interactive CI behavior inside the isolated QA child.
+      if (process.env.CI === "true") environment.CI = "true";
+    }
     const next = createRequire(import.meta.url).resolve("next/dist/bin/next");
     child = spawn(process.execPath, [next, "dev", "--hostname", hostname, "--port", String(port)], {
       cwd: rootDirectory, env: environment, detached: true, stdio: ["ignore", "pipe", "pipe"],
