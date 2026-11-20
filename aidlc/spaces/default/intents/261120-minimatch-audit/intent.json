@@ -4,8 +4,8 @@
   "branch": "codex/patch-minimatch-audit",
   "baseSha": "62567f4923c042302e3b3641da6e08530b24a815",
   "state": "frozen",
-  "phase": "temporary-lock-generation",
-  "frozenAt": "2026-11-19T23:57:02Z",
+  "phase": "lock-updated",
+  "frozenAt": "2026-11-19T23:59:46Z",
   "approvedIssueSha256": "12763efc9f0d68e471a7a59f47249db5242ea5a359272b51bed171db2a79089a",
   "implementationPlanSha256": "2b269804ad10df80368963b2e236ed43ea1b5bd5c73f0896e07bd3450a4a7122",
   "approvalEvidence": "approvals.json",
@@ -21,12 +21,31 @@
       "performed": false,
       "reason": "Cloud作業環境の起動失敗で使用できないためGitHub Actionsで生成と確認を行う。"
     },
-    "generator": "既存Node versionを使用、contents:read、対象のsame repo PRと完全SHAに限定、公開npm metadataとハッシュのみ出力。"
+    "generator": "既存Node versionを使用、contents:read、対象のsame repo PRと完全SHAに限定、公開npm metadataとハッシュのみ出力。",
+    "generated": {
+      "run": "https://github.com/tyask/mille/actions/runs/44642013439",
+      "job": 135975162538,
+      "head": "66aa638582f6ac944d1d9335b84841f28513f0f5",
+      "sha256": "a156472fae8d981765e1cf0024a09945e380e9ea49ad76c926af097d2b477454",
+      "lockBlob": "95318635c9cc6a240677433d25e25bd3f656ea46",
+      "manifestBlob": "4637b0ffe5b13f818515a10b1b041bc669810363",
+      "node": "v24.22.3",
+      "npm": "11.19.1",
+      "changedDevPackages": 16,
+      "unchangedLegacyMinimatch": "3.1.5",
+      "temporaryWorkflow": "removed"
+    }
   },
   "remaining": [
-    "exact SHAの独立読み取りレビュー",
-    "npm生成lockfileの確認、一時workflow削除",
-    "最終SHAのCIと監査",
-    "正式Previewは未検証のためdraft維持"
+    "最終SHAの独立読み取りレビューと通常CIの監査",
+    "正式Previewは未確認のためdraft維持"
+  ],
+  "revisionHistory": [
+    {
+      "recordedAt": "2026-11-19T23:59:46Z",
+      "state": "reopened-and-frozen",
+      "priorSha": "66aa638582f6ac944d1d9335b84841f28513f0f5",
+      "reason": "固定Node/npmで対象開発用依存のlockfileを生成し、出力SHA-256と一致。typescript-eslint 8.73.0がminimatch 11.0.9を解決したため、一時workflowを除去し最終CIへ進める。"
+    }
   ]
 }
