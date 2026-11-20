@@ -55,8 +55,6 @@ async function main() {
     projectId: config.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID,
   });
 
-  stage = "Vercel と Neon の専用プロジェクトの照合";
-  await Promise.all([vercel.preflight(), neon.preflight()]);
   const summary = process.env.GITHUB_STEP_SUMMARY;
   if (target.operation === "cleanup") {
     stage = "PR 専用 Vercel デプロイの削除";
@@ -67,6 +65,8 @@ async function main() {
     return;
   }
 
+  stage = "Vercel と Neon のプロジェクトと PR の分離設定の照合";
+  await Promise.all([vercel.preflight(), neon.preflight()]);
   stage = "照合済み PR ソースの取得";
   const files = await loadPreviewSource(target, context.token);
   const migrations = previewMigrationSources(files);
