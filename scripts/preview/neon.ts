@@ -258,7 +258,7 @@ export class NeonPreview {
         if (current.id !== requested.id || current.branch_id !== id || current.project_id !== this.#config.projectId) {
           throw new Error("Neon 操作の対象が一致しません。");
         }
-        if (current.status === "finished") break;
+        if (current.status === "finished" || current.status === "skipped") break;
         if (!["scheduling", "running", "cancelling"].includes(current.status) || Date.now() >= deadline) {
           throw new Error("Neon 操作の完了を確認できません。");
         }

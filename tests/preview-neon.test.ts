@@ -106,7 +106,10 @@ function mockNeon(t: TestContext, options: {
       if (options.deleteLocked) return new Response(null, { status: 423 });
       writes.push(`DELETE ${path}`);
       branchExists = false;
-      return Response.json({ branch: child, ...operation });
+      return Response.json({
+        branch: child,
+        operations: [{ id: "delete-op", branch_id: child.id, project_id: config.projectId, status: "skipped" }],
+      });
     } else if (init.method === "GET") {
       if (!path) return Response.json({ project: { id: config.projectId, name: "mille-pr-preview" } });
       if (path === parentPath) return Response.json({ branch: parent });
