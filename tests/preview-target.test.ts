@@ -70,6 +70,18 @@ test("現在の HEAD の PR のみ deploy 対象とする", async () => {
   assert.equal(await resolve({ apiRun: { pull_requests: [{ ...association, number: 9 }] } }), null);
 });
 
+test("GitHub の修飾付き受付パスと同じブランチの他の PR を区別する", async () => {
+  assert.deepEqual(await resolve({
+    notification: { path: `${workflowPath}@main` },
+    apiRun: {
+      path: `tyask/mille/${workflowPath}@refs/pull/8/merge`,
+      pull_requests: [{ ...association, number: 9, base: { ...association.base, ref: "dev" } }, association],
+    },
+  }), { number: 8, sha: head, operation: "deploy" });
+  await assert.rejects(resolve({ apiRun: { path: `other/repo/${workflowPath}@main` } }));
+  await assert.rejects(resolve({ apiRun: { path: ".github/workflows/other.yml@main" } }));
+});
+
 test("現在も閉じている PR の close 通知のみ cleanup 対象とする", async () => {
   const close = { display_title: "PR event closed 8", pull_requests: [] };
   assert.deepEqual(await resolve({ notification: close, apiRun: close, apiPR: closed }), cleanup);

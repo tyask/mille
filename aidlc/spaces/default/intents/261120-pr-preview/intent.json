@@ -6,7 +6,7 @@
   "state": "frozen",
   "approvalEvidence": "approvals.json",
   "approvedIssueSha256": "02402854a9996efd20dda679c2202e60ac6fa90ba48a51fc81a22a8d83f92d30",
-  "implementationPlanSha256": "445a30d52369cda390c6c41ff7d01a058c98094d360a7b5dbc01623ea018ea97",
+  "implementationPlanSha256": "349760d0bc801359841ccfa3a790347b873e1bd277d92d3baf1a314b7f94957e",
   "preCommitValidation": [
     "Node バージョン照合",
     "lint",
@@ -15,7 +15,8 @@
     "build",
     "npm audit",
     "ワークフロー構文（queue キーを GitHub 公式仕様で確認）",
-    "Neon の再試行回帰テスト、lint、typecheck"
+    "Neon の再試行回帰テスト、lint、typecheck",
+    "Preview の回帰テスト 27 件、lint、typecheck"
   ],
   "remaining": [
     "凍結後の独立レビューと clean checkout での検証",

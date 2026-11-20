@@ -3,6 +3,12 @@ import { z } from "zod";
 const repository = "tyask/mille";
 const workflow = "actions/workflows/pr-events.yml";
 const workflowPath = ".github/workflows/pr-events.yml";
+// GitHub can qualify an Actions run path with its repository and ref.
+const intakePath = z.string().refine((value) => {
+  const [file, ref, ...extra] = value.split("@");
+  return (file === workflowPath || file === `${repository}/${workflowPath}`)
+    && (ref === undefined || ref.length > 0) && !extra.length;
+});
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
 const positive = z.number().int().positive();
 const timestamp = z.iso.datetime();
@@ -22,7 +28,7 @@ const runIdentity = z.object({
   workflow_id: positive,
   run_attempt: positive,
   event: z.literal("pull_request"),
-  path: z.literal(workflowPath),
+  path: intakePath,
   repository: repositoryRef,
   head_repository: repositoryRef.nullable(),
   head_branch: z.string(),
@@ -102,8 +108,9 @@ export async function resolvePreviewTarget(
   const target = targetFor(pr);
   const associated = run.pull_requests ?? [];
   if (associated.length > 0) {
-    const [link] = associated;
-    if (associated.length !== 1 || link.number !== number || link.head.ref !== run.head_branch
+    const links = associated.filter((link) => link.number === number);
+    const [link] = links;
+    if (links.length !== 1 || link.head.ref !== run.head_branch
       || link.head.sha !== pr.head.sha || link.base.ref !== "main"
       || link.head.repo.id !== eventRepo.id || link.base.repo.id !== eventRepo.id) return null;
   }
