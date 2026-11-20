@@ -35,6 +35,7 @@ function mockNeon(t: TestContext, options: {
   owner?: string;
   unexpectedTemplateDatabase?: boolean;
   nonemptyTemplateDatabase?: string;
+  deleteLocked?: boolean;
 } = {}) {
   let branchExists = options.existing ?? false;
   let roleExists = branchExists;
@@ -102,6 +103,7 @@ function mockNeon(t: TestContext, options: {
         return Response.json({ database, ...operation }, { status: 201 });
       }
     } else if (init.method === "DELETE" && path === childPath) {
+      if (options.deleteLocked) return new Response(null, { status: 423 });
       writes.push(`DELETE ${path}`);
       branchExists = false;
       return Response.json({ branch: child, ...operation });
@@ -213,4 +215,15 @@ test("PR の状態が変わった場合は Neon への作成・削除を中止�
   const existing = mockNeon(t, { existing: true });
   await assert.rejects(service.remove(8, stale), /PR changed/);
   assert.deepEqual(existing.writes, []);
+});
+
+
+test("Neon の削除を再試行する前に PR の再オープンを確認する", async t => {
+  const fixture = mockNeon(t, { existing: true, deleteLocked: true });
+  let checks = 0;
+  await assert.rejects(new NeonPreview(config).remove(8, async () => {
+    if (++checks > 1) throw new Error("PR reopened");
+  }), /PR reopened/);
+  assert.equal(checks, 2);
+  assert.deepEqual(fixture.writes, []);
 });

@@ -111,8 +111,11 @@ export class NeonPreview {
     this.#project = `/projects/${parsed.data.projectId}`;
   }
 
-  async #request<T>(path: string, schema: z.ZodType<T>, method = "GET", body?: object): Promise<T> {
+  async #request<T>(
+    path: string, schema: z.ZodType<T>, method = "GET", body?: object, verifyCurrent?: VerifyCurrent,
+  ): Promise<T> {
     for (let attempt = 0; attempt < 4; attempt++) {
+      await verifyCurrent?.();
       let response: Response | undefined;
       try {
         response = await fetch(`${api}${this.#project}${path}`, {
@@ -312,12 +315,11 @@ export class NeonPreview {
         throw new Error("Neon PR 専用ブランチの利用枠に空きがありません。");
       }
       await this.#assertEmptyTemplate();
-      await verifyCurrent?.();
       const created = await this.#request("/branches", branchChange, "POST", {
         branch: { name, parent_id: this.#config.parentBranchId, init_source: "parent-data" },
         endpoints: [{ type: "read_write", autoscaling_limit_min_cu: 0.25, autoscaling_limit_max_cu: 0.25 }],
         annotation_value: this.#annotation(pr),
-      });
+      }, verifyCurrent);
       this.#assertBranch(created.branch, name);
       id = created.branch.id;
       await this.#waitOperations(created, id);
@@ -333,20 +335,18 @@ export class NeonPreview {
       throw new Error("Neon の専用 DB またはロールを照合できません。");
     }
     if (!roles[0]) {
-      await verifyCurrent?.();
       const result = await this.#request(`/branches/${id}/roles`, operations.extend({ role }), "POST", {
         role: { name: expectedRole },
-      });
+      }, verifyCurrent);
       if (result.role.name !== expectedRole || result.role.branch_id !== id || result.role.protected) {
         throw new Error("作成した Neon ロールを照合できません。");
       }
       await this.#waitOperations(result, id);
     }
     if (!databases[0]) {
-      await verifyCurrent?.();
       const result = await this.#request(`/branches/${id}/databases`, operations.extend({ database }), "POST", {
         database: { name: expectedDatabase, owner_name: expectedRole },
-      });
+      }, verifyCurrent);
       if (result.database.name !== expectedDatabase || result.database.branch_id !== id || result.database.owner_name !== expectedRole) {
         throw new Error("作成した Neon DB を照合できません。");
       }
@@ -373,8 +373,7 @@ export class NeonPreview {
     if (matches.length !== 1) throw new Error("Neon PR 専用ブランチを一意に特定できません。");
     const { id } = await this.#ownedBranch(matches[0].id, name, pr);
     if (inventory.some(item => item.parent_id === id)) throw new Error("Neon PR 専用ブランチに子が存在します。");
-    await verifyCurrent?.();
-    const removed = await this.#request(`/branches/${id}`, branchChange, "DELETE");
+    const removed = await this.#request(`/branches/${id}`, branchChange, "DELETE", undefined, verifyCurrent);
     this.#assertBranch(removed.branch, name);
     if (removed.branch.id !== id) throw new Error("削除した Neon ブランチを照合できません。");
     await this.#waitOperations(removed, id);
