@@ -1,0 +1,9 @@
+{
+  "url": "https://github.com/tyask/mille/issues/16",
+  "title": "開発用依存のminimatchに対する監査指摘を解消する",
+  "updatedAt": "2026-11-19T23:55:03Z",
+  "recordedAt": "2026-11-19T23:57:02Z",
+  "source": "GitHub connectorの再取得。承認提示時の保存本文を保持。",
+  "sha256": "12763efc9f0d68e471a7a59f47249db5242ea5a359272b51bed171db2a79089a",
+  "bytes": 2447
+}
