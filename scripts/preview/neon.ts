@@ -1,11 +1,46 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { neon } from "@neondatabase/serverless";
 import { z } from "zod";
+import type { MigrationSource } from "../db/sql";
 import { preparePreviewDatabase, previewDatabaseEnvironmentId } from "./database";
 
 const api = "https://console.neon.tech/api/v2";
 const projectName = "mille-pr-preview";
 const templateName = "mille-pr-template";
+const templateDatabase = "neondb";
+const templateRole = "neondb_owner";
 const repository = "tyask/mille";
+// Neon provides cloud_admin-owned monitoring objects in its system databases.
+const templateInspection = `
+  SELECT pg_catalog.current_database() AS database, current_user AS role,
+    NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_database d WHERE NOT (
+        (d.datname = 'neondb' AND pg_catalog.pg_get_userbyid(d.datdba) = 'neondb_owner' AND NOT d.datistemplate AND d.datallowconn)
+        OR (pg_catalog.pg_get_userbyid(d.datdba) = 'cloud_admin' AND (
+          (d.datname = 'postgres' AND NOT d.datistemplate AND d.datallowconn)
+          OR (d.datname = 'template1' AND d.datistemplate AND d.datallowconn)
+          OR (d.datname = 'template0' AND d.datistemplate AND NOT d.datallowconn)
+        ))
+      )
+    ) AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname !~ '^pg_'
+        AND r.rolname NOT IN ('cloud_admin', 'neon_service', 'neon_superuser', 'token_roles', 'neondb_owner')
+    ) AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_namespace n
+      WHERE n.nspname NOT IN ('public', 'information_schema') AND n.nspname !~ '^pg_'
+        AND pg_catalog.pg_get_userbyid(n.nspowner) <> 'cloud_admin'
+    ) AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+        AND pg_catalog.pg_get_userbyid(c.relowner) <> 'cloud_admin'
+    ) AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname <> 'information_schema' AND n.nspname !~ '^pg_'
+        AND pg_catalog.pg_get_userbyid(p.proowner) <> 'cloud_admin'
+    ) AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_largeobject_metadata
+    ) AS empty
+`;
 const identifier = z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/);
 const branchId = identifier.refine(id => id.startsWith("br-"));
 const postgresName = z.string().regex(/^[a-z][a-z0-9_]{0,62}$/);
@@ -145,17 +180,46 @@ export class NeonPreview {
   }
 
   async preflight(): Promise<void> {
-    const { projectId, parentBranchId, database, role } = this.#config;
-    const [project, parent, resources] = await Promise.all([
+    const { projectId, parentBranchId } = this.#config;
+    const [project, parent] = await Promise.all([
       this.#request("", z.object({ project: z.object({ id: identifier, name: z.string() }) })),
       this.#request(`/branches/${parentBranchId}`, branchDetails),
-      this.#postgresResources(parentBranchId),
     ]);
     if (project.project.id !== projectId || project.project.name !== projectName
       || parent.branch.id !== parentBranchId || parent.branch.project_id !== projectId
-      || parent.branch.name !== templateName || parent.branch.current_state !== "ready" || parent.branch.pending_state
-      || resources.databases.some(item => item.name === database) || resources.roles.some(item => item.name === role)) {
+      || parent.branch.name !== templateName) {
       throw new Error("Neon の PR 専用プロジェクトまたはテンプレートが一致しません。");
+    }
+  }
+
+  async #assertEmptyTemplate(): Promise<void> {
+    const { parentBranchId } = this.#config;
+    const [parent, resources] = await Promise.all([
+      this.#request(`/branches/${parentBranchId}`, branchDetails),
+      this.#postgresResources(parentBranchId),
+    ]);
+    if (parent.branch.id !== parentBranchId || parent.branch.project_id !== this.#config.projectId
+      || parent.branch.name !== templateName || parent.branch.current_state !== "ready" || parent.branch.pending_state) {
+      throw new Error("Neon テンプレートの準備完了を確認できません。");
+    }
+    if (resources.databases.length !== 1 || resources.databases[0].name !== templateDatabase
+      || resources.databases[0].owner_name !== templateRole || resources.roles.length !== 1
+      || resources.roles[0].name !== templateRole || resources.roles[0].protected) {
+      throw new Error("Neon テンプレートの DB またはロールの一覧が一致しません。");
+    }
+    const { connectionString } = await this.#connection(parentBranchId, templateDatabase, templateRole);
+    for (const name of [templateDatabase, "postgres", "template1"]) {
+      const url = new URL(connectionString);
+      url.pathname = `/${name}`;
+      try {
+        const query = neon(url.href);
+        const [rows] = await query.transaction([query.query(templateInspection)], { readOnly: true });
+        if (rows.length !== 1 || rows[0].database !== name || rows[0].role !== templateRole || rows[0].empty !== true) {
+          throw new Error("Neon テンプレートの内容が一致しません。");
+        }
+      } catch {
+        throw new Error("Neon テンプレートが空であることを確認できません。");
+      }
     }
   }
 
@@ -211,8 +275,8 @@ export class NeonPreview {
     throw new Error("Neon PR 専用ブランチの準備完了を確認できません。");
   }
 
-  async #connection(id: string) {
-    const { projectId, database, role } = this.#config;
+  async #connection(id: string, database: string, role: string) {
+    const { projectId } = this.#config;
     const { endpoints } = await this.#request(`/branches/${id}/endpoints`, z.object({ endpoints: z.array(endpoint) }));
     const writable = endpoints.filter(item => item.type === "read_write");
     if (endpoints.some(item => item.branch_id !== id || item.project_id !== projectId)
@@ -235,7 +299,7 @@ export class NeonPreview {
     return { connectionString: uri, expectedHost: host, expectedDatabase: database };
   }
 
-  async ensure(pr: number, verifyCurrent?: VerifyCurrent) {
+  async ensure(pr: number, verifyCurrent?: VerifyCurrent, migrations?: readonly MigrationSource[]) {
     const name = previewDatabaseEnvironmentId(pr);
     await this.preflight();
     const inventory = await this.#branches();
@@ -247,6 +311,7 @@ export class NeonPreview {
       if (inventory.filter(item => /^mille-pr-[1-9][0-9]*$/.test(item.name)).length >= this.#config.maxPrBranches) {
         throw new Error("Neon PR 専用ブランチの利用枠に空きがありません。");
       }
+      await this.#assertEmptyTemplate();
       await verifyCurrent?.();
       const created = await this.#request("/branches", branchChange, "POST", {
         branch: { name, parent_id: this.#config.parentBranchId, init_source: "parent-data" },
@@ -287,12 +352,12 @@ export class NeonPreview {
       }
       await this.#waitOperations(result, id);
     }
-    const connection = await this.#connection(id);
+    const connection = await this.#connection(id, expectedDatabase, expectedRole);
     await verifyCurrent?.();
     try {
       // The provider annotation proves ownership across runs. The existing SQL initializes
       // only an empty DB and otherwise requires the exact Mille PR marker and migration history.
-      await preparePreviewDatabase({ pr, ...connection, initialize: true });
+      await preparePreviewDatabase({ pr, ...connection, initialize: true, migrations });
     } catch {
       throw new Error("Neon PR 専用 DB の環境識別・migration・seed を確認できません。");
     }

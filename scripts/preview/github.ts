@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { resolveManualCleanup, resolveMergedPreviewTargets, resolvePreviewTarget } from "./target";
+import { resolveManualPreviewTarget, resolveMergedPreviewTargets, resolvePreviewTarget } from "./target";
 
 export async function previewContext() {
   const { GITHUB_REPOSITORY, GITHUB_REF, GITHUB_WORKFLOW_REF, GITHUB_EVENT_NAME,
@@ -31,7 +31,7 @@ export async function previewContext() {
   async function targets() {
     if (GITHUB_EVENT_NAME === "push") return resolveMergedPreviewTargets(event, controlSha, read);
     const target = GITHUB_EVENT_NAME === "workflow_dispatch"
-      ? await resolveManualCleanup(event, read)
+      ? await resolveManualPreviewTarget(event, read)
       : await resolvePreviewTarget(event, controlSha, read);
     return target ? [target] : [];
   }

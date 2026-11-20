@@ -1,5 +1,6 @@
 import { appendFile } from "node:fs/promises";
 import { z } from "zod";
+import { previewMigrationSources } from "./database";
 import { previewContext } from "./github";
 import { NeonPreview } from "./neon";
 import { loadPreviewSource } from "./source";
@@ -63,8 +64,9 @@ async function main() {
 
   stage = "照合済み PR ソースの取得";
   const files = await loadPreviewSource(target, context.token);
+  const migrations = previewMigrationSources(files);
   stage = "PR 専用 Neon DB の準備";
-  const database = await neon.ensure(target.number, verifyCurrent);
+  const database = await neon.ensure(target.number, verifyCurrent, migrations);
   stage = "PR 専用 Vercel Preview の準備";
   const url = await vercel.deploy(target, database, files, verifyCurrent);
   stage = "現在の PR HEAD と Preview URL の確認";

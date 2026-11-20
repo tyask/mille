@@ -21,14 +21,28 @@ export function ownershipGuard(configuration: DatabaseConfiguration): string {
     END IF;`;
 }
 
-export function migrationSql(configuration: DatabaseConfiguration, initialize = false): string {
+export type MigrationSource = { name: string; source: string };
+export const migrationFileName = /^\d{3}_[a-z0-9_]+\.sql$/;
+
+export function repositoryMigrationSources(): MigrationSource[] {
   const directory = new URL("../../db/migrations/", import.meta.url);
-  const migrations = readdirSync(directory).filter(name => /^\d{3}_[a-z0-9_]+\.sql$/.test(name)).sort().map(name => {
-    const source = readFileSync(new URL(name, directory), "utf8");
-    return { name, source, checksum: createHash("sha256").update(source).digest("hex") };
-  });
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  return readdirSync(directory).filter(name => migrationFileName.test(name)).sort()
+    .map(name => ({ name, source: decoder.decode(readFileSync(new URL(name, directory))) }));
+}
+
+export function migrationSql(
+  configuration: DatabaseConfiguration,
+  initialize = false,
+  sources: readonly MigrationSource[] = repositoryMigrationSources(),
+): string {
+  const migrations = sources.map(({ name, source }) => ({
+    name, source, checksum: createHash("sha256").update(source).digest("hex"),
+  }));
   const first = migrations[0];
-  if (first?.name !== "001_auth.sql" || new Set(migrations.map(migration => migration.name.slice(0, 3))).size !== migrations.length) {
+  if (first?.name !== "001_auth.sql"
+    || migrations.some(({ name }, index) => !migrationFileName.test(name)
+      || (index > 0 && migrations[index - 1].name.slice(0, 3) >= name.slice(0, 3)))) {
     throw new Error("Migration sequence is invalid");
   }
   return `-- Mille schema. Verify the dedicated project, database and expected host before executing.

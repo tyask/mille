@@ -1,6 +1,33 @@
 import { createQuery, verifyDatabaseOwnership } from "../../lib/server/database/client";
 import { hostedDatabaseConfiguration } from "../../lib/server/database/environment";
-import { migrationSql, seedSql } from "../db/sql";
+import { migrationFileName, migrationSql, repositoryMigrationSources, seedSql, type MigrationSource } from "../db/sql";
+
+const migrationDirectory = "db/migrations/";
+
+export function previewMigrationSources(files: readonly { file: string; data: Buffer }[]): MigrationSource[] {
+  const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+  const entries = files.filter(({ file }) => file.startsWith(migrationDirectory) && /\.sql$/i.test(file));
+  const sources = entries.map(({ file, data }) => {
+    const name = file.slice(migrationDirectory.length);
+    if (!migrationFileName.test(name)) throw new Error("PR の migration ファイル名が無効です。");
+    let source: string;
+    try { source = decoder.decode(data); }
+    catch { throw new Error("PR の migration は UTF-8 の SQL が必要です。"); }
+    if (!source.trim() || source.includes("\0")) throw new Error("PR の migration 本文が無効です。");
+    return { name, source };
+  }).sort((left, right) => Number(left.name.slice(0, 3)) - Number(right.name.slice(0, 3)));
+  const trusted = repositoryMigrationSources();
+  if (!trusted.length
+    || trusted.some(({ name, source }, index) => sources[index]?.name !== name || sources[index].source !== source)) {
+    throw new Error("PR の migration に main の原本と一致しない履歴があります。");
+  }
+  for (let index = trusted.length; index < sources.length; index++) {
+    const current = Number(sources[index].name.slice(0, 3));
+    const previous = Number(sources[index - 1].name.slice(0, 3));
+    if (current !== previous + 1) throw new Error("PR の migration は次の連番から追加してください。");
+  }
+  return sources;
+}
 
 export function previewDatabaseEnvironmentId(pr: number): string {
   if (!Number.isSafeInteger(pr) || pr < 1) throw new Error("PR 番号が無効です。");
@@ -14,6 +41,7 @@ export async function preparePreviewDatabase(input: {
   expectedHost: string;
   expectedDatabase: string;
   initialize: boolean;
+  migrations?: readonly MigrationSource[];
 }): Promise<void> {
   const configuration = hostedDatabaseConfiguration(
     "preview", input.expectedHost, previewDatabaseEnvironmentId(input.pr),
@@ -27,7 +55,7 @@ export async function preparePreviewDatabase(input: {
 
   const query = createQuery(configuration);
   if (!input.initialize) await verifyDatabaseOwnership(query, configuration);
-  await query(migrationSql(configuration, input.initialize));
+  await query(migrationSql(configuration, input.initialize, input.migrations));
   await verifyDatabaseOwnership(query, configuration);
   await query(seedSql(configuration));
 }

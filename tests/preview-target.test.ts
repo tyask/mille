@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  previewTargetIsCurrent, resolveManualCleanup, resolveMergedPreviewTargets, resolvePreviewTarget,
+  previewTargetIsCurrent, resolveManualPreviewTarget, resolveMergedPreviewTargets, resolvePreviewTarget,
 } from "../scripts/preview/target";
 
 const head = "a".repeat(40);
@@ -105,13 +105,22 @@ test("処理直前に同じリポジトリ、HEAD、PR 状態を再照合でき�
   })), false);
 });
 
-test("手動 cleanup は同じ PR と SHA の現在の終了状態を要求する", async () => {
-  const event = { repository: repo, inputs: { pr: "8", sha: head } };
-  const read = readFrom({ "pulls/8": { ...pr, ...closed } });
-  assert.deepEqual(await resolveManualCleanup(event, read), cleanup);
-  assert.equal(await resolveManualCleanup({ ...event, inputs: { pr: "8", sha: control } }, read), null);
-  assert.equal(await resolveManualCleanup(event, readFrom({ "pulls/8": pr })), null);
-  assert.equal(await resolveManualCleanup({ ...event, repository: { ...repo, id: 9 } }, read), null);
+test("手動実行は同じ PR と SHA、および指定操作に合う現在の状態を要求する", async () => {
+  const event = { repository: repo, inputs: { pr: "8", sha: head, operation: "cleanup" } };
+  const deployEvent = { ...event, inputs: { ...event.inputs, operation: "deploy" } };
+  const readClosed = readFrom({ "pulls/8": { ...pr, ...closed } });
+  const readOpen = readFrom({ "pulls/8": pr });
+  assert.deepEqual(await resolveManualPreviewTarget(event, readClosed), cleanup);
+  assert.deepEqual(await resolveManualPreviewTarget(deployEvent, readOpen), { number: 8, sha: head, operation: "deploy" });
+  assert.equal(await resolveManualPreviewTarget(event, readOpen), null);
+  assert.equal(await resolveManualPreviewTarget(deployEvent, readClosed), null);
+  assert.equal(await resolveManualPreviewTarget({
+    ...deployEvent, inputs: { ...deployEvent.inputs, sha: control },
+  }, readOpen), null);
+  assert.equal(await resolveManualPreviewTarget({ ...event, repository: { ...repo, id: 9 } }, readClosed), null);
+  await assert.rejects(resolveManualPreviewTarget({
+    ...event, inputs: { ...event.inputs, operation: "promote" },
+  }, readFrom({})), /Invalid option/);
 });
 
 const pushEvent = {

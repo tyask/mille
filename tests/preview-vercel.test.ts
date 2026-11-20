@@ -30,7 +30,7 @@ type Detail = Omit<typeof deployment, "target"> & { target: string | null };
 type ListEntry = { uid: string; projectId: string; meta?: { millePreviewPr: string } };
 
 function scenario(options: {
-  project?: Partial<typeof project>;
+  project?: Partial<typeof project> & { protectionBypass?: unknown };
   envs?: string[];
   initial?: Detail[];
   list?: ListEntry[];
@@ -61,6 +61,7 @@ function scenario(options: {
       return Response.json({ deployments: items, pagination: { next: options.next ?? null, count: items.length } });
     }
     if (url.pathname === "/v13/deployments" && method === "POST") {
+      assert.equal(url.searchParams.get("forceNew"), "1");
       creates.push(JSON.parse(String(init?.body)));
       details.set(deployment.id, options.afterCreate ?? deployment);
       return Response.json({ id: deployment.id, target: deployment.target });
@@ -119,6 +120,26 @@ test("既存環境変数、専用プロジェクトの相違、PR の秘密参�
   }];
   await assert.rejects(preview.deploy(target, db, source), /vercel.json/);
   assert.equal(methods.length, 0);
+});
+
+test("自動化バイパスが設定されているか、状態を判定できないプロジェクトを拒否する", async () => {
+  for (const protectionBypass of [
+    { "dummy-bypass": { scope: "automation-bypass", isEnvVar: true } },
+    { "dummy-bypass": { scope: "automation-bypass" } },
+    { "dummy-bypass": { scope: "automation-bypass", isEnvVar: false } },
+    { "dummy-bypass": { scope: "integration-automation-bypass" } },
+    null,
+    [],
+  ]) {
+    const { preview, creates } = scenario({ project: { protectionBypass } });
+    await assert.rejects(preview.deploy(target, db, files), (error: Error) => {
+      assert.match(error.message, /バイパス設定/);
+      assert.doesNotMatch(error.message, /dummy-bypass/);
+      return true;
+    });
+    assert.equal(creates.length, 0);
+  }
+  await scenario({ project: { protectionBypass: {} } }).preview.preflight();
 });
 
 test("PR が更新されたとき、古い HEAD の URL を返さない", async () => {

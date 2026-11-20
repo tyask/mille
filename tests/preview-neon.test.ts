@@ -25,23 +25,43 @@ const role = { branch_id: child.id, name: config.role, protected: false };
 const database = { branch_id: child.id, name: config.database, owner_name: role.name };
 const host = "ep-pr-8.ap-southeast-1.aws.neon.tech";
 const uri = `postgresql://${role.name}:fake-password@${host}/${database.name}?sslmode=require`;
+const templateHost = "ep-template.ap-southeast-1.aws.neon.tech";
+const templateUri = `postgresql://neondb_owner:fake-template-password@${templateHost}/neondb?sslmode=require`;
 
 function mockNeon(t: TestContext, options: {
   existing?: boolean;
   ownership?: Record<string, string>;
   connectionString?: string;
   owner?: string;
+  unexpectedTemplateDatabase?: boolean;
+  nonemptyTemplateDatabase?: string;
 } = {}) {
   let branchExists = options.existing ?? false;
   let roleExists = branchExists;
   let databaseExists = branchExists;
   const writes: string[] = [];
+  const inspectedDatabases: string[] = [];
   let checks = 0;
   const verifyCurrent = async () => { checks++; };
   t.mock.method(globalThis, "fetch", async (input: string | URL, init: RequestInit) => {
     const url = new URL(input);
     if (url.pathname === "/sql") {
-      assert.equal(new Headers(init.headers).get("Neon-Connection-String"), uri);
+      const headers = new Headers(init.headers);
+      const connection = new URL(headers.get("Neon-Connection-String") ?? "");
+      if (connection.hostname === templateHost) {
+        const name = connection.pathname.slice(1);
+        assert.equal(connection.username, "neondb_owner");
+        assert.equal(headers.get("Neon-Batch-Read-Only"), "true");
+        const { queries } = JSON.parse(String(init.body));
+        assert.equal(queries.length, 1);
+        assert.ok(queries[0].query.includes("pg_catalog.pg_largeobject_metadata"));
+        inspectedDatabases.push(name);
+        return Response.json({ results: [{
+          fields: [{ name: "database", dataTypeID: 25 }, { name: "role", dataTypeID: 25 }, { name: "empty", dataTypeID: 16 }],
+          rows: [[name, "neondb_owner", options.nonemptyTemplateDatabase === name ? "f" : "t"]],
+        }] });
+      }
+      assert.equal(connection.href, uri);
       const { query } = JSON.parse(String(init.body));
       if (query.startsWith("SELECT project")) {
         const fields = ["project", "environment", "environment_id"].map(name => ({ name, dataTypeID: 25 }));
@@ -88,8 +108,19 @@ function mockNeon(t: TestContext, options: {
     } else if (init.method === "GET") {
       if (!path) return Response.json({ project: { id: config.projectId, name: "mille-pr-preview" } });
       if (path === parentPath) return Response.json({ branch: parent });
-      if (path === `${parentPath}/roles`) return Response.json({ roles: [] });
-      if (path === `${parentPath}/databases`) return Response.json({ databases: [] });
+      if (path === `${parentPath}/roles`) {
+        return Response.json({ roles: [{ branch_id: parent.id, name: "neondb_owner", protected: false }] });
+      }
+      if (path === `${parentPath}/databases`) {
+        const template = { branch_id: parent.id, name: "neondb", owner_name: "neondb_owner" };
+        const databases = options.unexpectedTemplateDatabase ? [template, { ...template, name: "other" }] : [template];
+        return Response.json({ databases });
+      }
+      if (path === `${parentPath}/endpoints`) {
+        return Response.json({ endpoints: [{
+          id: "ep-template", host: templateHost, project_id: config.projectId, branch_id: parent.id, type: "read_write", disabled: false,
+        }] });
+      }
       if (path === "/branches") {
         return url.searchParams.has("cursor")
           ? Response.json({ branches: branchExists ? [child] : [] })
@@ -107,6 +138,12 @@ function mockNeon(t: TestContext, options: {
         return Response.json({ endpoints: [{ id: "ep-pr-8", host, project_id: config.projectId, branch_id: child.id, type: "read_write", disabled: false }] });
       }
       if (path === "/connection_uri") {
+        if (url.searchParams.get("branch_id") === parent.id) {
+          assert.deepEqual(Object.fromEntries(url.searchParams), {
+            branch_id: parent.id, endpoint_id: "ep-template", database_name: "neondb", role_name: "neondb_owner", pooled: "false",
+          });
+          return Response.json({ uri: templateUri });
+        }
         assert.deepEqual(Object.fromEntries(url.searchParams), {
           branch_id: child.id, endpoint_id: "ep-pr-8", database_name: database.name, role_name: role.name, pooled: "false",
         });
@@ -115,7 +152,7 @@ function mockNeon(t: TestContext, options: {
     }
     assert.fail(`Unexpected test request ${init.method} ${path}`);
   });
-  return { writes, checks: () => checks, verifyCurrent };
+  return { writes, inspectedDatabases, checks: () => checks, verifyCurrent };
 }
 
 test("Neon の PR 専用 DB を作成し、同じ PR の更新では既存資源を再利用する", async t => {
@@ -127,11 +164,25 @@ test("Neon の PR 専用 DB を作成し、同じ PR の更新では既存資源
   assert.deepEqual(fixture.writes, [
     "/branches", "/branches/br-pr-8/roles", "/branches/br-pr-8/databases", "migrate", "seed", "migrate", "seed",
   ]);
+  assert.deepEqual(fixture.inspectedDatabases, ["neondb", "postgres", "template1"]);
   assert.equal(fixture.checks(), 5);
   await service.remove(8, fixture.verifyCurrent);
   await service.remove(8, fixture.verifyCurrent);
   assert.equal(fixture.writes.at(-1), "DELETE /branches/br-pr-8");
   assert.equal(fixture.checks(), 6);
+});
+
+test("余分な DB や利用者オブジェクトがあるテンプレートは分岐元にしない", async t => {
+  const service = new NeonPreview(config);
+  const extra = mockNeon(t, { unexpectedTemplateDatabase: true });
+  await assert.rejects(service.ensure(8), /テンプレートの DB/);
+  assert.deepEqual(extra.inspectedDatabases, []);
+  assert.deepEqual(extra.writes, []);
+  t.mock.restoreAll();
+  const nonempty = mockNeon(t, { nonemptyTemplateDatabase: "postgres" });
+  await assert.rejects(service.ensure(8), /テンプレートが空/);
+  assert.deepEqual(nonempty.inspectedDatabases, ["neondb", "postgres"]);
+  assert.deepEqual(nonempty.writes, []);
 });
 
 test("同名でも Neon の所有情報が別 PR のブランチは更新・削除しない", async t => {

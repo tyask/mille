@@ -20,6 +20,7 @@ const projectSchema = z.object({
   rootDirectory: z.string().nullish(),
   autoExposeSystemEnvs: z.boolean().optional(),
   ssoProtection: z.object({ deploymentType: z.string() }).nullish(),
+  protectionBypass: z.unknown().optional(),
   env: z.array(z.unknown()).optional(),
   integrations: z.array(z.unknown()).optional(),
   connectBuildsEnabled: z.boolean().optional(),
@@ -46,7 +47,7 @@ const detailSchema = z.object({
   projectId: z.string(),
   ownerId: z.string(),
   name: z.string(),
-  url: z.string().regex(/^mille-pr-preview-[a-z0-9](?:[a-z0-9-]{0,43}[a-z0-9])?\.vercel\.app$/),
+  url: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.vercel\.app$/),
   target: previewTarget,
   customEnvironment: z.unknown().nullish(),
   public: z.literal(false),
@@ -155,6 +156,13 @@ export class VercelPreview {
       || !protectedTypes.includes(project.ssoProtection?.deploymentType ?? "")) {
       throw new Error("Vercel 専用 Preview の Git 接続、ビルド設定、または Deployment Protection を確認してください。");
     }
+    // Vercel exposes a default automation bypass as a system variable, including
+    // legacy entries where isEnvVar is unspecified. Only an empty inventory is safe.
+    const bypass = project.protectionBypass;
+    if (bypass !== undefined && (bypass === null || typeof bypass !== "object" || Array.isArray(bypass)
+      || Object.keys(bypass).length > 0)) {
+      throw new Error("Vercel 専用 Preview に Deployment Protection のバイパス設定があります。");
+    }
     const environment = parse(z.object({
       envs: z.array(z.unknown()),
       hiddenProductionEnvCount: z.number().int().nonnegative().optional(),
@@ -257,7 +265,7 @@ export class VercelPreview {
     // The Vercel CLI omits target for Preview and sends request-local runtime
     // and build overrides as env and build.env. The dedicated project has no inherited variables.
     await verifyCurrent();
-    const { id } = parse(z.object({ id: deploymentId, target: previewTarget }), await this.api("/v13/deployments", "POST", {
+    const { id } = parse(z.object({ id: deploymentId, target: previewTarget }), await this.api("/v13/deployments?forceNew=1", "POST", {
       name: projectName,
       project: this.config.projectId,
       version: 2,

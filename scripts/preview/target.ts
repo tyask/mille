@@ -140,18 +140,19 @@ export async function resolvePreviewTarget(
   return newer ? null : target;
 }
 
-export async function resolveManualCleanup(event: unknown, read: ReadGitHub): Promise<PreviewTarget | null> {
+export async function resolveManualPreviewTarget(event: unknown, read: ReadGitHub): Promise<PreviewTarget | null> {
   const { inputs, repository: eventRepo } = z.object({
     repository: repositoryRef,
     inputs: z.object({
       pr: z.string().regex(/^[1-9][0-9]*$/).transform(Number).pipe(positive),
       sha,
+      operation: z.enum(["deploy", "cleanup"]),
     }),
   }).parse(event);
   if (eventRepo.full_name !== repository) return null;
   const pr = pullRequest.parse(await read(`pulls/${inputs.pr}`));
   const target = targetFor(pr);
-  if (target?.operation !== "cleanup" || target.number !== inputs.pr
+  if (target?.operation !== inputs.operation || target.number !== inputs.pr
     || target.sha !== inputs.sha || pr.base.repo?.id !== eventRepo.id) return null;
   return target;
 }
