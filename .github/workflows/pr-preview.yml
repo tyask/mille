@@ -1,0 +1,96 @@
+name: Mille PR Preview
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation for the current PR state
+        type: choice
+        options: [deploy, cleanup]
+        required: true
+      pr:
+        description: Pull request number
+        type: string
+        required: true
+      sha:
+        description: Exact current HEAD SHA of the pull request
+        type: string
+        required: true
+  workflow_run:
+    workflows: [Mille PR Events]
+    types: [completed]
+permissions: {}
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'tyask/mille' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'codex/')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      targets: ${{ steps.resolve.outputs.targets }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .node-version
+      - run: npm ci --ignore-scripts
+      - id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node --import tsx scripts/preview/prepare.ts
+  preview:
+    needs: prepare
+    if: >-
+      github.repository == 'tyask/mille' && github.ref == 'refs/heads/main' &&
+      vars.MILLE_PR_PREVIEW_ENABLED == 'true' && needs.prepare.outputs.targets != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.prepare.outputs.targets) }}
+    name: PR ${{ matrix.target.number }} ${{ matrix.target.operation }}
+    concurrency:
+      group: mille-pr-preview-${{ matrix.target.number }}
+      cancel-in-progress: false
+      queue: max
+    environment: mille-pr-preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .node-version
+      - run: npm ci --ignore-scripts
+      - name: Manage the verified PR Preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          MILLE_PR_PREVIEW_ENABLED: ${{ vars.MILLE_PR_PREVIEW_ENABLED }}
+          MILLE_PR_PREVIEW_TARGET: ${{ toJSON(matrix.target) }}
+          MILLE_PR_PREVIEW_VERCEL_TEAM_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_TEAM_ID }}
+          MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID }}
+          MILLE_PR_PREVIEW_NEON_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_NEON_PROJECT_ID }}
+          MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: ${{ vars.MILLE_PR_PREVIEW_NEON_TEMPLATE_ID }}
+          MILLE_PR_PREVIEW_MAX_BRANCHES: ${{ vars.MILLE_PR_PREVIEW_MAX_BRANCHES }}
+        run: node --import tsx scripts/preview/manage.ts

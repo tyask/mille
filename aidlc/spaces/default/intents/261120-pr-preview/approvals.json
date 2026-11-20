@@ -1,0 +1,11 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/18",
+  "source": "保存済み Issue の進捗欄と、今回の依頼での両承認の確認",
+  "planApproval": { "reply": "お願いします" },
+  "issueApproval": { "reply": "お願いします", "dateJst": "2026-11-20" },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "sha256": "02402854a9996efd20dda679c2202e60ac6fa90ba48a51fc81a22a8d83f92d30"
+  }
+}

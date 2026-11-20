@@ -1,0 +1,30 @@
+{
+  "id": "261120-pr-preview",
+  "issue": "https://github.com/tyask/mille/issues/18",
+  "branch": "codex/issue-18-pr-preview",
+  "baseSha": "59faa8a3c9f5dd47072c194f788c0de9db9e1048",
+  "state": "frozen",
+  "approvalEvidence": "approvals.json",
+  "approvedIssueSha256": "02402854a9996efd20dda679c2202e60ac6fa90ba48a51fc81a22a8d83f92d30",
+  "implementationPlanSha256": "7c7a28561c208102a9672122d980f9d4d440a61e0384b2106d113fdc92e08e68",
+  "preCommitValidation": [
+    "Node バージョン照合",
+    "lint",
+    "typecheck",
+    "テスト 144 件",
+    "build"
+  ],
+  "remaining": [
+    "変更版の独立レビューと clean checkout 検証",
+    "常設 Preview の維持対象 URL と本番ブランチの照合",
+    "常設変数の限定と稼働確認、Git 自動デプロイ実効設定の確認、専用 DB 分岐元準備",
+    "draft PR の CI と正式 Preview、導入後の自動作成・更新・削除の実測"
+  ],
+  "reviewRevision": {
+    "priorSha": "ee4f17ddf703f77acdf136057902954b3b63119e",
+    "reason": "独立レビューでの通知競合、テンプレート安全性、Vercel バイパス公開設定、PR HEAD migration を反映",
+    "retryReviewSha": "bb228724d9a372b2d7d03e581286c48e5d90ab70"
+  },
+  "revisionApprovalEvidence": "approvals-revised.json",
+  "revisedApprovedIssueSha256": "b0a232df929f57def649811df1c964b097b916e33bb76a2b58626ccbf2d83cfb"
+}
