@@ -5,7 +5,7 @@ import type { MigrationSource } from "../db/sql";
 import { preparePreviewDatabase, previewDatabaseEnvironmentId } from "./database";
 
 const api = "https://console.neon.tech/api/v2";
-const projectName = "mille-pr-preview";
+const projectName = "mille-preview";
 const templateName = "mille-pr-template";
 const templateDatabase = "neondb";
 const templateRole = "neondb_owner";
@@ -190,7 +190,7 @@ export class NeonPreview {
     ]);
     if (project.project.id !== projectId || project.project.name !== projectName
       || parent.branch.id !== parentBranchId || parent.branch.project_id !== projectId
-      || parent.branch.name !== templateName) {
+      || parent.branch.name !== templateName || parent.branch.default || parent.branch.primary || parent.branch.parent_id) {
       throw new Error("Neon の PR 専用プロジェクトまたはテンプレートが一致しません。");
     }
   }

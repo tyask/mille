@@ -3,7 +3,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { previewDatabaseEnvironmentId } from "./database";
 
-const projectName = "mille-pr-preview";
+const projectName = "mille";
+const repositoryId = 1436928292;
 const repository = "tyask/mille";
 const protocol = "mille-pr-preview/v1";
 const sha = z.string().regex(/^[0-9a-f]{40}$/);
@@ -14,7 +15,11 @@ const projectSchema = z.object({
   id: z.string(),
   name: z.string(),
   accountId: z.string(),
-  link: z.unknown().nullish(),
+  link: z.object({
+    type: z.literal("github"),
+    repoId: z.union([z.literal(repositoryId), z.literal(String(repositoryId))]),
+    productionBranch: z.literal("main"),
+  }).nullish(),
   framework: z.string().nullish(),
   nodeVersion: z.string(),
   rootDirectory: z.string().nullish(),
@@ -29,6 +34,17 @@ const projectSchema = z.object({
   passiveConnectConfigurationId: z.string().nullish(),
   paused: z.boolean().optional(),
 });
+
+const projectEnvironment = z.object({
+  target: z.array(z.enum(["production", "preview", "development"])).min(1),
+  gitBranch: z.string().min(1).nullish(),
+});
+
+function allowsManagedPreview(environment: z.infer<typeof projectEnvironment>): boolean {
+  return !environment.target.includes("preview")
+    || Boolean(environment.gitBranch && /^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(environment.gitBranch)
+      && !/^codex\//i.test(environment.gitBranch));
+}
 
 const pagination = z.object({
   count: z.number().int().nonnegative(),
@@ -142,7 +158,7 @@ export class VercelPreview {
 
   private async project() {
     const project = parse(projectSchema, await this.api(`/v9/projects/${this.config.projectId}`));
-    if (project.id !== this.config.projectId || project.accountId !== this.config.teamId || project.name !== projectName) {
+    if (project.id !== this.config.projectId || project.accountId !== this.config.teamId || project.name !== projectName || project.link == null) {
       throw new Error("Vercel 専用 Preview プロジェクトの所有を確認できません。");
     }
     return project;
@@ -151,7 +167,7 @@ export class VercelPreview {
   async preflight(): Promise<void> {
     const project = await this.project();
     const protectedTypes = ["all_except_custom_domains", "prod_deployment_urls_and_all_previews", "all", "preview"];
-    if (project.link != null || project.framework !== "nextjs" || project.nodeVersion !== "24.x"
+    if (project.framework !== "nextjs" || project.nodeVersion !== "24.x"
       || project.rootDirectory != null || project.autoExposeSystemEnvs !== true || project.paused
       || !protectedTypes.includes(project.ssoProtection?.deploymentType ?? "")) {
       throw new Error("Vercel 専用 Preview の Git 接続、ビルド設定、または Deployment Protection を確認してください。");
@@ -164,15 +180,17 @@ export class VercelPreview {
       throw new Error("Vercel 専用 Preview に Deployment Protection のバイパス設定があります。");
     }
     const environment = parse(z.object({
-      envs: z.array(z.unknown()),
+      envs: z.array(projectEnvironment),
       hiddenProductionEnvCount: z.number().int().nonnegative().optional(),
       pagination: pagination.optional(),
     }), await this.api(`/v10/projects/${this.config.projectId}/env?decrypt=false`));
-    if (environment.envs.length || environment.hiddenProductionEnvCount || environment.pagination?.next != null
-      || (environment.pagination?.count ?? 0) !== 0 || project.env?.length || project.integrations?.length
+    const projectEnvs = parse(z.array(projectEnvironment), project.env ?? []);
+    if (environment.pagination?.next != null
+      || (environment.pagination && environment.pagination.count !== environment.envs.length)
+      || ![...environment.envs, ...projectEnvs].every(allowsManagedPreview) || project.integrations?.length
       || project.connectBuildsEnabled || project.connectConfigurationId != null
       || project.connectConfigurations?.length || project.passiveConnectConfigurationId != null) {
-      throw new Error("Vercel 専用 Preview に設定済みの環境変数または外部接続があります。");
+      throw new Error("対象の PR Preview に引き継がれる環境変数または外部接続があります。");
     }
   }
 
@@ -263,7 +281,7 @@ export class VercelPreview {
     if (active) return this.ready(active.id, target, hostHash, verifyCurrent);
 
     // The Vercel CLI omits target for Preview and sends request-local runtime
-    // and build overrides as env and build.env. The dedicated project has no inherited variables.
+    // and build overrides as env and build.env. Preflight rejects inherited variables on the managed PR path.
     await verifyCurrent();
     const { id } = parse(z.object({ id: deploymentId, target: previewTarget }), await this.api("/v13/deployments?forceNew=1", "POST", {
       name: projectName,

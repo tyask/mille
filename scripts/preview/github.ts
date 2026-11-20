@@ -35,5 +35,5 @@ export async function previewContext() {
       : await resolvePreviewTarget(event, controlSha, read);
     return target ? [target] : [];
   }
-  return { read, targets, token };
+  return { read, targets, token, controlSha };
 }

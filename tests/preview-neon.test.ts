@@ -12,7 +12,7 @@ const config = {
 };
 const parent = {
   id: config.parentBranchId, project_id: config.projectId, name: "mille-pr-template",
-  default: true, protected: false, current_state: "ready",
+  default: false, protected: false, current_state: "ready",
 };
 const child = {
   id: "br-pr-8", parent_id: parent.id, project_id: config.projectId, name: "mille-pr-8",
@@ -111,7 +111,7 @@ function mockNeon(t: TestContext, options: {
         operations: [{ id: "delete-op", branch_id: child.id, project_id: config.projectId, status: "skipped" }],
       });
     } else if (init.method === "GET") {
-      if (!path) return Response.json({ project: { id: config.projectId, name: "mille-pr-preview" } });
+      if (!path) return Response.json({ project: { id: config.projectId, name: "mille-preview" } });
       if (path === parentPath) return Response.json({ branch: parent });
       if (path === `${parentPath}/roles`) {
         return Response.json({ roles: [{ branch_id: parent.id, name: "neondb_owner", protected: false }] });

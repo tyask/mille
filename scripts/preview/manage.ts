@@ -2,6 +2,7 @@ import { appendFile } from "node:fs/promises";
 import { z } from "zod";
 import { previewMigrationSources } from "./database";
 import { previewContext } from "./github";
+import { assertPreviewGitDeploymentPolicy } from "./git-policy";
 import { NeonPreview } from "./neon";
 import { loadPreviewSource } from "./source";
 import { previewTargetIsCurrent, previewTargetSchema, samePreviewTarget } from "./target";
@@ -34,6 +35,10 @@ async function main() {
     }
   };
   await verifyCurrent();
+  if (target.operation === "deploy") {
+    stage = "通常の Git デプロイを制限する設定の照合";
+    await assertPreviewGitDeploymentPolicy(context.controlSha, target.sha, context.read);
+  }
   stage = "管理ジョブの設定の検証";
   const config = configuration.parse(process.env);
   const neon = new NeonPreview({

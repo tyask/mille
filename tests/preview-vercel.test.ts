@@ -6,7 +6,7 @@ import { VercelPreview, type PreviewSourceFile } from "../scripts/preview/vercel
 const projectId = "prj_MillePreview";
 const teamId = "team_Mille";
 const project = {
-  id: projectId, name: "mille-pr-preview", accountId: teamId,
+  id: projectId, name: "mille", accountId: teamId, link: { type: "github", repoId: 1436928292, productionBranch: "main" },
   framework: "nextjs", nodeVersion: "24.x", autoExposeSystemEnvs: true,
   ssoProtection: { deploymentType: "all_except_custom_domains" },
 };
@@ -31,7 +31,7 @@ type ListEntry = { uid: string; projectId: string; meta?: { millePreviewPr: stri
 
 function scenario(options: {
   project?: Partial<typeof project> & { protectionBypass?: unknown };
-  envs?: string[];
+  envs?: Array<{ target: string[]; gitBranch?: string | null }>;
   initial?: Detail[];
   list?: ListEntry[];
   next?: number;
@@ -109,7 +109,7 @@ test("同じ SHA・DB の READY Deployment を再利用する", async () => {
 });
 
 test("既存環境変数、専用プロジェクトの相違、PR の秘密参照を拒否する", async () => {
-  for (const options of [{ envs: ["INJECTED"] }, { project: { name: "mille" } }]) {
+  for (const options of [{ envs: [{ target: ["preview"] }] }, { project: { name: "other" } }]) {
     const { preview, creates } = scenario(options);
     await assert.rejects(preview.deploy(target, db, files), /環境変数|所有/);
     assert.equal(creates.length, 0);
@@ -173,4 +173,15 @@ test("所有の相違・不完全な一覧・再オープンを検出すると�
     if (++checks > 1) throw new Error("PR が再オープンされました。");
   }), /再オープン/);
   assert.ok(methods.every((method) => !method.startsWith("DELETE")));
+});
+
+test("本番・常設用の変数を維持し、PR に届く共通・個別変数だけを拒否する", async () => {
+  const production = { target: ["production"] };
+  const standing = { target: ["preview"], gitBranch: "mille-standing-preview" };
+  await scenario({ envs: [production, standing] }).preview.preflight();
+  for (const gitBranch of [null, "codex/sample", "*"]) {
+    await assert.rejects(scenario({ envs: [production, standing, { target: ["preview"], gitBranch }] }).preview.preflight(), /引き継がれる/);
+  }
+  await assert.rejects(scenario({ project: { link: { ...project.link, repoId: 99 } } }).preview.preflight());
+  await assert.rejects(scenario({ project: { link: { ...project.link, productionBranch: "develop" } } }).preview.preflight());
 });

@@ -8,12 +8,12 @@ Neon の PR 専用ブランチで、承認済みの適用済み SQL と原文が
 
 ## 有効化
 
-1. PR 専用の Vercel と Neon のプロジェクト `mille-pr-preview` を確認します。新設が必要であれば、契約上の枠と追加費用の有無を調べます。既存の本番・常設 Preview の設定や Cake のリソースは使用しません。
-2. Vercel は Git 非接続、リポジトリルート、Next.js、Node 24、システム環境変数の公開を有効にし、Preview を Vercel Authentication で保護します。プロジェクト・共通・連携の環境変数、外部接続、Deployment Protection の自動化バイパスを設定しません。
-3. Neon は PR 専用プロジェクトの初期ブランチを `mille-pr-template` とします。標準の空 DB `neondb` とロール `neondb_owner` を保ち、テンプレートに利用者データや追加の DB・ロールを作りません。PR 用ブランチを新規作成する前にテンプレートの DB カタログを読み取り照合します。契約上のブランチ・compute 枠、停止設定と利用量を確認します。異なる PR の起動が重なる場合も、契約上の枠内で処理できることを確認します。
-4. GitHub Environment `mille-pr-preview` の許可ブランチを `main` のみに限定し、既存の最小権限資格情報を Environment secrets `VERCEL_TOKEN` と `NEON_API_KEY` に登録します。同じ資格情報が Repository Secrets や PR から参照できる Organization Secrets に公開されていないことを確認します。新規の永続資格情報、権限拡大、追加費用は別途承認が必要です。
-5. Environment variables に `MILLE_PR_PREVIEW_VERCEL_TEAM_ID`、`MILLE_PR_PREVIEW_VERCEL_PROJECT_ID`、`MILLE_PR_PREVIEW_NEON_PROJECT_ID`、`MILLE_PR_PREVIEW_NEON_TEMPLATE_ID`、`MILLE_PR_PREVIEW_MAX_BRANCHES` を登録します。ブランチ数は割り当て内の値にします。この設定は作成前に確認する運用上限であり、同時に実行される別 PR を含む総量はプロバイダー側の枠で制御します。
-6. 導入 PR のレビュー、CI、初回 Preview の検証を済ませ、別途承認を得てマージします。上記の設定とアクセス範囲を照合した後、Repository variable `MILLE_PR_PREVIEW_ENABLED` を `true` に設定すると管理ジョブが起動します。
+1. 既存の Vercel `mille`（GitHub `tyask/mille` に接続済み）と Neon `mille-preview` を確認します。常設 Preview の正確な URL、対応する Deployment ID、DB の branch・endpoint と接続先を読み取りで記録します。常設 URL が個別 Deployment の URL の場合はその Deployment を保持します。本番ブランチが `main` であることと、本番用 alias の現在の参照先を照合します。
+2. 常設 DB の接続情報と認証設定は、信頼済みの常設用 Git ブランチに適用範囲を限定します。変更前の適用先と復旧手順を確認し、既存の常設 Preview が同じ URL と DB で応答することを確かめます。接続情報の値は取得・再入力せず環境変数の適用範囲を変更します。管理ジョブは、共通または `codex/*` に適用される Preview 変数や Deployment Protection の自動化バイパスがある場合は停止します。
+3. 通常のブランチ push による自動デプロイを制御します。管理ジョブは、信頼済み main と現在の PR HEAD の両方に `vercel.json` の同じ Git 制御設定があることを要求します。常設設定の切替後に、通常の push では Vercel Preview を起動しないことを確認します。
+4. Neon Native Preview Branching は設定と分岐元を確認します。既存の常設 DB を含むブランチが分岐元になる場合は、その構成で有効化しません。同じ `mille-preview` 内の独立した空の `mille-pr-template` を管理ジョブに指定して PR ごとの子ブランチを作ります。テンプレートには標準の空 DB `neondb` と分離されたロール `neondb_owner` を用意します。既存の既定ブランチ、全体のブランチ枠、compute 枠と利用量を照合します。
+5. GitHub Environment `mille-pr-preview` の許可ブランチを `main` のみに限定し、既存の最小権限資格情報を Environment secrets `VERCEL_TOKEN` と `NEON_API_KEY` に登録します。Environment variables は `MILLE_PR_PREVIEW_VERCEL_TEAM_ID`、`MILLE_PR_PREVIEW_VERCEL_PROJECT_ID`、`MILLE_PR_PREVIEW_NEON_PROJECT_ID`、`MILLE_PR_PREVIEW_NEON_TEMPLATE_ID`、`MILLE_PR_PREVIEW_MAX_BRANCHES` を使用します。
+6. 導入 PR の独立レビュー、CI、初回正式 Preview での検証を済ませ、別途承認を得てマージします。すべての設定を照合した後に Repository variable `MILLE_PR_PREVIEW_ENABLED` を `true` にします。常設 URL・DB の維持や接続情報の分離が確認できない場合は切替を停止します。追加費用、永続資格情報の発行、権限拡大には別途承認が必要です。
 
 ## URL と Ready 条件
 

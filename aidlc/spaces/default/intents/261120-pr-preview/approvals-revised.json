@@ -1,0 +1,16 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/18",
+  "source": "変更計画と保存済み Issue 本文を個別に提示したこのチャット",
+  "planApproval": {
+    "reply": "お願い",
+    "scope": "既存の常設 Preview の URL と DB を維持する条件で、既存の Vercel と Neon の再利用および PR 専用の設定変更を計画に含める"
+  },
+  "issueApproval": {
+    "reply": "お願いします"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue-revised.md",
+    "updatedAt": "2026-11-20T16:22:38Z",
+    "sha256": "b0a232df929f57def649811df1c964b097b916e33bb76a2b58626ccbf2d83cfb"
+  }
+}
