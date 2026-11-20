@@ -1,0 +1,24 @@
+{
+  "id": "261120-pr-preview",
+  "issue": "https://github.com/tyask/mille/issues/18",
+  "branch": "codex/issue-18-pr-preview",
+  "baseSha": "59faa8a3c9f5dd47072c194f788c0de9db9e1048",
+  "state": "frozen",
+  "approvalEvidence": "approvals.json",
+  "approvedIssueSha256": "02402854a9996efd20dda679c2202e60ac6fa90ba48a51fc81a22a8d83f92d30",
+  "implementationPlanSha256": "6d68e79651fa002bfcbb0f4a456d108fd5421bbaca940c6f5158b7656a6937e3",
+  "preCommitValidation": [
+    "Node バージョン照合",
+    "lint",
+    "typecheck",
+    "テスト 133 件",
+    "build",
+    "actionlint"
+  ],
+  "remaining": [
+    "凍結後の独立レビューと clean checkout での検証",
+    "draft PR の CI と正式 Preview",
+    "専用プロジェクト・利用枠・権限の確認と、承認後の有効化",
+    "導入後の確認用 draft PR での実測"
+  ]
+}

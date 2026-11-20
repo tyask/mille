@@ -107,6 +107,8 @@ Preview seed は重複登録や停止状態の解除をせず、Production で�
 
 ## 最終検証・初回 Preview
 
+PR 専用 Preview の URL、Ready 条件、有効化手順は [PR 専用 Preview](pr-preview.md) を参照してください。
+
 最終 SHA と clean 状態を前後で照合し、check:node、lint、typecheck、test、build、qa:cloud を行う。
 依存更新時は `npm run audit:dependencies` も確認する。CI は全依存の high／critical を検出すると失敗する。[監査記録](dependency-security.md)も参照する。
 PC/mobile × A/B でログイン・再読込・本人表示・ログアウト・未認証拒否を確認する。
