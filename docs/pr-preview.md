@@ -55,7 +55,7 @@ Vercel に接続する前に、信頼済みの `main` の checkout で `npm run 
 
 現行の管理ジョブは、`mille-pr-template` が既定のときは動作を停止します。Native 用の管理処理を用意し、現行 PR 用資源の状態と復旧手順を照合してから、空の `mille-pr-template` を既定に変更します。既存 Vercel プロジェクトの組み込み Preview に限定して接続し、Native 専用の接頭辞を使います。常設用の接続情報は従来の endpoint に固定し、常設 URL と本番設定を照合します。 [Neon の既定ブランチ切替](https://neon.com/docs/manage/branches#set-a-branch-as-default)
 
-Native 用の管理処理と接続先の照合を実装し、プロバイダー設定変更の別承認を得てから、試験用 PR で動作を確認します。管理ジョブで準備用デプロイのビルド定義と成果物を照合し、静的ページだけが公開されることを確かめてから、専用 DB の準備に進みます。PR・現在 HEAD・Deployment・Neon branch・endpoint・世代を照合し、同じ PR の更新でデータが維持され、別の PR と分離されることを確認します。マージとクローズ後は専用資源の不在を確認します。これらの確認を終えるまでは、現行の管理ジョブと手動の `deploy`・`cleanup` を使います。 [Cake のデプロイ手順](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/preview/preview-service.ts#L50-L97)
+既定ブランチを変更する直前までは、現行の管理ジョブと手動の `deploy`・`cleanup` を使います。変更後は現行の PR Preview 処理を休止し、試験用 PR で Native 経路を確認します。管理ジョブで準備用デプロイのビルド定義と成果物を照合し、静的ページだけが公開されることを確かめてから、専用 DB の準備に進みます。PR・現在 HEAD・Deployment・Neon branch・endpoint・世代を照合し、同じ PR の更新でデータが維持され、別の PR と分離されることを確認します。マージとクローズ後は専用資源の不在を確認します。検証が失敗した場合は Native 専用の接続設定を戻し、`main` を既定に戻してから、現行の管理ジョブを再開します。 [Cake のデプロイ手順](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/preview/preview-service.ts#L50-L97)
 
 ## URL と Ready 条件
 

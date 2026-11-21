@@ -12,7 +12,7 @@
   "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
   "implementationPlanSha256": "a09dd7ad206a9c5f799aeca523498a6e0d4bd1c9d6cce22d8a3308f5b60c6190",
   "approvalEvidence": "approvals.json",
-  "frozenAt": "2026-11-21T12:25:53Z",
+  "frozenAt": "2026-11-21T12:27:14Z",
   "preCommitValidation": [
     "npm run check:fast",
     "共用構成の照合テスト9件が成功",
