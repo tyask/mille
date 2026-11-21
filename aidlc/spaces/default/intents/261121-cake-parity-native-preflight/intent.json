@@ -12,12 +12,12 @@
   "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
   "implementationPlanSha256": "f7f72bfc5885327cb2e1dfaacf4f52508a76f6764a5017153d3f8c8039d35b5b",
   "approvalEvidence": "approvals.json",
-  "frozenAt": "2026-11-21T08:08:50Z",
+  "frozenAt": "2026-11-21T08:10:46Z",
   "preCommitValidation": [
     "npm run check:fast",
-    "Focused Native inspection, Native build, Preview target, Vercel and production build tests (38 passed)",
-    "GitHub workflow routing table (144 cases passed)",
-    "Approved Issue and implementation plan SHA-256 verified",
+    "Nativeのソース照合・準備用ビルドと、現行Preview・本番ビルドの対象テスト38件が成功",
+    "GitHubワークフローの実行条件144通りを確認",
+    "承認済みIssueと実装計画のSHA-256を照合",
     "git diff --check"
   ]
 }
