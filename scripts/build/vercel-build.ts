@@ -5,13 +5,20 @@ import { fileURLToPath } from "node:url";
 import type { Query } from "../../lib/server/database/client";
 import { databaseConfiguration, type DatabaseConfiguration } from "../../lib/server/database/environment";
 import { migrateDatabase } from "../db/migrate";
+import {
+  clearNativePreviewProvisioningOutput,
+  isNativePreviewProvisioning,
+  writeNativePreviewProvisioningOutput,
+} from "./native-preview-provisioning";
 
 type BuildEnvironment = Readonly<Record<string, string | undefined>>;
 type HostedConfiguration = Extract<DatabaseConfiguration, { mode: "hosted" }>;
 type BuildSteps = {
   build(): void | Promise<void>;
   migrate(configuration: HostedConfiguration): void | Promise<void>;
+  provision?(): void | Promise<void>;
 };
+const projectDirectory = fileURLToPath(new URL("../../", import.meta.url));
 
 function hostedBuild(environment: BuildEnvironment): boolean {
   return Boolean(environment.VERCEL_BUILD_IMAGE?.trim());
@@ -58,6 +65,15 @@ export function migrateVercelDatabase(configuration: HostedConfiguration, query?
 }
 
 export async function runVercelBuild(environment: BuildEnvironment, steps: BuildSteps): Promise<void> {
+  if (isNativePreviewProvisioning(environment)) {
+    if (!steps.provision) throw new Error("Native Previewの準備工程を起動できません。");
+    try {
+      await steps.provision();
+    } catch {
+      throw new Error("Native Previewの準備用ファイルを生成できません。");
+    }
+    return;
+  }
   const configuration = productionConfiguration(environment);
   try {
     await steps.build();
@@ -74,7 +90,12 @@ export async function runVercelBuild(environment: BuildEnvironment, steps: Build
 }
 
 const buildSteps: BuildSteps = {
+  provision() {
+    writeNativePreviewProvisioningOutput(projectDirectory);
+    console.log("Mille: Native Previewの静的な準備ページを生成しました。");
+  },
   build() {
+    clearNativePreviewProvisioningOutput(projectDirectory);
     if (hostedBuild(process.env) && process.env.VERCEL === "1" && deploymentIdentified(process.env)) {
       console.log("Mille: Vercelのホストビルドとデプロイ識別を確認しました。");
     }
