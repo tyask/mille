@@ -2,7 +2,10 @@ import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { nativeVercelProject, nativeVercelDeploymentInventory, nativeVercelEnvironmentInventory,
+  hasDetachedPreviewEnvironments } from "./native-pilot-vercel";
 import { inspectDetachedNativeResource, NativeResourceInspectionError } from "./native-resource";
+import { neonPreviewBranchDetails, neonPreviewBranchEndpoints } from "./neon";
 
 const environment = z.object({
   VERCEL_TOKEN: z.string().min(1),
@@ -45,6 +48,19 @@ async function readMetadata(
   return expectedStatus === 404 ? null : response.json();
 }
 
+async function probe(
+  name: string, url: URL, token: string, request: typeof fetch, schema: z.ZodType, expectedStatus = 200,
+): Promise<Check> {
+  const check: Check = { name, ok: false };
+  try {
+    const response = await readMetadata(check, url, token, request, expectedStatus);
+    check.ok = schema.safeParse(response).success;
+  } catch {
+    // Report the fixed check name and the HTTP status captured before parsing.
+  }
+  return check;
+}
+
 export async function diagnoseNativePreview(
   input: Readonly<Record<string, string | undefined>>, request: typeof fetch = fetch,
 ): Promise<readonly Check[]> {
@@ -71,6 +87,7 @@ export async function diagnoseNativePreview(
     url.searchParams.set("teamId", config.teamId);
     return url;
   };
+  const neonUrl = (path: string) => new URL(`https://console.neon.tech/api/v2${path}`);
   const checks = new Map<keyof typeof resourceChecks, Check>();
   const neonProject = `/projects/${config.neonProjectId}`;
   const template = `${neonProject}/branches/${config.templateBranchId}`;
@@ -88,14 +105,37 @@ export async function diagnoseNativePreview(
     const check = { name: resourceChecks[stage], ok: false };
     checks.set(stage, check);
     const store = stage === "store";
-    const url = store ? vercelUrl(path) : new URL(`https://console.neon.tech/api/v2${path}`);
+    const url = store ? vercelUrl(path) : neonUrl(path);
     const result = await readMetadata(check, url, store ? env.VERCEL_TOKEN : env.NEON_API_KEY, request);
     check.ok = true;
     return result;
   }
+  const neonChecks: Promise<Check>[] = [];
   try {
     const verified = await inspectDetachedNativeResource(config, { vercel: inspectResource, neon: inspectResource });
     if (verified.templateIsDefault) throw new NativeResourceInspectionError("branch");
+    const roots = [
+      { label: "テンプレート", name: "mille-pr-template", id: verified.branchId, isDefault: false,
+        endpointId: verified.endpointId, host: verified.host },
+      { label: "常設", name: "main", id: verified.standingBranchId, isDefault: true,
+        endpointId: verified.standingEndpointId, host: verified.standingHost },
+    ];
+    for (const root of roots) {
+      const path = `${neonProject}/branches/${root.id}`;
+      neonChecks.push(
+        probe(`Neon ${root.label}ブランチ詳細`, neonUrl(path), env.NEON_API_KEY, request,
+          neonPreviewBranchDetails.refine(({ branch }) => branch.id === root.id && branch.project_id === config.neonProjectId
+            && branch.name === root.name && branch.default === root.isDefault && branch.parent_id == null
+            && branch.pending_state == null && branch.current_state === "ready")),
+        probe(`Neon ${root.label}ブランチのエンドポイント`, neonUrl(`${path}/endpoints`), env.NEON_API_KEY, request,
+          neonPreviewBranchEndpoints.refine(({ endpoints }) => {
+            const writable = endpoints.filter(endpoint => endpoint.type === "read_write");
+            return endpoints.every(endpoint => endpoint.project_id === config.neonProjectId && endpoint.branch_id === root.id)
+              && writable.length === 1 && !writable[0].disabled && writable[0].id === root.endpointId
+              && writable[0].host === root.host;
+          })),
+      );
+    }
   } catch (error) {
     const stage = error instanceof NativeResourceInspectionError ? error.stage : "configuration";
     const check = checks.get(stage) ?? { name: resourceChecks[stage], ok: false };
@@ -104,30 +144,23 @@ export async function diagnoseNativePreview(
   }
 
   const projectId = env.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID;
-  async function probeVercel(name: string, path: string, schema: z.ZodType, expectedStatus = 200) {
-    const check: Check = { name, ok: false };
-    try {
-      const response = await readMetadata(check, vercelUrl(path), env.VERCEL_TOKEN, request, expectedStatus);
-      check.ok = schema.safeParse(response).success;
-    } catch {
-      // Report the fixed check name and the HTTP status captured before parsing.
-    }
-    return check;
-  }
-  const vercelChecks = await Promise.all([
-    probeVercel("Vercel プロジェクト", `/v9/projects/${projectId}`, z.object({
-      id: z.literal(projectId), accountId: z.literal(config.teamId), name: z.literal("mille"),
-    })),
-    probeVercel("Vercel 環境変数メタデータ", `/v10/projects/${projectId}/env?decrypt=false`, z.object({
-      envs: z.array(z.unknown()),
-    })),
-    probeVercel("Vercel デプロイ一覧", `/v6/deployments?projectId=${projectId}&limit=100`, z.object({
-      deployments: z.array(z.object({ projectId: z.literal(projectId) })).max(100),
-    })),
+  const probeVercel = (name: string, path: string, schema: z.ZodType, status?: number) =>
+    probe(name, vercelUrl(path), env.VERCEL_TOKEN, request, schema, status);
+  const supplementalChecks = await Promise.all([
+    ...neonChecks,
+    probeVercel("Vercel プロジェクト", `/v9/projects/${projectId}`, nativeVercelProject.refine(project =>
+      project.id === projectId && project.accountId === config.teamId && hasDetachedPreviewEnvironments(project.env ?? []))),
+    probeVercel("Vercel 環境変数メタデータ", `/v10/projects/${projectId}/env?decrypt=false`,
+      nativeVercelEnvironmentInventory.refine(({ envs, pagination }) => hasDetachedPreviewEnvironments(envs)
+        && (pagination?.count === undefined || pagination.count === envs.length))),
+    probeVercel("Vercel デプロイ一覧", `/v6/deployments?projectId=${projectId}&limit=100`,
+      nativeVercelDeploymentInventory.refine(({ deployments, pagination }) => pagination.count === deployments.length
+        && deployments.every(deployment => deployment.projectId === projectId)
+        && new Set(deployments.map(deployment => deployment.uid)).size === deployments.length)),
     ...(["a", "b"] as const).map(pilot => probeVercel(`Vercel 試験エイリアス ${pilot.toUpperCase()}`,
       `/v4/aliases/mille-git-codex-native-preview-pilot-${pilot}-fumin1.vercel.app`, z.null(), 404)),
   ]);
-  return [...checks.values(), ...vercelChecks];
+  return [...checks.values(), ...supplementalChecks];
 }
 
 export function formatNativePreviewDiagnosis(checks: readonly Check[]): string {

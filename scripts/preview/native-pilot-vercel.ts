@@ -73,6 +73,7 @@ const store = z.object({ store: z.object({
 
 const pagination = z.object({ count: z.int().nonnegative(), next: time.nullable() });
 const completePagination = z.object({ next: z.null().optional(), count: z.int().nonnegative().optional() }).optional();
+const environmentInventory = z.object({ envs: z.array(environment), pagination: completePagination });
 const markerSchema = z.object({
   milleNativePilotProtocol: z.literal(protocol), milleNativePilotRepository: z.literal(repository),
   milleNativePilotPhase: z.literal("provision"), milleNativePilotPr: z.string(), milleNativePilotRef: ref,
@@ -117,6 +118,8 @@ const aliasList = z.object({
 });
 
 export type NativePilotTarget = { pr: number; ref: string; sha: string };
+export { project as nativeVercelProject, inventory as nativeVercelDeploymentInventory,
+  environmentInventory as nativeVercelEnvironmentInventory };
 export type NativePilotDeployment = NativePilotTarget & {
   id: string; generation: string; requestedAt: number; createdAt: number; readyAt?: number;
   endpointDigest?: string; url: string; readyState: z.infer<typeof readyState>;
@@ -139,6 +142,14 @@ function sameDeployment(a: NativePilotDeployment, b: NativePilotDeployment): boo
 
 function branchAlias(branch: z.infer<typeof ref>): string {
   return `mille-git-${branch.replace("/", "-")}-fumin1.vercel.app`;
+}
+
+function isTrustedPreviewBranch(branch: string | null | undefined): boolean {
+  return typeof branch === "string" && /^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(branch) && !/^codex\//i.test(branch);
+}
+
+export function hasDetachedPreviewEnvironments(envs: readonly z.infer<typeof environment>[]): boolean {
+  return envs.every(env => !env.target.includes("preview") || isTrustedPreviewBranch(env.gitBranch));
 }
 
 export class NativePilotVercel {
@@ -179,9 +190,7 @@ export class NativePilotVercel {
     }
     const [{ store: attached }, listed] = await Promise.all([
       this.api(`/v1/storage/stores/${config.storeId}`).then(value => parse(store, value)),
-      this.api(`/v10/projects/${config.projectId}/env?decrypt=false`).then(value => parse(z.object({
-        envs: z.array(environment), pagination: completePagination,
-      }), value)),
+      this.api(`/v10/projects/${config.projectId}/env?decrypt=false`).then(value => parse(environmentInventory, value)),
     ]);
     const [binding] = attached.projectsMetadata;
     const keys = new Set(binding.environmentVariables);
@@ -201,7 +210,7 @@ export class NativePilotVercel {
     const seen = new Set<string>();
     return envs.every(env => {
       if (!env.target.includes("preview")) return true;
-      if (env.gitBranch && /^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(env.gitBranch) && !/^codex\//i.test(env.gitBranch)) return true;
+      if (isTrustedPreviewBranch(env.gitBranch)) return true;
       const hint = env.contentHint;
       if (env.gitBranch != null || env.customEnvironmentIds?.length || env.target.length !== 1 || seen.has(env.key)
         || !storeKeys.has(env.key) || hint?.type !== "integration-store-secret" || hint.storeId !== this.config.storeId

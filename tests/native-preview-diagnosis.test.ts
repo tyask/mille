@@ -6,13 +6,19 @@ const teamId = "team_Fixture";
 const vercelProjectId = "prj_Fixture";
 const neonProjectId = "native-project-123";
 const template = { id: "br-fixture-template", project_id: neonProjectId, name: "mille-pr-template", default: false,
-  parent_id: null, current_state: "ready", pending_state: null };
+  parent_id: null, protected: false, current_state: "ready", pending_state: null };
 const standing = { ...template, id: "br-fixture-standing", name: "main", default: true };
 const region = "aws-ap-southeast-1";
 const templateEndpoint = { id: "ep-fixture-template", project_id: neonProjectId, branch_id: template.id,
   region_id: region, type: "read_write", disabled: false, host: "ep-fixture-template.ap-southeast-1.aws.neon.tech" };
 const standingEndpoint = { ...templateEndpoint, id: "ep-fixture-standing", branch_id: standing.id,
   host: "ep-fixture-standing.ap-southeast-1.aws.neon.tech" };
+const vercelProject = {
+  id: vercelProjectId, accountId: teamId, name: "mille",
+  link: { type: "github", repoId: 1436928292, productionBranch: "main" },
+  framework: "nextjs", nodeVersion: "24.x", autoExposeSystemEnvs: true,
+  ssoProtection: { deploymentType: "preview" },
+};
 const providerSecret = "sensitive-provider-fixture-must-not-appear";
 const env = {
   VERCEL_TOKEN: "vercel-test-token",
@@ -39,14 +45,21 @@ const aliasBPath = "/v4/aliases/mille-git-codex-native-preview-pilot-b-fumin1.ve
 const neonProjectPath = `/api/v2/projects/${neonProjectId}`;
 const branchesPath = `${neonProjectPath}/branches?limit=100`;
 const endpointsPath = `${neonProjectPath}/endpoints`;
-const databasesPath = `${neonProjectPath}/branches/${template.id}/databases`;
-const rolesPath = `${neonProjectPath}/branches/${template.id}/roles`;
+const templatePath = `${neonProjectPath}/branches/${template.id}`;
+const standingPath = `${neonProjectPath}/branches/${standing.id}`;
+const templateEndpointsPath = `${templatePath}/endpoints`;
+const standingEndpointsPath = `${standingPath}/endpoints`;
+const databasesPath = `${templatePath}/databases`;
+const rolesPath = `${templatePath}/roles`;
 
 function scenario(overrides: Record<string, Response> = {}) {
   const responses: Record<string, Response> = {
-    [vercelProjectPath]: Response.json({ id: vercelProjectId, accountId: teamId, name: "mille" }),
-    [environmentPath]: Response.json({ envs: [{ key: "UNRELATED", value: providerSecret }] }),
-    [deploymentsPath]: Response.json({ deployments: [] }),
+    [vercelProjectPath]: Response.json(vercelProject),
+    [environmentPath]: Response.json({ envs: [
+      { key: "STANDING_ONLY", target: ["preview"], gitBranch: "mille-standing-preview", value: providerSecret },
+      { key: "PRODUCTION_ONLY", target: ["production"], gitBranch: null, value: providerSecret },
+    ] }),
+    [deploymentsPath]: Response.json({ deployments: [], pagination: { count: 0, next: null } }),
     [aliasAPath]: new Response(null, { status: 404 }),
     [aliasBPath]: new Response(null, { status: 404 }),
     [storePath]: Response.json({ store: {
@@ -60,6 +73,10 @@ function scenario(overrides: Record<string, Response> = {}) {
       name: "mille-preview", region_id: region, creation_source: "vercel_marketplace" } }),
     [branchesPath]: Response.json({ branches: [template, standing], pagination: { next: null } }),
     [endpointsPath]: Response.json({ endpoints: [templateEndpoint, standingEndpoint] }),
+    [templatePath]: Response.json({ branch: template }),
+    [standingPath]: Response.json({ branch: standing }),
+    [templateEndpointsPath]: Response.json({ endpoints: [templateEndpoint] }),
+    [standingEndpointsPath]: Response.json({ endpoints: [standingEndpoint] }),
     [databasesPath]: Response.json({ databases: [{ branch_id: template.id, name: "neondb", owner_name: "neondb_owner" }] }),
     [rolesPath]: Response.json({ roles: [{ branch_id: template.id, name: "neondb_owner", protected: false }] }),
     ...overrides,
@@ -116,6 +133,25 @@ test("Vercel の HTTP 拒否と応答形式の不一致を区別し、秘密値�
   assert.notEqual(malformedCheck.name, deniedCheck.name);
   assert.notEqual(malformedCheck.status, 403);
   assertSafeOutput(malformedChecks);
+});
+
+test("Vercel プロジェクトを読み取れても不適合な保護設定を診断する", async () => {
+  const fixture = scenario({ [vercelProjectPath]: Response.json({
+    ...vercelProject, protectionBypass: { [providerSecret]: {} },
+  }) });
+  const checks = await diagnoseNativePreview(env, fixture.request);
+  assert.ok(checks.some(check => check.name === "Vercel プロジェクト" && !check.ok && check.status === 200));
+  assertSafeOutput(checks);
+});
+
+test("Neon の一覧取得に成功してもブランチ別エンドポイントの HTTP 拒否を診断する", async () => {
+  const fixture = scenario({ [standingEndpointsPath]: Response.json({ error: providerSecret }, { status: 403 }) });
+  const checks = await diagnoseNativePreview(env, fixture.request);
+  assert.ok(checks.some(check => check.name === "Neon エンドポイント一覧" && check.ok));
+  const deniedCheck = checks.find(check => !check.ok && check.status === 403);
+  assert.ok(deniedCheck);
+  assert.match(deniedCheck.name, /Neon.*(?:エンドポイント|接続先)/);
+  assert.match(assertSafeOutput(checks), /403/);
 });
 
 test("Neon の DB 一覧に失敗した場合は未照合のロールを成功と扱わない", async () => {

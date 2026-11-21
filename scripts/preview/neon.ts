@@ -93,6 +93,7 @@ const endpoint = z.object({
   type: z.string(),
   disabled: z.boolean(),
 });
+const branchEndpoints = z.object({ endpoints: z.array(endpoint) });
 const nativeBranchDetails = z.object({ branch: branch.extend({ created_at: z.iso.datetime() }) });
 const terminalCursor = z.union([z.literal(""), z.null()]).optional();
 const completeInventory = z.object({ next: terminalCursor, cursor: terminalCursor }).nullish();
@@ -104,6 +105,7 @@ type Config = z.input<typeof configSchema>;
 type Branch = z.infer<typeof branch>;
 type VerifyCurrent = () => Promise<void>;
 export type NativeNeonBranch = z.infer<typeof nativeIdentity>;
+export { branchDetails as neonPreviewBranchDetails, branchEndpoints as neonPreviewBranchEndpoints };
 
 function nativeBranchName(ref: string, notBefore?: number, notAfter?: number): string {
   if (!isNativePreviewTaskBranch(ref)
@@ -369,7 +371,7 @@ export class NeonPreview {
 
   async #writableEndpoint(id: string) {
     const { projectId } = this.#config;
-    const { endpoints } = await this.#request(`/branches/${id}/endpoints`, z.object({ endpoints: z.array(endpoint) }));
+    const { endpoints } = await this.#request(`/branches/${id}/endpoints`, branchEndpoints);
     const writable = endpoints.filter(item => item.type === "read_write");
     if (endpoints.some(item => item.branch_id !== id || item.project_id !== projectId)
       || writable.length !== 1 || writable[0].disabled) {
