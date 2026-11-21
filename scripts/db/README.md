@@ -1,4 +1,4 @@
-# 専用DBの初期化と利用者管理
+# 専用DBの初期化・移行と利用者管理
 
 秘密値は安全な環境設定から渡す。接続 URL を引数・ログ・Git へ書かない。
 操作前に承認済み Neon account/project/branch/database と接続先ホストを照合する。
@@ -31,15 +31,19 @@ advisory transaction lock の下で未適用分だけを番号順に適用する
 未知の適用履歴や hash の不一致は拒否し、既存利用者・停止状態・環境 marker を保持する。
 生成物と原本の一致、認証だけを適用済みのDBからの更新は回帰テストで確認する。
 
-既存の Mille DB を更新するときは対象照合後に `db:setup` を `--initialize` なしで実行する。
 Cloud の使い捨て PGlite も同じ migration を使い、seed は架空 A/B のみを登録する。
-build や通常のアプリ起動は hosted DB の migration・seed を実行しない。
 
 ワークスペースの操作は `mille_workspace_command` の1回の呼び出し内で、現在有効な内部ID・メール・所属を確認する。
 初期の個人用作成は利用者行、招待の再発行・参加・削除はワークスペース行をロックして原子的に処理する。
 個人用は作成者本人のみ、共有用の参加人数には固定上限を設けない。
 招待リンクは7日間有効で、DBにはトークンの SHA-256 のみを保存する。同じ宛先への再発行は旧リンクを無効にする。
 通常の一覧にトークンや hash は含めない。利用者の事前登録・有効状態の条件は招待でも変更しない。
+
+## Vercel 本番ビルドでの移行
+
+Vercel 上の `main` 本番ビルドでは、ビルドイメージと Deployment ID を含む実行環境を確認し、既存の `DATABASE_URL` と設定済みの本番ホスト、`mille-production` の環境 ID を照合する。Next.js のビルド成功後、初期化なしで既存の移行ランナーを実行する。Neon のプール用ホストを利用している場合は、移行に同じエンドポイントの直接接続用ホストを使う。
+
+未適用分だけを適用するため、履歴が最新なら再実行しても DB は変わらない。接続先・環境識別・適用済み hash の不一致や移行エラーがあれば、新しいデプロイの公開は止まる。新しいスキーマは公開中のアプリとも互換性を保つ。 [本番ビルドと DB 移行](../../docs/development.md#本番ビルドと-db-移行)
 
 ## CLI を使う場合
 
@@ -51,7 +55,8 @@ npm run db:setup -- --environment preview --expect-host <host> --environment-id 
 npm run db:seed:test -- --environment preview --expect-host <host> --environment-id mille-preview
 ```
 
-Production は対象を個別確認してから `--environment production --environment-id mille-production` で初期化する。
+Production の新規初期化は、対象を個別確認して `db:setup` に `--environment production`、`--expect-host <host>`、`--environment-id mille-production`、`--initialize` を指定する。
+既存 DB を CLI で移行する場合は、対象を照合して `db:setup` を `--initialize` なしで実行する。
 本人指定後の実利用者登録・無効化も、明示した対象だけを操作する。
 
 ```bash

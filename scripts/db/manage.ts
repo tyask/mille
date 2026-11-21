@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { createQuery, verifyDatabaseOwnership } from "../../lib/server/database/client";
 import { hostedDatabaseConfiguration } from "../../lib/server/database/environment";
-import { disableUserSql, migrationSql, registerUserSql, seedSql } from "./sql";
+import { migrateDatabase } from "./migrate";
+import { disableUserSql, registerUserSql, seedSql } from "./sql";
 
 const { loadEnvConfig } = createRequire(import.meta.url)("@next/env") as typeof import("@next/env");
 
@@ -24,10 +25,11 @@ export async function runDatabaseCommand(args: string[]): Promise<void> {
   if (!["migrate", "register", "disable", "seed"].includes(command ?? "")) throw new Error("操作は migrate/register/disable/seed を指定してください。");
   if (initialize && command !== "migrate") throw new Error("--initialize は migrate 専用です。");
   const configuration = hostedDatabaseConfiguration(target, values.get("--expect-host") ?? "", values.get("--environment-id") ?? "");
-  const query = createQuery(configuration);
-  let statement: string;
-  if (command === "migrate") statement = migrationSql(configuration, initialize);
-  else {
+  if (command === "migrate") {
+    await migrateDatabase(configuration, { initialize });
+  } else {
+    const query = createQuery(configuration);
+    let statement: string;
     if (command === "seed") statement = seedSql(configuration);
     else if (command === "register") {
       const email = values.get("--email")?.trim().toLowerCase() ?? "";
@@ -40,9 +42,9 @@ export async function runDatabaseCommand(args: string[]): Promise<void> {
       statement = disableUserSql(configuration, id);
     }
     await verifyDatabaseOwnership(query, configuration);
+    await query(statement);
+    await verifyDatabaseOwnership(query, configuration);
   }
-  await query(statement);
-  await verifyDatabaseOwnership(query, configuration);
   console.log(`Mille DB ${command}: ${target}/${configuration.environmentId} 完了`);
 }
 

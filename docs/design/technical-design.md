@@ -36,7 +36,7 @@
 | `lib/server/workspace-http.ts` | 更新時の同一Origin確認、JSONをバイト数制限付きで読む、`private, no-store` |
 | `lib/server/workspaces.ts` | 引数化したSQL、Repository境界、DBコマンド結果をDomainErrorへ変換 |
 | `db/migrations/002_workspaces.sql` | SQL関数内で利用者・ワークスペースをロックし、所属と更新を同じDB処理で確認 |
-| `scripts/db/sql.ts` とDB手順 | 環境marker・原文hash・migration履歴を照合。build時に正式DBを変更しない |
+| `scripts/db/sql.ts` とDB手順 | 環境marker・原文hash・migration履歴を照合。本番ではNext.jsのビルド成功後、公開前に未適用のmigrationを適用 |
 | `scripts/cloud/` とCI | PGliteと架空A/Bによる検証。正式Neon／Vercel Previewと実Google OAuthを別に確認 |
 
 既存のドライバー、認証方式、利用者登録方式を継承する。P1のためにORM、別の認証基盤、リアルタイム同期基盤を追加しない。
@@ -280,7 +280,7 @@ P1の料理名検索は、記録した料理名の部分一致に限定する。
 
 既存の移行runnerは、専用DB markerのproject・環境・環境ID、全既存移行のSHA-256、`schema_migrations` を確認し、`pg_advisory_xact_lock(hashtext('mille:schema'))` の下で適用する。移行全体がDO文の単一トランザクションなので、`CREATE INDEX CONCURRENTLY` は混ぜない。P1は空の追加テーブルへの通常の索引作成で足りる。
 
-適用前はローカルPGliteと専用Previewで、空DBからの初期化と002からの増分移行の両方を確認する。ProductionにPreview seedを流さず、build時にmigrationを自動実行しない。DDL適用とアプリ切替は別工程で、追加済みテーブルを旧アプリが無視できる順序にする。
+適用前はローカルPGliteと専用Previewで、空DBからの初期化と002からの増分移行の両方を確認する。Vercelの`main`本番ビルドでは、Next.jsのビルド成功後、公開前に未適用のmigrationを適用する。初期化とseedは専用手順で扱う。移行に成功してから新しいアプリへ切り替えるまで、公開中の旧アプリも新しいスキーマを利用できる順序にする。 [本番ビルドとDB移行](../development.md#本番ビルドと-db-移行)
 
 失敗した移行はトランザクションのロールバックを確認する。適用成功後に不具合が分かった場合は、以前のアプリへ戻して新しいデータを保持し、追加の修正migrationで直す。適用済みSQLの書換えや、利用開始後のテーブルDROPを標準的な巻戻し手段にはしない。正式な復元が必要な場合は対象DBと復元点を別途照合する。
 
@@ -559,9 +559,9 @@ DBには画像ID、workspace ID、dish ID、object key、検証状態、寸法�
 
 #### 環境とmigration
 
-ローカルは専用PGliteと架空A/Bを使用し、正式Neon・Google OAuthの秘密値や実利用者をコピーしない。PreviewとProductionは既存の専用接続変数・host照合・環境markerを維持する。正式migrationは既存runnerを使い、環境識別、適用済みhash、未知の履歴を確認する。セッション依存のmigrationツール等を追加する場合はdirect接続を選定し、既存接続設定を無断で差し替えない。
+ローカルは専用PGliteと架空A/Bを使用し、正式Neon・Google OAuthの秘密値や実利用者をコピーしない。PreviewとProductionは既存の専用接続変数・host照合・環境markerを維持する。正式migrationは既存runnerを使い、環境識別、適用済みhash、未知の履歴を確認する。本番の実行時ホストがNeonのプール用なら、移行では同じエンドポイントの直接接続用ホストを使う。
 
-P1の段階では新しいLLM・画像保存先をprovisionしない。P2・P3の費用・資格情報・接続先は、各実装計画で対象と範囲を確認する。Runtime／buildにmigrationやseedを組み込まない。
+P1の段階では新しいLLM・画像保存先をprovisionしない。P2・P3の費用・資格情報・接続先は、各実装計画で対象と範囲を確認する。自動移行はVercelの本番ビルドの公開前工程で行う。Previewの移行とseedは専用DBの管理工程で実施する。
 
 #### 観測する値
 

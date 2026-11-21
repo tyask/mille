@@ -138,9 +138,23 @@ Preview 設定が欠落・不一致なら拒否し、`DATABASE_URL` で補完し
 Production は `AUTH_MODE=test` でもテスト認証を無効にする。
 `AUTH_URL` を指定する場合はその環境の正規 origin を使う。管理用 provider token を build/runtime に渡さない。
 
+## 本番ビルドと DB 移行
+
+Vercel は `vercel.json` の `buildCommand` で `npm run build:vercel` を実行する。自動移行には `VERCEL=1`、`VERCEL_ENV=production`、`VERCEL_GIT_COMMIT_REF=main` が必要で、Vercel 上での実行を示す `VERCEL_BUILD_IMAGE` と有効な `VERCEL_DEPLOYMENT_ID` も確認する。`VERCEL_TARGET_ENV` がある場合は `production` との一致を確認する。
+
+1. Vercel の実行対象と、既存の `DATABASE_URL`、`MILLE_PRODUCTION_DATABASE_HOST`、`MILLE_PRODUCTION_ENVIRONMENT_ID=mille-production` を照合する。承認済みホストが Neon のプール用なら、同じエンドポイントの直接接続用ホストを移行に使う。実行時の URL と環境設定は従来の値を使う。
+2. Next.js をビルドする。成功した場合に、既存の移行ランナーを初期化なしで実行する。ランナーは DB の環境識別と適用済み SQL の SHA-256 を照合し、未適用分だけを番号順に適用する。
+3. 設定や履歴の不一致、ビルドや移行の失敗はビルドエラーとし、新しいデプロイの公開を止める。初期化、利用者登録と seed は専用手順で行う。 [DB 手順](../scripts/db/README.md)
+
+ローカル・CI の `npm run build`、ローカルの通常の `vercel build`、Vercel Preview のビルドは Next.js のビルドだけを行う。ローカルの `vercel build` でも `VERCEL=1` が設定される。本番を示す環境変数がある場合や、Vercel のビルドイメージ上で対象環境を確認できない場合は、必要な環境情報の照合が成功してからビルドを開始する。PR 専用 Preview の migration と seed は、分離された Preview DB に対して管理ジョブが行う。 [PR 専用 Preview](pr-preview.md)
+
+移行から新しいアプリの公開までの間は旧デプロイが配信を続けるため、旧版での読み書きも維持する。互換性のない変更は段階に分け、先に追加と移行を行い、旧版の利用終了後に不要な構造を削除する。
+
+初回の自動移行を起動する merge は、独立レビューと検証結果を示したうえで別途承認を受ける。実行後は Vercel のデプロイと本番エイリアスが対象コミットに対応すること、移行のログと `schema_migrations` が期待どおりであることを確認する。履歴が期待と異なる場合は、SQL 原本と実際の履歴を照合し、原因を解消してから再実行する。
+
 ## DB と利用者
 
-接続先照合後、専用初期化 SQL と migration を適用する。空でない別用途 DB は拒否する。
+新規 DB は接続先照合後に専用初期化 SQL を適用する。空でない別用途 DB は拒否する。
 marker と migration 原文 hash を照合し、適用済 SQL は編集しない。
 Preview seed は重複登録や停止状態の解除をせず、Production では拒否する。
 正確なコマンドと SQL は [DB手順](../scripts/db/README.md) を参照する。
@@ -160,7 +174,7 @@ Cloud の `qa:cloud` で PC・スマホ × 架空 A/B のログイン・再読�
 共有の3人以上の参加は単体テスト用PGliteの架空fixtureで検証し、正式利用者やA/Bログイン対象は変更しない。
 無効化後の拒否・メール検証・mode・redirect・Production のテスト認証禁止を回帰テストする。
 初回 PR は main に未導入の管理 Workflow に依存せず、承認済み正規 CLI／API で専用 Preview を用意する。
-DB 初期化は対象照合後の専用工程にし、build が勝手に migration/seed しない。
+DB 初期化は対象照合後の専用工程にする。PR 専用 Preview の移行と seed はビルド前に分離 DB の管理工程で行う。
 CI は provider 資格情報を持たず、PR コードを管理資格情報付きで動かさない。
 正式 Preview の初期設定では、固有 origin、Deployment、DB marker を前後で照合する。
 Git非接続の初回デプロイでは、照合済みソースの完全 SHA を build 変数 `MILLE_SOURCE_SHA` に設定する。

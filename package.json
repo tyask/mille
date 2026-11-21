@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:vercel": "node --import tsx scripts/build/vercel-build.ts",
     "start": "next start",
     "check:node": "node scripts/check-node.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs",
