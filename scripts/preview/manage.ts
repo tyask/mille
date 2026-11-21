@@ -73,12 +73,17 @@ async function main() {
   stage = "PR 専用 Neon DB の準備";
   const database = await neon.ensure(target.number, verifyCurrent, migrations);
   stage = "PR 専用 Vercel Preview の準備";
-  const url = await vercel.deploy(target, database, files, verifyCurrent);
+  const deployment = await vercel.deploy(target, database, files, verifyCurrent);
+  const { url } = deployment;
   stage = "現在の PR HEAD と Preview URL の確認";
   await verifyCurrent();
   if (!/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(url)) throw new Error("Preview URL が無効です。");
   if (summary) await appendFile(summary, `PR #${target.number} (${target.sha}) Preview [${url}](${url})\n`);
   console.log(`PR #${target.number} (${target.sha}) Preview ${url}`);
+  if (process.env.GITHUB_OUTPUT) {
+    const ready = { number: target.number, sha: target.sha, deployment };
+    await appendFile(process.env.GITHUB_OUTPUT, `ready=${JSON.stringify(ready)}\n`);
+  }
 }
 
 main().catch((error: unknown) => {

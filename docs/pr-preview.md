@@ -17,8 +17,8 @@ Neon の PR 専用ブランチで、承認済みの適用済み SQL と原文が
 
 ## URL と Ready 条件
 
-Actions の `Mille PR Preview` で対象 PR の管理ジョブを開き、Summary に記載された完全 SHA が現在の PR HEAD と一致することを確認します。そこに記載された固有の Vercel URL を使います。
+最終 HEAD の独立レビューと [Cloud での最終検証](development.md#最終検証初回-preview)が完了したら、GitHub 上で PR を Ready for review に切り替えます。GitHub CI と正式 Preview の作成は並行で進め、状況と結果を PR に記録します。
 
-同じ HEAD の CI が成功し、正式 Preview の `/api/runtime` が同じ SHA を返し、PC・スマホそれぞれで架空 A/B のログインが成功した時点で Ready とします。正式 Preview は Vercel にログインしたブラウザで確認します。PC とスマホ表示で、それぞれ A/B のログイン・本人表示・ログアウトを確認し、URL・SHA・4 ケースの結果を PR に記録します。ローカル検証の `npm run qa:cloud` も、同じ SHA の clean な checkout で実行します。
+Ready 後の正式 Preview 確認は利用者が Vercel にログインしたブラウザで行います。案内するときは、Actions の `Mille PR Preview` 管理ジョブの Summary で現在の PR HEAD に対応する固有の Vercel URL を確認し、PR に記録して共有します。利用者から確認結果を受け取ったら、PR に追記します。
 
 導入 PR は自動処理を有効化する前に、承認済みの正規手段で初回専用 Preview を用意して検証します。有効化後は確認用 draft PR で、作成、HEAD 更新後の URL と DB データの維持、別 PR の分離、終了後の専用資源の不在を確認し、結果を記録します。受付ワークフローの改変、対象外ブランチ、古い通知、資源の所有不一致では管理処理を実行しません。受付の導入・変更より前から作業中のブランチは最新の main を取り込みます。マージ競合で開いている PR の受付が起動しない場合は、競合を解消して最新の変更で通知を発生させます。通知が欠けた場合は、GitHub Actions で `main` の `Mille PR Preview` を手動実行できます。PR 番号と正確な HEAD SHA を入力し、開いていれば `deploy`、閉じていれば `cleanup` を指定します。

@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { resolveManualPreviewTarget, resolveMergedPreviewTargets, resolvePreviewTarget } from "./target";
 
+type GitHubMutation = { method: "POST" | "PATCH"; body: Record<string, unknown> };
+export type PreviewGitHubRequest = (path: string, mutation?: GitHubMutation) => Promise<unknown>;
+
 export async function previewContext() {
   const { GITHUB_REPOSITORY, GITHUB_REF, GITHUB_WORKFLOW_REF, GITHUB_EVENT_NAME,
     GITHUB_EVENT_PATH, GITHUB_SHA, GH_TOKEN } = process.env;
@@ -14,19 +17,23 @@ export async function previewContext() {
   const controlSha = GITHUB_SHA;
   const token = GH_TOKEN;
   const event: unknown = JSON.parse(await readFile(GITHUB_EVENT_PATH, "utf8"));
-  async function read(path: string): Promise<unknown> {
+  const request: PreviewGitHubRequest = async (path, mutation) => {
     const response = await fetch(`https://api.github.com/repos/tyask/mille/${path}`, {
+      method: mutation?.method,
+      body: mutation ? JSON.stringify(mutation.body) : undefined,
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
+        ...(mutation && { "Content-Type": "application/json" }),
       },
       redirect: "error",
       signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) throw new Error("GitHub API の照合に失敗しました。");
     return response.json();
-  }
+  };
+  const read = (path: string) => request(path);
 
   async function targets() {
     if (GITHUB_EVENT_NAME === "push") return resolveMergedPreviewTargets(event, controlSha, read);
@@ -35,5 +42,5 @@ export async function previewContext() {
       : await resolvePreviewTarget(event, controlSha, read);
     return target ? [target] : [];
   }
-  return { read, targets, token, controlSha };
+  return { read, request, targets, token, controlSha };
 }
