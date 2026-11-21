@@ -2,9 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { previewDatabaseEnvironmentId } from "./database";
+import { milleRepositoryId } from "./native-identity";
 
 const projectName = "mille";
-const repositoryId = 1436928292;
 const repository = "tyask/mille";
 const protocol = "mille-pr-preview/v1";
 const sha = z.string().regex(/^[0-9a-f]{40}$/);
@@ -17,7 +17,7 @@ const projectSchema = z.object({
   accountId: z.string(),
   link: z.object({
     type: z.literal("github"),
-    repoId: z.union([z.literal(repositoryId), z.literal(String(repositoryId))]),
+    repoId: z.union([z.literal(milleRepositoryId), z.literal(String(milleRepositoryId))]),
     productionBranch: z.literal("main"),
   }).nullish(),
   framework: z.string().nullish(),
@@ -97,7 +97,7 @@ function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   return result.data;
 }
 
-function validateSource(files: readonly PreviewSourceFile[]) {
+export function assertPreviewVercelSource(files: readonly PreviewSourceFile[]) {
   if (!files.some(({ file }) => file === "package.json")) throw new Error("Preview のソースが不足しています。");
   if (files.some(({ file }) => /^(?:now\.json|vercel\.(?:ts|js|mts|mjs|cts|cjs))$/i.test(file))) {
     throw new Error("Preview では実行形式または旧形式の Vercel 設定を使用できません。");
@@ -114,6 +114,7 @@ function validateSource(files: readonly PreviewSourceFile[]) {
     relatedProjects: z.never().optional(),
   }).safeParse(settings);
   if (!result.success) throw new Error("Preview の vercel.json に資格情報や公開範囲に影響する設定があります。");
+  return settings;
 }
 
 function terminal(state: Deployment["readyState"]) {
@@ -270,7 +271,7 @@ export class VercelPreview {
       || !connection.username || !connection.password || connection.searchParams.get("sslmode") !== "require") {
       throw new Error("Vercel Preview の DB 接続設定が一致しません。");
     }
-    validateSource(files);
+    assertPreviewVercelSource(files);
     await this.preflight();
     await verifyCurrent();
     const hostHash = createHash("sha256").update(db.expectedHost).digest("hex");

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { isNativePreviewTaskBranch } from "../preview/native-identity";
 
 type Environment = Readonly<Record<string, string | undefined>>;
 
@@ -34,11 +35,6 @@ const indexHtml = `<!doctype html>
 </html>
 `;
 
-function isTaskBranch(branch: string): boolean {
-  return /^codex\/[a-zA-Z0-9][a-zA-Z0-9/._-]*$/.test(branch) && !branch.includes("..") && !branch.endsWith(".")
-    && branch.split("/").every(part => part && !part.startsWith(".") && !part.endsWith(".lock"));
-}
-
 export function isNativePreviewProvisioning(environment: Environment): boolean {
   const requested = environment.MILLE_NATIVE_PREVIEW_PHASE;
   if (requested === undefined) return false;
@@ -53,7 +49,7 @@ export function isNativePreviewProvisioning(environment: Environment): boolean {
     || (environment.VERCEL_TARGET_ENV !== undefined && environment.VERCEL_TARGET_ENV !== "preview")
     || !/^dpl_[A-Za-z0-9]+$/.test(environment.VERCEL_DEPLOYMENT_ID ?? "")
     || environment.VERCEL_GIT_REPO_OWNER !== "tyask" || environment.VERCEL_GIT_REPO_SLUG !== "mille"
-    || !isTaskBranch(branch) || branch !== environment.VERCEL_GIT_COMMIT_REF
+    || !isNativePreviewTaskBranch(branch) || branch !== environment.VERCEL_GIT_COMMIT_REF
     || !/^[a-f0-9]{40}$/.test(sha) || sha !== environment.VERCEL_GIT_COMMIT_SHA
     || !/^[1-9][0-9]*$/.test(pr) || Number(pr) > 2147483647
     || (deploymentPr && deploymentPr !== pr)

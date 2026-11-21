@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isNativePreviewTaskBranch, milleRepositoryId } from "./native-identity";
 
 const repository = "tyask/mille";
 const workflow = "actions/workflows/pr-events.yml";
@@ -23,6 +24,7 @@ const pullRequest = z.object({
   head: branch,
   base: branch,
 });
+const nativePullRequest = pullRequest.extend({ created_at: timestamp });
 const runIdentity = z.object({
   id: positive,
   workflow_id: positive,
@@ -72,6 +74,28 @@ export async function previewTargetIsCurrent(expected: PreviewTarget, read: Read
   const pr = pullRequest.parse(await read(`pulls/${positive.parse(expected.number)}`));
   const target = targetFor(pr);
   return target !== null && samePreviewTarget(target, expected);
+}
+
+export async function resolveNativePreviewSource(target: PreviewTarget, read: ReadGitHub) {
+  const failure = "Native Preview の PR ソースを照合できません。";
+  const expected = previewTargetSchema.safeParse(target);
+  if (!expected.success || expected.data.operation !== "deploy") throw new Error(failure);
+
+  let response: unknown;
+  try {
+    response = await read(`pulls/${expected.data.number}`);
+  } catch {
+    throw new Error(failure);
+  }
+  const parsed = nativePullRequest.safeParse(response);
+  if (!parsed.success) throw new Error(failure);
+  const pr = parsed.data;
+  const actual = targetFor(pr);
+  const repoId = pr.head.repo?.id;
+  if (!actual || !samePreviewTarget(actual, expected.data) || repoId !== milleRepositoryId
+    || !isNativePreviewTaskBranch(pr.head.ref)) throw new Error(failure);
+
+  return { number: pr.number, sha: pr.head.sha, ref: pr.head.ref, repoId, createdAt: pr.created_at };
 }
 
 function belongsTo(run: z.infer<typeof runIdentity>, id: number): boolean {

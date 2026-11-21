@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  previewTargetIsCurrent, resolveManualPreviewTarget, resolveMergedPreviewTargets, resolvePreviewTarget,
+  previewTargetIsCurrent, resolveManualPreviewTarget, resolveMergedPreviewTargets, resolveNativePreviewSource, resolvePreviewTarget,
 } from "../scripts/preview/target";
 
 const head = "a".repeat(40);
@@ -115,6 +115,56 @@ test("処理直前に同じリポジトリ、HEAD、PR 状態を再照合でき�
   assert.equal(await previewTargetIsCurrent(cleanup, readFrom({
     "pulls/8": { ...pr, ...closed, closed_at: "2026-11-20T00:00:01Z" },
   })), false);
+});
+
+const nativeTarget = { number: 8, sha: head, operation: "deploy" } as const;
+const nativeRepository = { id: 1436928292, full_name: "tyask/mille" };
+const nativePr = {
+  ...pr, created_at: timestamp,
+  head: { ...pr.head, repo: nativeRepository, ref: "codex/preview/check-v2" },
+  base: { ...pr.base, repo: nativeRepository },
+};
+
+test("Native Preview は GitHub の現在の PR から正確なソースを取得する", async () => {
+  assert.deepEqual(await resolveNativePreviewSource(nativeTarget, readFrom({ "pulls/8": nativePr })), {
+    number: 8, sha: head, ref: "codex/preview/check-v2", repoId: 1436928292, createdAt: timestamp,
+  });
+});
+
+test("Native Preview は不一致や無効な PR ソースを拒否する", async () => {
+  const unsafeRepository = { ...nativeRepository, id: Number.MAX_SAFE_INTEGER + 1 };
+  const invalid: [string, Partial<typeof nativePr>][] = [
+    ["PR 番号", { number: 9 }],
+    ["HEAD の更新", { head: { ...nativePr.head, sha: control } }],
+    ["閉じた PR", closed],
+    ["fork", { head: { ...nativePr.head, repo: { id: 29, full_name: "another/mille" } } }],
+    ["別のリポジトリ ID", { head: { ...nativePr.head, repo }, base: { ...nativePr.base, repo } }],
+    ["安全な整数の範囲外の ID", {
+      head: { ...nativePr.head, repo: unsafeRepository }, base: { ...nativePr.base, repo: unsafeRepository },
+    }],
+    ["main 以外の base", { base: { ...nativePr.base, ref: "dev" } }],
+    ["codex 以外の HEAD", { head: { ...nativePr.head, ref: "feature/sample" } }],
+    ["不正な HEAD", { head: { ...nativePr.head, ref: "codex/sample/../other" } }],
+    ["不正な作成日時", { created_at: "2026-11-31T00:00:00Z" }],
+    ["作成日時の欠落", { created_at: undefined }],
+  ];
+  for (const [label, changes] of invalid) {
+    await assert.rejects(resolveNativePreviewSource(nativeTarget, readFrom({ "pulls/8": { ...nativePr, ...changes } })),
+      { message: "Native Preview の PR ソースを照合できません。" }, label);
+  }
+});
+
+test("Native Preview は cleanup の取得を行わず GitHub の応答エラーを伏せる", async () => {
+  let requests = 0;
+  const read = async () => {
+    requests++;
+    throw new Error("provider response");
+  };
+  const failure = { message: "Native Preview の PR ソースを照合できません。" };
+  await assert.rejects(resolveNativePreviewSource(cleanup, read), failure);
+  assert.equal(requests, 0);
+  await assert.rejects(resolveNativePreviewSource(nativeTarget, read), failure);
+  assert.equal(requests, 1);
 });
 
 test("手動実行は同じ PR と SHA、および指定操作に合う現在の状態を要求する", async () => {
