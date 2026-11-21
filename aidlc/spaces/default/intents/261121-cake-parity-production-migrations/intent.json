@@ -11,7 +11,7 @@
   "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
   "implementationPlanSha256": "23673618294932b7ac987cef9192cd85227de26816d6f88c8cae24c6354e708b",
   "approvalEvidence": "approvals.json",
-  "frozenAt": "2026-11-21T05:56:02Z",
+  "frozenAt": "2026-11-21T05:57:37Z",
   "preCommitValidation": {
     "node": "24.22.3",
     "checks": [
@@ -20,7 +20,8 @@
       "git diff --check",
       "自己レビュー",
       "ホストとローカルCLIの回帰テスト5件",
-      "修正後のcheck:fast"
+      "修正後のcheck:fast",
+      "欠落したVercel環境情報の回帰テストと文書検査"
     ]
   },
   "revisionHistory": [
@@ -28,6 +29,11 @@
       "recordedAt": "2026-11-21T05:56:02Z",
       "priorSha": "e6dd8b27d3c05665af378efa40cc92e193c614c9",
       "reason": "独立レビューで指摘されたローカルVercel CLIの環境判定を、ホストビルドとデプロイIDの確認で補強し、回帰テストを追加。"
+    },
+    {
+      "recordedAt": "2026-11-21T05:57:37Z",
+      "priorSha": "d3b1fec59ec8ffd471d981a750909b45fe893289",
+      "reason": "ホストビルドのシステム環境変数が欠落した場合も公開前に停止するよう修正。"
     }
   ]
 }

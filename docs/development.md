@@ -146,7 +146,7 @@ Vercel は `vercel.json` の `buildCommand` で `npm run build:vercel` を実行
 2. Next.js をビルドする。成功した場合に、既存の移行ランナーを初期化なしで実行する。ランナーは DB の環境識別と適用済み SQL の SHA-256 を照合し、未適用分だけを番号順に適用する。
 3. 設定や履歴の不一致、ビルドや移行の失敗はビルドエラーとし、新しいデプロイの公開を止める。初期化、利用者登録と seed は専用手順で行う。 [DB 手順](../scripts/db/README.md)
 
-ローカル・CI の `npm run build`、ローカルの通常の `vercel build`、Vercel Preview のビルドは Next.js のビルドだけを行う。ローカルの `vercel build` でも `VERCEL=1` が設定されるため、本番を指定して実行しても Vercel 上のビルドを示す情報がそろわなければ、Next.js や移行の開始前にエラーで終了する。PR 専用 Preview の migration と seed は、分離された Preview DB に対して管理ジョブが行う。 [PR 専用 Preview](pr-preview.md)
+ローカル・CI の `npm run build`、ローカルの通常の `vercel build`、Vercel Preview のビルドは Next.js のビルドだけを行う。ローカルの `vercel build` でも `VERCEL=1` が設定される。本番を示す環境変数がある場合や、Vercel のビルドイメージ上で対象環境を確認できない場合は、必要な環境情報の照合が成功してからビルドを開始する。PR 専用 Preview の migration と seed は、分離された Preview DB に対して管理ジョブが行う。 [PR 専用 Preview](pr-preview.md)
 
 移行から新しいアプリの公開までの間は旧デプロイが配信を続けるため、旧版での読み書きも維持する。互換性のない変更は段階に分け、先に追加と移行を行い、旧版の利用終了後に不要な構造を削除する。
 

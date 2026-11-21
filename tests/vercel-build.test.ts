@@ -47,6 +47,8 @@ test("an invalid production claim or mismatched DB settings fail before the buil
     { VERCEL_DEPLOYMENT_ID: "build201" },
     { VERCEL_ENV: undefined },
     { VERCEL_ENV: "unknown" },
+    { VERCEL: undefined, VERCEL_ENV: undefined, VERCEL_TARGET_ENV: undefined, VERCEL_DEPLOYMENT_ID: undefined, VERCEL_GIT_COMMIT_REF: undefined },
+    { VERCEL: undefined, VERCEL_ENV: "preview" },
     { VERCEL_ENV: undefined, VERCEL_TARGET_ENV: "production" },
     { VERCEL_ENV: "preview", VERCEL_TARGET_ENV: "production" },
     { VERCEL_TARGET_ENV: "preview" },

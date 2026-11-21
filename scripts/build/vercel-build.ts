@@ -14,7 +14,7 @@ type BuildSteps = {
 };
 
 function hostedBuild(environment: BuildEnvironment): boolean {
-  return environment.VERCEL === "1" && Boolean(environment.VERCEL_BUILD_IMAGE?.trim());
+  return Boolean(environment.VERCEL_BUILD_IMAGE?.trim());
 }
 
 function deploymentIdentified(environment: BuildEnvironment): boolean {
@@ -25,13 +25,13 @@ function productionConfiguration(environment: BuildEnvironment): HostedConfigura
   const target = environment.VERCEL_ENV;
   const declaredTarget = environment.VERCEL_TARGET_ENV;
   if (target !== "production" && declaredTarget !== "production") {
-    if (hostedBuild(environment) && target !== "preview" && target !== "development") {
+    if (hostedBuild(environment) && (environment.VERCEL !== "1" || (target !== "preview" && target !== "development"))) {
       throw new Error("Vercelのビルド環境を確認できません。");
     }
     return null;
   }
   // The local Vercel CLI also sets VERCEL=1 and can load deployment metadata.
-  if (!hostedBuild(environment) || !deploymentIdentified(environment)
+  if (!hostedBuild(environment) || environment.VERCEL !== "1" || !deploymentIdentified(environment)
     || target !== "production" || environment.VERCEL_GIT_COMMIT_REF !== "main"
     || (declaredTarget !== undefined && declaredTarget !== "production")) {
     throw new Error("本番ビルドの環境とmainブランチを確認できません。");
@@ -75,7 +75,7 @@ export async function runVercelBuild(environment: BuildEnvironment, steps: Build
 
 const buildSteps: BuildSteps = {
   build() {
-    if (hostedBuild(process.env) && deploymentIdentified(process.env)) {
+    if (hostedBuild(process.env) && process.env.VERCEL === "1" && deploymentIdentified(process.env)) {
       console.log("Mille: Vercelのホストビルドとデプロイ識別を確認しました。");
     }
     console.log("Mille: Next.jsのビルドを開始します。");
