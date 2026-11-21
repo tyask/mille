@@ -1,0 +1,23 @@
+{
+  "id": "261121-cake-parity-native-resource",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-03"
+  ],
+  "phase": "Native Previewの未接続リソース照合",
+  "branch": "codex/issue-32-native-preview-resource",
+  "baseSha": "985659fd269fc71a5f7706331fecf7a88bcc3976",
+  "referenceSha": "bc737a52701cc3ddf56a17fb947b8c952a379e22",
+  "state": "frozen",
+  "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
+  "implementationPlanSha256": "2abe36dc2fc285a02a0b9128fd1f8e3ce7e1153954371717a7bcdba6476faff3",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-21T09:11:31Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "未接続リソースの照合テスト7件が成功",
+    "架空の応答でCLIが管理APIのGET 6件だけを使用し、資格情報を伏せることを確認",
+    "承認済みIssueと実装計画のSHA-256を照合",
+    "git diff --check"
+  ]
+}
