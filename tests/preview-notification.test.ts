@@ -84,9 +84,9 @@ test("作成中の表と現行 SHA のステータスを作り、READY で同じ
   ]);
   assert.equal(writes[3].body.context, "mille / Preview");
   assert.equal(writes[3].body.state, "success");
-  assert.match(String(writes[3].body.target_url), /^https:\/\/vercel\.com\/fumin1\/mille\/(?:dpl_)?MillePreview$/);
+  assert.equal(writes[3].body.target_url, "https://vercel.com/fumin1/mille/MillePreview");
   assert.match(comments[0].body, /^<!-- mille-pr-preview:v1 42 2 terminal -->/);
-  assert.match(comments[0].body, /\[Ready\]\(https:\/\/vercel\.com\/fumin1\/mille\/(?:dpl_)?MillePreview\)/);
+  assert.ok(comments[0].body.includes("[Ready](https://vercel.com/fumin1/mille/MillePreview)"));
   assert.ok(comments[0].body.includes(`[Preview](${deployment.url})`));
 });
 

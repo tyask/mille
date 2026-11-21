@@ -86,7 +86,8 @@ export async function publishPreviewNotification({ target, report, run, request,
   const project = "https://vercel.com/fumin1/mille";
   const actions = `https://github.com/tyask/mille/actions/runs/${run.id}/attempts/${run.attempt}`;
   const message = messages[report.state];
-  const deployment = report.state === "success" ? `[Ready](${project}/${report.deployment.id})` : message.label;
+  const targetUrl = report.state === "success" ? `${project}/${report.deployment.id.slice("dpl_".length)}` : actions;
+  const deployment = report.state === "success" ? `[Ready](${targetUrl})` : message.label;
   const link = report.state === "success" ? `[Preview](${report.deployment.url})` : `[Details](${actions})`;
   const body = [
     `${markerPrefix}${run.number} ${run.attempt} ${phase} -->`,
@@ -108,7 +109,7 @@ export async function publishPreviewNotification({ target, report, run, request,
       context: "mille / Preview",
       state: message.state,
       description: message.description,
-      target_url: report.state === "success" ? `${project}/${report.deployment.id}` : actions,
+      target_url: targetUrl,
     },
   });
 }

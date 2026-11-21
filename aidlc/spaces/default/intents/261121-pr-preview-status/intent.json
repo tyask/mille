@@ -4,7 +4,7 @@
   "branch": "codex/issue-26-preview-status",
   "baseSha": "ef2dc4eb26b66133c1b8d356c23ffea0520c5b74",
   "state": "frozen",
-  "frozenAt": "2026-11-21T02:42:18Z",
+  "frozenAt": "2026-11-21T02:44:10Z",
   "approvedIssueSha256": "33d845dabaecd3671294c531e6a1511e56d803422aecabfaf1c04a7bbf92e0ff",
   "implementationPlanSha256": "a9de89218124f9b8c22a90152a00ae3ec7b9864dc11e92ebfe39b57cdb3c7873",
   "approvalEvidence": "approvals.json",
@@ -17,5 +17,12 @@
       "git diff --check",
       "自己レビュー"
     ]
-  }
+  },
+  "revisionHistory": [
+    {
+      "recordedAt": "2026-11-21T02:44:10Z",
+      "priorSha": "f73bcf945bc83605e379b2785d293d18584e175b",
+      "reason": "独立レビューで見つかった Vercel 詳細リンクの形式を修正し、回帰テストで URL を完全一致で照合。"
+    }
+  ]
 }
