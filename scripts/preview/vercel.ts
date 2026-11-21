@@ -246,7 +246,7 @@ export class VercelPreview {
       }
       if (current.readyState === "READY") {
         await verify();
-        return `https://${current.url}`;
+        return { id: current.id, url: `https://${current.url}` };
       }
       if (terminal(current.readyState)) throw new Error(`Vercel Preview のビルドが ${current.readyState} で終了しました。`);
       await this.wait(5_000);
@@ -259,7 +259,7 @@ export class VercelPreview {
     db: PreviewDatabase,
     files: readonly PreviewSourceFile[],
     verifyCurrent: VerifyCurrent = noOp,
-  ): Promise<string> {
+  ): Promise<{ id: string; url: string }> {
     const environmentId = previewDatabaseEnvironmentId(target.number);
     if (!sha.safeParse(target.sha).success) throw new Error("Vercel Preview の HEAD が無効です。");
     let connection: URL;
