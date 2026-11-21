@@ -38,14 +38,13 @@ npm run dev:cloud
 ## 検証
 
 ```bash
-npm run check:node
-npm run audit:dependencies
-npm run lint
-npm run typecheck
+npm run check:fast
 npm test
 npm run build
 npm run qa:cloud
 ```
+
+依存関係を更新した場合は `npm run audit:dependencies` で監査します。
 
 PC/mobile × A/B のログイン、再読込、本人表示、ログアウト、未認証拒否に加え、ワークスペースの作成・切替・招待・参加・名称変更・削除を検証し、結果を `.mille/cloud/` に保存します。
 

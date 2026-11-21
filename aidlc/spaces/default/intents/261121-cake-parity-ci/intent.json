@@ -1,0 +1,26 @@
+{
+  "id": "261121-cake-parity-ci",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-01"
+  ],
+  "branch": "codex/issue-32-ci-workflow",
+  "baseSha": "90d41f05443f2e119976f8d01d82272cf62b4f8f",
+  "referenceSha": "bc737a52701cc3ddf56a17fb947b8c952a379e22",
+  "state": "frozen",
+  "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
+  "implementationPlanSha256": "b0377e7832481c600e4ec7fc1a38716274563aa0541161eac765183e17cac58c",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-21T05:25:22Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "check:fast",
+      "依存境界と文書参照のテスト4件",
+      "IssueフォームとCIのYAML",
+      "shallow checkoutのpush・PRコミット照合",
+      "git diff --check",
+      "自己レビュー"
+    ]
+  }
+}

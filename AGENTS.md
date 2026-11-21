@@ -4,14 +4,14 @@ Cake の開発手順を踏襲する。Issue・PR・記録・報告は日本語�
 
 ## 承認と完了条件
 
-1. 読み取り調査後、目的・範囲・受入条件・実装と検証方法をチャットへ提示する。
+1. 読み取り調査後、[該当する Issue テンプレート](.github/ISSUE_TEMPLATE)を確認し、目的・範囲・受入条件・実装と検証方法をチャットへ提示する。
 2. 提示した計画への利用者承認後に Issue を作成・更新する。
 3. GitHub に保存された Issue 本文を再取得して本文と URL を提示し、別の承認を受ける。
-4. 両承認後に開発ブランチを作成し、`aidlc/` に計画と別々の承認証拠を保存して実装する。
+4. 両承認後に開発ブランチを作成し、[Intent](docs/development.md#issue-と-intent)に計画と別々の承認証拠を保存して実装する。
 5. 関連テスト・自己レビュー後に記録を凍結して commit する。
 6. 別 Agent が新しい文脈で要求・適用ルール・比較元・完全 SHA を受け取り、読み取り専用でレビューする。
-7. 最終 SHA の clean な checkout で lint・型検査・テスト・build・必要なブラウザ QA を確認する。
-8. draft PR を作成する。GitHub CI と正式 Preview の作成は並行で進め、状況と結果を PR に記録する。
+7. 最終 SHA の clean な checkout で `npm run check:fast`、テスト、build、必要なブラウザ QA を確認する。
+8. [PR テンプレート](.github/pull_request_template.md)を使って draft PR を作成する。GitHub CI と正式 Preview の作成は並行で進め、[現在 HEAD の CI](docs/development.md#github-ci-の照合)と Preview の状況と結果を PR に記録する。
 9. 検証済みの受入条件を Issue でチェックし、証拠を記録する。現在 HEAD のレビューと Cloud テストが揃った PR を GitHub 上で Ready for review に切り替える。
 10. [PR と Issue の完了確認](docs/development.md#pr-と-issue-の完了確認)に従って両方を再取得する。検証した完全 SHA、PR のドラフト状態、Issue の対象チェックが保存済みであることを確認してから完了を報告する。
 

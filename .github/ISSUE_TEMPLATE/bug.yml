@@ -1,0 +1,30 @@
+name: 不具合
+description: 期待どおりに動かない挙動を報告します。
+body:
+  - type: markdown
+    attributes:
+      value: |
+        起きていることが分かれば報告できます。調査後に修正範囲、受入条件、検証方法を整理します。
+        承認済みの計画、Intent、PRはこのIssueに関連付けます。
+  - type: textarea
+    id: actual
+    attributes:
+      label: 起きていること
+      description: 困っている挙動と、発生した画面や操作を書いてください。
+      placeholder: スマートフォンでワークスペースを切り替えると、選択が保存されない。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する挙動
+      description: どのように動いてほしいかを、分かる範囲で書いてください。
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 再現手順・発生条件
+      description: 操作の順番、頻度、端末、ブラウザ、表示内容などを、分かる範囲で書いてください。
+  - type: markdown
+    attributes:
+      value: |
+        接続文字列、パスワード、トークン、家族の個人情報を記載しないでください。
