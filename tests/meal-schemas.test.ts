@@ -75,6 +75,9 @@ test("replacement and deletion require valid versions and ranges are at most 62 
     assert.equal(deleteMealSchema.safeParse({ expectedVersion }).success, false);
   }
   assert.equal(mealRangeSchema.safeParse({ from: "2026-01-01", to: "2026-03-04" }).success, true);
+  assert.equal(mealRangeSchema.safeParse({ from: "9999-12-31", to: "+010000-01-01" }).success, true);
+  assert.equal(mealRangeSchema.safeParse({ from: "9999-10-30", to: "+010000-01-01" }).success, false);
+  assert.equal(createMealSchema.safeParse({ ...draft, mealDate: "+010000-01-01" }).success, false);
   for (const to of ["2025-12-31", "2026-01-01", "2026-03-05"]) {
     assert.equal(mealRangeSchema.safeParse({ from: "2026-01-01", to }).success, false, to);
   }

@@ -76,7 +76,9 @@ export const updateMealSchema = z.strictObject({
 export const deleteMealSchema = z.strictObject({ expectedVersion });
 
 const dayInMilliseconds = 24 * 60 * 60 * 1_000;
-export const mealRangeSchema = z.strictObject({ from: mealDate, to: mealDate })
+// An expanded ISO date is needed only for the exclusive end of 9999-12-31.
+const lastRangeEnd = "+010000-01-01";
+export const mealRangeSchema = z.strictObject({ from: mealDate, to: z.union([mealDate, z.literal(lastRangeEnd)]) })
   .refine(({ from, to }) => {
     const days = (Date.parse(to) - Date.parse(from)) / dayInMilliseconds;
     return days > 0 && days <= 62;

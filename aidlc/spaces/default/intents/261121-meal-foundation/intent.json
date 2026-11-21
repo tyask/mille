@@ -7,17 +7,21 @@
   "approvedIssueSha256": "77eb5ae4afbe7972b4d00371b023abda413bc2c8211637d8f10067a3ac6dac96",
   "implementationPlanSha256": "2bc7075156a8070300c954b9ff675af9dde4a3f5e961eceed1d652edc682aedb",
   "approvalEvidence": "approvals.json",
-  "frozenAt": "2026-11-21T01:47:13Z",
+  "frozenAt": "2026-11-21T01:50:00Z",
   "preCommitValidation": {
     "node": "24.22.3",
     "checks": [
-      "lint",
-      "typecheck",
-      "全160テスト",
       "移行生成後の対象19テスト",
       "git diff --check",
       "自己レビュー"
     ],
-    "migrationSha256": "2a4ea7617508b9c0334b062bdf80c37ad6e9ef1101f572f2a42f0415ca85bd7a"
-  }
+    "migrationSha256": "6a00446fca1293f006ac71df6fa71f3a7b81c31e3009268c9811b5ed674473d4"
+  },
+  "revisionHistory": [
+    {
+      "recordedAt": "2026-11-21T01:50:00Z",
+      "priorSha": "172386462ea7841d48092ada99d172e68609e1b0",
+      "reason": "独立レビューで判明した9999-12-31の一覧取得を、排他的な終了日と回帰テストで修正。"
+    }
+  ]
 }

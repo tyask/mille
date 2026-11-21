@@ -120,6 +120,12 @@ test("shared members can save and read meal details; date range summaries exclud
     dishes: meal.dishes.map(({ id, position, name }) => ({ id, position, name })),
   }]);
   assert.deepEqual((await ownerMeals.list(workspaceId, { from: "2026-12-01", to: "2026-12-02" })).map(({ id }) => id), [minimal.id]);
+
+  const lastDate = await ownerMeals.create(workspaceId, {
+    mealDate: "9999-12-31", mealType: "DINNER", dishes: [{ name: "みそ汁" }],
+  });
+  const lastDay = await memberMeals.list(workspaceId, { from: "9999-12-31", to: "+010000-01-01" });
+  assert.deepEqual(lastDay.map(({ id }) => id), [lastDate.id]);
 });
 
 test("each operation rechecks account identity and current membership and hides other workspaces' meals", async t => {

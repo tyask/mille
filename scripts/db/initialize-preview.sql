@@ -64,7 +64,7 @@ FOR EACH ROW EXECUTE FUNCTION mille_reject_production_test_user();
   IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '002_workspaces.sql' AND sha256 <> '8ea6f940c097035d2c0e54417b60473b449219702f3aa232c24969c522c12eba') THEN
     RAISE EXCEPTION 'Mille migration history or checksum mismatch';
   END IF;
-  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '003_meals.sql' AND sha256 <> '2a4ea7617508b9c0334b062bdf80c37ad6e9ef1101f572f2a42f0415ca85bd7a') THEN
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '003_meals.sql' AND sha256 <> '6a00446fca1293f006ac71df6fa71f3a7b81c31e3009268c9811b5ed674473d4') THEN
     RAISE EXCEPTION 'Mille migration history or checksum mismatch';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '002_workspaces.sql') THEN
@@ -417,7 +417,9 @@ BEGIN
 
   IF operation = ''list'' THEN
     range_start := mille_meal_date(payload->>''from'');
-    range_end := mille_meal_date(payload->>''to'');
+    -- The expanded ISO date is only accepted as the exclusive end of 9999-12-31.
+    range_end := CASE WHEN payload->>''to'' = ''+010000-01-01'' THEN DATE ''10000-01-01''
+      ELSE mille_meal_date(payload->>''to'') END;
     IF range_start IS NULL OR range_end IS NULL OR range_end - range_start NOT BETWEEN 1 AND 62 THEN
       RETURN mille_meal_error(''INVALID_INPUT'');
     END IF;
@@ -578,6 +580,6 @@ BEGIN
 END;
 $meal_command$ LANGUAGE plpgsql;
 ';
-    INSERT INTO schema_migrations (name,sha256) VALUES ('003_meals.sql','2a4ea7617508b9c0334b062bdf80c37ad6e9ef1101f572f2a42f0415ca85bd7a');
+    INSERT INTO schema_migrations (name,sha256) VALUES ('003_meals.sql','6a00446fca1293f006ac71df6fa71f3a7b81c31e3009268c9811b5ed674473d4');
   END IF;
 END; $mille_migration$;

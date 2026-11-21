@@ -125,7 +125,9 @@ BEGIN
 
   IF operation = 'list' THEN
     range_start := mille_meal_date(payload->>'from');
-    range_end := mille_meal_date(payload->>'to');
+    -- The expanded ISO date is only accepted as the exclusive end of 9999-12-31.
+    range_end := CASE WHEN payload->>'to' = '+010000-01-01' THEN DATE '10000-01-01'
+      ELSE mille_meal_date(payload->>'to') END;
     IF range_start IS NULL OR range_end IS NULL OR range_end - range_start NOT BETWEEN 1 AND 62 THEN
       RETURN mille_meal_error('INVALID_INPUT');
     END IF;
