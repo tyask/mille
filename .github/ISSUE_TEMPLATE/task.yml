@@ -1,0 +1,26 @@
+name: 開発・運用・文書の作業
+description: リファクタリング、開発環境、検証、運用手順、文書などの変更を依頼します。
+body:
+  - type: markdown
+    attributes:
+      value: |
+        作業の目的をもとに、対象範囲、受入条件、検証方法を整理します。
+        承認済みの計画、Intent、PRはこのIssueに関連付けます。
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 作業の目的
+      description: 何を変えたいか、その理由や解決したい問題を書いてください。
+      placeholder: 別の担当者も同じ手順でCIの結果を確認できるようにしたい。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 対象範囲・制約
+      description: 対象の機能、文書、環境や、守るべき運用条件があれば書いてください。
+  - type: textarea
+    id: completion
+    attributes:
+      label: 完了したと判断できる状態
+      description: 作業後に確認したい結果、具体例、関連資料があれば書いてください。

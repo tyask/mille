@@ -53,7 +53,8 @@ Cloud開発サーバーの転送ログは招待URLのトークンを伏せ、ブ
 
 ## Cakeから採用した内容
 
-参考は [Cake](https://github.com/tyask/Cake) の `docs/detail-design.html`、
-`lib/server/services/workspaces.ts`、`lib/server/stores/app-store.ts` です。
+Cakeの [技術詳細設計](https://github.com/tyask/Cake/blob/main/docs/detail-design.html)、
+[ワークスペースサービス](https://github.com/tyask/Cake/blob/main/lib/server/services/workspaces.ts)、
+[データストア](https://github.com/tyask/Cake/blob/main/lib/server/stores/app-store.ts) を参照しました。
 個人用・共有用、所属による権限、名称確認付き削除、メール宛の期限付き招待を採用しました。
 共有2人の上限と家計の負担割合はMilleへ適用しません。

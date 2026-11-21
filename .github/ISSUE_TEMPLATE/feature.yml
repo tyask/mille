@@ -1,0 +1,26 @@
+name: 新機能・改善
+description: 新しい機能や、既存の使い勝手の改善を依頼します。
+body:
+  - type: markdown
+    attributes:
+      value: |
+        実現したいことをもとに、対象範囲、受入条件、検証方法を整理します。
+        承認済みの計画、Intent、PRはこのIssueに関連付けます。
+  - type: textarea
+    id: request
+    attributes:
+      label: 実現したいこと
+      description: 誰が何に困っていて、どう改善したいかを書いてください。
+      placeholder: 家族が同じ料理を以前に作った日を見つけやすくしたい。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する挙動・具体例
+      description: 画面や操作の例、期待する結果があれば書いてください。
+  - type: textarea
+    id: constraints
+    attributes:
+      label: 補足・制約
+      description: 対象範囲、今回扱わないこと、関連するIssueや資料があれば書いてください。

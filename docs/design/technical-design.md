@@ -70,12 +70,13 @@ app/
     dish-search/                  P1の料理名検索
     suggestions/                    P2の提案API
     images/                         P3の画像API
-components/meals/
-  meal-app.tsx                      選択ワークスペースと画面の境界
-  meal-calendar.tsx                 週・月・選択日の3食
-  meal-editor.tsx                   複数料理と入力の保持
-  meal-detail.tsx                   閲覧、編集、コピー
-  dish-search.tsx                   検索とページング
+components/
+  meals/
+    meal-app.tsx                    選択ワークスペースと画面の境界
+    meal-calendar.tsx               週・月・選択日の3食
+    meal-editor.tsx                 複数料理と入力の保持
+    meal-detail.tsx                 閲覧、編集、コピー
+    dish-search.tsx                 検索とページング
 lib/shared/
   meal-types.ts                    DTOと列挙値
   meal-schemas.ts                  Zodスキーマと上限

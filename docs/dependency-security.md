@@ -42,5 +42,5 @@ Node24.19.0、React19.2.8、Auth.js5 beta.32 は変更しない。Cake のファ
 - Next 16.4.3: https://github.com/vercel/next.js/releases/tag/v16.4.3
 
 更新後も全依存と runtime の監査を分けて行い、lint・型検査・既存回帰・build を確認する。
-CI は `npm run audit:dependencies` で high／critical を失敗にする。
-旧 SHA のブラウザ QA 成功を新 SHA の成功へ流用せず、PR 現在 HEAD の CI を確認する。
+`npm run audit:dependencies` は個別に実行でき、全依存の high／critical で失敗する。依存変更時は対象の lockfile と監査結果を記録する。
+ブラウザ QA と CI は、PR の現在 HEAD に対応する最新の試行を確認する。 [CI の照合手順](development.md#github-ci-の照合)

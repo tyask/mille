@@ -1,41 +1,82 @@
 name: CI
 on:
   pull_request:
+    branches:
+      - main
   push:
-    branches: [main]
+    branches:
+      - main
+      - "codex/**"
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    container:
+      # Keep the version and digest aligned with Playwright in package-lock.json.
+      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+      options: --init --user 1001:1001
+    defaults:
+      run:
+        shell: bash
     env:
-      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/../.cache/ms-playwright
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
       NEXT_TELEMETRY_DISABLED: "1"
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - name: 照合したソースとテスト対象を記録
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          tested_sha=$(git rev-parse HEAD)
+          if [[ "$tested_sha" != "$GITHUB_SHA" ]]; then
+            echo "イベントで指定されたコミットとcheckoutが一致しません。" >&2
+            exit 1
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            # The raw commit object exposes the parents even in the shallow checkout.
+            mapfile -t parents < <(git cat-file commit HEAD | sed -n '1,/^$/s/^parent //p')
+            if [[ "${#parents[@]}" != 2 || "${parents[1]:-}" != "$SOURCE_HEAD" ]]; then
+              echo "PRのHEADがテスト対象のマージコミットと一致しません。" >&2
+              exit 1
+            fi
+          fi
+          {
+            printf 'イベント `%s`\n\n' "$GITHUB_EVENT_NAME"
+            printf 'ソースHEAD `%s`\n\n' "$SOURCE_HEAD"
+            printf 'テスト対象のコミット `%s`\n' "$tested_sha"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
-      - run: npm ci
-      - run: npm run audit:dependencies
-      - run: npm run check:node
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - run: npx playwright install --with-deps chromium
-      - run: npm run qa:cloud
-      - uses: actions/upload-artifact@v4
+          cache-dependency-path: package-lock.json
+      - name: Check Node.js version
+        run: npm run check:node
+      - name: Install dependencies
+        run: npm ci
+      - name: Fast checks
+        run: npm run check:fast
+      - name: Test
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Cloud browser tests with disposable in-memory database
+        run: npm run qa:cloud
+      - name: Upload Cloud browser results
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
-          name: cloud-qa
+          name: cloud-qa-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.sha }}
           path: .mille/cloud/
+          include-hidden-files: true
+          if-no-files-found: ignore
           retention-days: 7

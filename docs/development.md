@@ -9,7 +9,36 @@ GitHub CI と正式 Preview の作成は並行で進め、状況と結果を PR 
 Ready 後に現在 HEAD の正式 Preview URL を案内し、利用者がブラウザで動作を確認する。
 merge と Production 操作は別判断。詳細は [AGENTS.md](../AGENTS.md)。Cloud は既存 checkout を使う。
 
+## Issue と Intent
+
+計画提示前に、変更の種類に合う Issue テンプレートを読む。テンプレートの入力項目と、目的・範囲・受入条件・実装方針・検証方法をチャットの計画に含める。既存の Issue を更新するときも同じ手順を使う。 [不具合](../.github/ISSUE_TEMPLATE/bug.yml) · [新機能・改善](../.github/ISSUE_TEMPLATE/feature.yml) · [開発・運用・文書](../.github/ISSUE_TEMPLATE/task.yml)
+
+計画への承認後、`目的・背景`、`対象範囲・対象外`、`受入条件`、`関連記録`、`進捗` の見出しで Issue を作成または更新する。受入条件は `- [ ] AC-01: ...` のように識別子付きで記載する。GitHub に保存した本文を再取得して本文と URL をチャットに提示し、その本文への別の承認を受ける。
+
+両方の承認後、`aidlc/spaces/default/intents/` の案件ディレクトリに以下を記録し、Issue・開発ブランチと関連付ける。
+
+| ファイル | 記録する内容 |
+| --- | --- |
+| `plan.md` | 承認済みの計画 |
+| `issue.md`、`issue-source.json` | 承認を受けた GitHub の保存済み本文、取得元、取得時点の情報 |
+| `approvals.json` | 計画と Issue 本文それぞれの承認発言、承認対象と順序 |
+| `intent.json` | 案件 ID、Issue URL、ブランチ、基点の完全 SHA、進捗と凍結状態 |
+
+実装・関連テスト・自己レビューを終えた時点で記録を凍結し、commit する。凍結後の独立レビュー、最終検証、CI と Preview の証拠は PR と Issue に記録する。計画・Issue 本文の承認対象に変更がある場合は、変更した計画と保存済み Issue 本文に順に承認を受ける。
+
+## GitHub CI の照合
+
+`CI` の `check` は `main` と `codex/**` への push、`main` 向け PR で実行する。固定した Actions と Playwright の公式コンテナを使い、`npm run check:fast`、全テスト、build、Cloud ブラウザ QA を実行する。 [CI の定義](../.github/workflows/ci.yml)
+
+1. PR の現在の完全 HEAD SHA と対象ブランチを取得する。GitHub Actions の `CI` から、そのブランチへの `push` と、同じ PR を対象にした `pull_request` をそれぞれ確認する。対応するイベントの最新 run と、その run の最新試行を使う。
+2. 最新試行の `check` と、`照合したソースとテスト対象を記録` ステップの Summary またはログを開く。`push` は現在の PR HEAD をそのままテストする。`pull_request` はソース HEAD が現在の PR HEAD と一致することを確認し、実際のテスト対象として GitHub が作成したマージコミットの完全 SHA を記録する。
+3. PR 本文にイベントごとの実行 URL・試行番号、ソース HEAD、実際のテスト対象 SHA、結果を記録する。最新試行の `check` が成功した場合に限り、そのイベントの CI を成功と記録する。PR の HEAD が変わったら、新しい HEAD の実行結果を取得する。
+
+Cloud ブラウザ QA の artifact 名にはイベント、ソース HEAD、実際のテスト対象 SHA が含まれる。ローカル検証、GitHub CI、正式 Preview の証拠は対象 SHA と実行先を明記する。CI と正式 Preview は並行で進め、Ready の判定は現行の手順を参照する。 [Ready 条件](pr-preview.md#url-と-ready-条件)
+
 ## PR と Issue の完了確認
+
+draft PR の本文には、承認済み Issue と Intent へのリンク、変更内容、影響と互換性、Preview と検証結果を記載する。別 Agent レビューは対象の完全 SHA、指摘と対応、未解決事項を要約し、PR の詳細コメントを参照する。検証結果には実行環境と版、件数・所要時間、対象の受入条件、未実施の理由と残る資源を記載する。 [PR テンプレート](../.github/pull_request_template.md)
 
 対象の Issue と PR、検証した完全 HEAD SHA、証拠が揃った受入条件の ID を照合する。既存の GitHub コネクタで次の操作を行う。
 
@@ -123,8 +152,9 @@ Preview seed は重複登録や停止状態の解除をせず、Production で�
 
 PR 専用 Preview の URL、Ready 条件、有効化手順は [PR 専用 Preview](pr-preview.md) を参照してください。
 
-最終 SHA と clean 状態を前後で照合し、check:node、lint、typecheck、test、build、qa:cloud を行う。
-依存更新時は `npm run audit:dependencies` も確認する。CI は全依存の high／critical を検出すると失敗する。[監査記録](dependency-security.md)も参照する。
+`npm run check:fast` は Node の版、lint、型、構造の境界（`npm run check:boundaries`）、文書参照（`npm run check:docs`）を確認する。
+最終 SHA と clean 状態を前後で照合し、`npm run check:fast`、`npm test`、`npm run build`、`npm run qa:cloud` を行う。
+依存更新時は個別に `npm run audit:dependencies` を実行し、全依存の high／critical を確認する。 [監査記録](dependency-security.md)
 Cloud の `qa:cloud` で PC・スマホ × 架空 A/B のログイン・再読込・本人表示・ログアウト・未認証拒否を確認する。
 ワークスペースは個人用分離、作成・選択復元、招待・参加、所属者による名称変更・削除も確認する。
 共有の3人以上の参加は単体テスト用PGliteの架空fixtureで検証し、正式利用者やA/Bログイン対象は変更しない。
