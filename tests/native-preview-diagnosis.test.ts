@@ -20,6 +20,7 @@ const vercelProject = {
   ssoProtection: { deploymentType: "preview" },
 };
 const providerSecret = "sensitive-provider-fixture-must-not-appear";
+const templateUri = `postgresql://neondb_owner:${providerSecret}@${templateEndpoint.host}/neondb?sslmode=require`;
 const env = {
   VERCEL_TOKEN: "vercel-test-token",
   NEON_API_KEY: "neon-test-token",
@@ -51,6 +52,9 @@ const templateEndpointsPath = `${templatePath}/endpoints`;
 const standingEndpointsPath = `${standingPath}/endpoints`;
 const databasesPath = `${templatePath}/databases`;
 const rolesPath = `${templatePath}/roles`;
+const connectionUriPath = `${neonProjectPath}/connection_uri?${new URLSearchParams({
+  branch_id: template.id, endpoint_id: templateEndpoint.id, database_name: "neondb", role_name: "neondb_owner", pooled: "false",
+})}`;
 
 function scenario(overrides: Record<string, Response> = {}) {
   const responses: Record<string, Response> = {
@@ -79,6 +83,7 @@ function scenario(overrides: Record<string, Response> = {}) {
     [standingEndpointsPath]: Response.json({ endpoints: [standingEndpoint] }),
     [databasesPath]: Response.json({ databases: [{ branch_id: template.id, name: "neondb", owner_name: "neondb_owner" }] }),
     [rolesPath]: Response.json({ roles: [{ branch_id: template.id, name: "neondb_owner", protected: false }] }),
+    [connectionUriPath]: Response.json({ uri: templateUri }),
     ...overrides,
   };
   const requests: string[] = [];
@@ -104,9 +109,10 @@ function scenario(overrides: Record<string, Response> = {}) {
 
 function assertSafeOutput(checks: Awaited<ReturnType<typeof diagnoseNativePreview>>) {
   const output = formatNativePreviewDiagnosis(checks);
-  for (const sensitive of [providerSecret, env.VERCEL_TOKEN, env.NEON_API_KEY, vercelOrigin, neonOrigin]) {
+  const serialized = JSON.stringify(checks);
+  for (const sensitive of [providerSecret, env.VERCEL_TOKEN, env.NEON_API_KEY, vercelOrigin, neonOrigin, "postgresql://"]) {
     assert.ok(!output.includes(sensitive));
-    assert.ok(!JSON.stringify(checks).includes(sensitive));
+    assert.ok(!serialized.includes(sensitive));
   }
   return output;
 }
@@ -152,6 +158,23 @@ test("Neon の一覧取得に成功してもブランチ別エンドポイント
   assert.ok(deniedCheck);
   assert.match(deniedCheck.name, /Neon.*(?:エンドポイント|接続先)/);
   assert.match(assertSafeOutput(checks), /403/);
+});
+
+test("Neon の接続 URI 取得の拒否と別ホストの URI を区別し、資格情報を出力しない", async () => {
+  const wrongHost = templateUri.replace(templateEndpoint.host, "untrusted-preview.example.invalid");
+  const responses = [
+    Response.json({ uri: templateUri }, { status: 403 }),
+    Response.json({ uri: wrongHost }),
+  ];
+  for (const response of responses) {
+    const fixture = scenario({ [connectionUriPath]: response });
+    const checks = await diagnoseNativePreview(env, fixture.request);
+    assert.ok(fixture.requests.includes(connectionUriPath));
+    const failedCheck = checks.find(check => !check.ok && check.status === response.status);
+    assert.ok(failedCheck);
+    assert.match(failedCheck.name, /Neon.*接続/);
+    assertSafeOutput(checks);
+  }
 });
 
 test("Neon の DB 一覧に失敗した場合は未照合のロールを成功と扱わない", async () => {

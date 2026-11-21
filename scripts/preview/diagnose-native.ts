@@ -5,7 +5,8 @@ import { z } from "zod";
 import { nativeVercelProject, nativeVercelDeploymentInventory, nativeVercelEnvironmentInventory,
   hasDetachedPreviewEnvironments } from "./native-pilot-vercel";
 import { inspectDetachedNativeResource, NativeResourceInspectionError } from "./native-resource";
-import { neonPreviewBranchDetails, neonPreviewBranchEndpoints } from "./neon";
+import { neonPreviewBranchDetails, neonPreviewBranchEndpoints, neonPreviewBranchInventory,
+  neonPreviewConnectionQuery, neonPreviewConnectionUri, matchesNeonPreviewConnection } from "./neon";
 
 const environment = z.object({
   VERCEL_TOKEN: z.string().min(1),
@@ -107,6 +108,9 @@ export async function diagnoseNativePreview(
     const store = stage === "store";
     const url = store ? vercelUrl(path) : neonUrl(path);
     const result = await readMetadata(check, url, store ? env.VERCEL_TOKEN : env.NEON_API_KEY, request);
+    if (stage === "branch" && !neonPreviewBranchInventory.safeParse(result).success) {
+      throw new NativeResourceInspectionError(stage);
+    }
     check.ok = true;
     return result;
   }
@@ -136,6 +140,13 @@ export async function diagnoseNativePreview(
           })),
       );
     }
+    if ((await Promise.all(neonChecks)).every(check => check.ok)) {
+      const params = neonPreviewConnectionQuery(verified.branchId, verified.endpointId, verified.database, verified.role);
+      const schema = neonPreviewConnectionUri.refine(({ uri }) => URL.canParse(uri)
+        && matchesNeonPreviewConnection(new URL(uri), verified.host, verified.database, verified.role));
+      neonChecks.push(probe("Neon テンプレート接続情報", neonUrl(`${neonProject}/connection_uri?${params}`),
+        env.NEON_API_KEY, request, schema));
+    }
   } catch (error) {
     const stage = error instanceof NativeResourceInspectionError ? error.stage : "configuration";
     const check = checks.get(stage) ?? { name: resourceChecks[stage], ok: false };
@@ -153,7 +164,7 @@ export async function diagnoseNativePreview(
     probeVercel("Vercel 環境変数メタデータ", `/v10/projects/${projectId}/env?decrypt=false`,
       nativeVercelEnvironmentInventory.refine(({ envs, pagination }) => hasDetachedPreviewEnvironments(envs)
         && (pagination?.count === undefined || pagination.count === envs.length))),
-    probeVercel("Vercel デプロイ一覧", `/v6/deployments?projectId=${projectId}&limit=100`,
+    probeVercel("Vercel デプロイ一覧の先頭ページ", `/v6/deployments?projectId=${projectId}&limit=100`,
       nativeVercelDeploymentInventory.refine(({ deployments, pagination }) => pagination.count === deployments.length
         && deployments.every(deployment => deployment.projectId === projectId)
         && new Set(deployments.map(deployment => deployment.uid)).size === deployments.length)),

@@ -56,6 +56,7 @@ Vercel に接続する前に、信頼済みの `main` の checkout で `npm run 
 Vercel の試験接続が解除され、Neon の既定が常設用 `main` の状態で、Actions の **Mille Native Preview Diagnosis** を信頼済みの `main` から手動実行します。上記の照合済み識別子のうち、`store`、`integration`、`product` に Vercel のストア・構成・製品 ID を、`neon_organization`、`standing_branch`、`standing_endpoint` に Neon の組織・常設ブランチ・常設 endpoint の ID を指定します。 [診断ワークフロー](../.github/workflows/native-preview-diagnosis.yml)
 
 診断は管理ジョブと同じ GitHub Environment `mille-pr-preview` の資格情報を使い、Vercel と Neon の管理 API を GET で照合します。診断ステップのログから確認項目と、取得できた場合の HTTP 状態を記録します。
+Neon の接続情報は取得したプロセス内で接続先を照合します。テンプレートの空状態は、前段で記載した読み取り専用 SQL の手順で確認します。
 試験エイリアスの HTTP 404 は復旧時の期待応答です。エイリアスへのアクセス権を判定する際は、他の Vercel 照合結果も確認します。
 
 ## Neon Native の接続と切替計画
