@@ -11,7 +11,8 @@ const directHost = "ep-build-fixture-123456.ap-southeast-1.aws.neon.tech";
 const pooledHost = "ep-build-fixture-123456-pooler.ap-southeast-1.aws.neon.tech";
 const fixtureUrl = (host: string) => `postgresql://fixture:dummy-password@${host}/mille_fixture?sslmode=require&channel_binding=require`;
 const production = Object.freeze({
-  VERCEL: "1", VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "main",
+  VERCEL: "1", VERCEL_BUILD_IMAGE: "al2023", VERCEL_DEPLOYMENT_ID: "dpl_BuildFixture123",
+  VERCEL_ENV: "production", VERCEL_GIT_COMMIT_REF: "main",
   MILLE_PRODUCTION_DATABASE_HOST: pooledHost, MILLE_PRODUCTION_ENVIRONMENT_ID: "mille-production",
   DATABASE_URL: fixtureUrl(pooledHost),
 });
@@ -22,6 +23,7 @@ const directConfiguration: DatabaseConfiguration = {
 test("local, Preview and development builds never run the production migration", async () => {
   for (const [label, environment] of [
     ["local", { NODE_ENV: "production", DATABASE_URL: production.DATABASE_URL }],
+    ["local Vercel CLI", { VERCEL: "1" }],
     ["Preview", { ...production, VERCEL_ENV: "preview", VERCEL_TARGET_ENV: "preview" }],
     ["development", { ...production, VERCEL_ENV: "development", VERCEL_TARGET_ENV: "development" }],
   ] as const) {
@@ -38,6 +40,11 @@ test("an invalid production claim or mismatched DB settings fail before the buil
   const invalid: Record<string, string | undefined>[] = [
     { VERCEL: undefined },
     { VERCEL: "0" },
+    { VERCEL_BUILD_IMAGE: undefined },
+    { VERCEL_BUILD_IMAGE: " " },
+    { VERCEL_DEPLOYMENT_ID: undefined },
+    { VERCEL_DEPLOYMENT_ID: "dpl_" },
+    { VERCEL_DEPLOYMENT_ID: "build201" },
     { VERCEL_ENV: undefined },
     { VERCEL_ENV: "unknown" },
     { VERCEL_ENV: undefined, VERCEL_TARGET_ENV: "production" },
