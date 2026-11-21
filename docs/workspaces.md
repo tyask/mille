@@ -42,7 +42,7 @@ Cloud開発サーバーの転送ログは招待URLのトークンを伏せ、ブ
 
 `002_workspaces.sql` を追加し、適用済みの `001_auth.sql` は変更しません。
 既存DBからの更新・新規初期化は同じmigration管理を使い、環境識別と原文ハッシュを確認します。
-アプリのbuildや通常の起動が正式DBへmigrationやseedを実行することはありません。
+Vercelの`main`本番ビルドでは、Next.jsのビルド成功後、公開前に本番DBの未適用migrationを適用します。初期化とseedは専用手順で扱います。 [本番ビルドとDB移行](development.md#本番ビルドと-db-移行)
 
 単一SQL問い合わせのNeon HTTPとCloud PGliteで同じ原子性を保つため、更新はSQL関数内で実行します。
 行ロックと一意制約により初期作成・招待再発行・参加・削除の競合を扱います。

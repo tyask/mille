@@ -1,0 +1,24 @@
+{
+  "id": "261121-cake-parity-production-migrations",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-02"
+  ],
+  "branch": "codex/issue-32-production-migrations",
+  "baseSha": "e3f77a04fcfb21b672b1d46786d45208e261bbc2",
+  "referenceSha": "bc737a52701cc3ddf56a17fb947b8c952a379e22",
+  "state": "frozen",
+  "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
+  "implementationPlanSha256": "23673618294932b7ac987cef9192cd85227de26816d6f88c8cae24c6354e708b",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-21T05:52:55Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "check:fast",
+      "本番ビルド・スキーマ・Preview設定の対象26テスト",
+      "git diff --check",
+      "自己レビュー"
+    ]
+  }
+}
