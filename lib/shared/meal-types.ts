@@ -41,3 +41,17 @@ export interface MealSummary extends MealHeader {
 export interface MealDetail extends MealHeader {
   dishes: MealDish[];
 }
+
+export interface DishSearchItem {
+  mealDate: string;
+  mealType: MealType;
+  mealId: string;
+  dishId: string;
+  position: number;
+  dishName: string;
+}
+
+export interface DishSearchPage {
+  items: DishSearchItem[];
+  nextCursor: string | null;
+}

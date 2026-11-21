@@ -1,0 +1,23 @@
+{
+  "id": "261121-meal-api",
+  "issue": "https://github.com/tyask/mille/issues/30",
+  "branch": "codex/issue-30-meal-api",
+  "baseSha": "b2442585faf19eb316b05aba48d2d60d7f525163",
+  "state": "frozen",
+  "approvedIssueSha256": "a7653cf6cd03c4b0ac461fa6eeb3ea16f21fc2fc6d0cf4e170782555c76e46d0",
+  "implementationPlanSha256": "c5017e533ef1ff2a6cb032b95658624d9f7b2093c17bdc926b8b26c48450d98d",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-21T03:45:53Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "lint",
+      "型検査",
+      "献立・スキーマ・HTTP契約の対象29テスト",
+      "git diff --check",
+      "自己レビュー"
+    ],
+    "migrationSha256": "b3992b6880d6d5bc86636fdf88d44dccd249dff431df471500742ebaec8eec2b",
+    "priorMigrationSha256": "6a00446fca1293f006ac71df6fa71f3a7b81c31e3009268c9811b5ed674473d4"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/30",
+  "recordedAt": "2026-11-21T03:42:51Z",
+  "planApproval": {
+    "reply": "承認します",
+    "sequence": 1,
+    "scope": "チャットで提示したP1bの献立API、コピー・検索・冪等性、検証の計画。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "チャットに再取得して全文を提示した保存済みIssue #30の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-21T03:40:16Z",
+    "sha256": "a7653cf6cd03c4b0ac461fa6eeb3ea16f21fc2fc6d0cf4e170782555c76e46d0"
+  }
+}
