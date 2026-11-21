@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/25",
+  "recordedAt": "2026-11-21T02:47:30Z",
+  "planApproval": {
+    "reply": "承認します",
+    "sequence": 1,
+    "scope": "Ready前のCloud検証とReady後の利用者確認に変更し、PR #27に含める計画。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "GitHubで再取得し、チャットに全文を提示した変更版Issue #25の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue-revised.md",
+    "sourceMetadata": "issue-source-revised.json",
+    "updatedAt": "2026-11-21T02:45:18Z",
+    "sha256": "cc002009b483eaa0ff164a13b77f9898981cefff1afdafd29aa9941c225fc541"
+  }
+}

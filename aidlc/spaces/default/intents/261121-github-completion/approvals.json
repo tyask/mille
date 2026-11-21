@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/25",
+  "recordedAt": "2026-11-21T02:24:31Z",
+  "planApproval": {
+    "reply": "承認します。",
+    "sequence": 1,
+    "scope": "チャットで提示したmilleの完了報告前のGitHub照合手順を追加する計画。"
+  },
+  "issueApproval": {
+    "reply": "承認します。",
+    "sequence": 2,
+    "scope": "GitHubから再取得しチャットに全文を提示したIssue #25の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-21T02:22:21Z",
+    "sha256": "5976e942e4400461224871b97cb6c7b19c79e5e8106fe2551278d043da47a791"
+  }
+}
