@@ -71,9 +71,12 @@ const branchDetails = z.object({
     value: z.record(z.string(), z.string()),
   }).nullish(),
 });
+const endpointIdentifier = identifier.refine(id => id.startsWith("ep-"));
 const operation = z.object({
   id: identifier,
-  branch_id: branchId,
+  action: z.string().min(1),
+  branch_id: branchId.nullish(),
+  endpoint_id: endpointIdentifier.nullish(),
   project_id: identifier,
   status: z.string(),
 });
@@ -82,7 +85,7 @@ const branchChange = operations.extend({ branch });
 const database = z.object({ name: z.string(), branch_id: branchId, owner_name: z.string() });
 const role = z.object({ name: z.string(), branch_id: branchId, protected: z.boolean().nullish() });
 const endpoint = z.object({
-  id: identifier.refine(id => id.startsWith("ep-")),
+  id: endpointIdentifier,
   host: z.string(),
   project_id: identifier,
   branch_id: branchId,
@@ -94,11 +97,40 @@ type Config = z.input<typeof configSchema>;
 type Branch = z.infer<typeof branch>;
 type VerifyCurrent = () => Promise<void>;
 
-class NeonRequestError extends Error {
-  constructor(readonly status: number) {
-    super(status ? `Neon API が HTTP ${status} を返しました。` : "Neon API に接続できませんでした。");
+export class NeonPreviewError extends Error {
+  constructor(message: string, readonly diagnostic: string) {
+    super(message);
   }
 }
+
+class NeonRequestError extends NeonPreviewError {
+  constructor(readonly status: number, request: string) {
+    super(
+      status ? `Neon API が HTTP ${status} を返しました。` : "Neon API に接続できませんでした。",
+      `${request}.${status ? `http_${status}` : "network"}`,
+    );
+  }
+}
+
+function requestCategory(path: string): string {
+  const [, resource, id, child] = path.split("?")[0].split("/");
+  switch (resource) {
+    case "branches":
+      if (child === "roles" || child === "databases" || child === "endpoints") return child;
+      return id ? "branch" : "branches";
+    case "connection_uri": return "connection_uri";
+    case "operations": return "operation";
+    default: return "project";
+  }
+}
+
+const diagnosticSchemaProperties = new Set([
+  "project", "branch", "branches", "annotation", "object", "value", "roles", "databases",
+  "endpoints", "operation", "operations", "uri", "pagination", "id", "project_id", "branch_id",
+  "parent_id", "endpoint_id", "name", "default", "primary", "protected", "init_source",
+  "current_state", "pending_state", "owner_name", "role", "database", "host", "type",
+  "disabled", "action", "status", "next",
+]);
 
 export class NeonPreview {
   readonly #config: Config;
@@ -114,6 +146,7 @@ export class NeonPreview {
   async #request<T>(
     path: string, schema: z.ZodType<T>, method = "GET", body?: object, verifyCurrent?: VerifyCurrent,
   ): Promise<T> {
+    const request = `${method}.${requestCategory(path)}`;
     for (let attempt = 0; attempt < 4; attempt++) {
       await verifyCurrent?.();
       let response: Response | undefined;
@@ -126,18 +159,26 @@ export class NeonPreview {
           signal: AbortSignal.timeout(15_000),
         });
       } catch {
-        if (method !== "GET") throw new NeonRequestError(0);
+        if (method !== "GET") throw new NeonRequestError(0, request);
       }
       if (response?.ok) {
         // Provider response bodies may contain passwords. Never show parse errors or the raw body.
         const result = schema.safeParse(await response.json().catch(() => null));
-        if (!result.success) throw new Error("Neon API の応答形式が一致しません。");
+        if (!result.success) {
+          const path = result.error.issues[0]?.path ?? [];
+          // Annotation map entries can have arbitrary provider-defined names.
+          const schemaPath = path[0] === "annotation" && path[1] === "value" ? path.slice(0, 2) : path;
+          const field = schemaPath
+            .filter((key): key is string => typeof key === "string" && diagnosticSchemaProperties.has(key))
+            .join(".") || "response";
+          throw new NeonPreviewError("Neon API の応答形式が一致しません。", `${request}.schema.${field}`);
+        }
         return result.data;
       }
       const status = response?.status ?? 0;
       // Neon explicitly permits retrying any request on HTTP 423 or 503.
       const retryable = status === 423 || status === 503 || (method === "GET" && (!status || status === 429 || status >= 500));
-      if (!retryable || attempt === 3) throw new NeonRequestError(status);
+      if (!retryable || attempt === 3) throw new NeonRequestError(status, request);
       await delay(800 * (attempt + 1));
     }
     throw new Error("Neon API の再試行回数を超えました。");
@@ -242,9 +283,14 @@ export class NeonPreview {
     const record = await this.#request(`/branches/${id}`, branchDetails);
     this.#assertBranch(record.branch, name);
     const expected = this.#annotation(pr);
-    if (record.branch.id !== id || record.annotation?.object.id !== id
-      || Object.entries(expected).some(([key, value]) => record.annotation?.value[key] !== value)) {
-      throw new Error("Neon PR 専用ブランチの所有情報が一致しません。");
+    const message = "Neon PR 専用ブランチの所有情報が一致しません。";
+    if (record.branch.id !== id) throw new NeonPreviewError(message, "GET.branch.identity_mismatch");
+    if (!record.annotation) throw new NeonPreviewError(message, "GET.branch.annotation_missing");
+    if (record.annotation.object.id !== id) throw new NeonPreviewError(message, "GET.branch.annotation_identity_mismatch");
+    for (const [key, value] of Object.entries(expected)) {
+      if (record.annotation.value[key] !== value) {
+        throw new NeonPreviewError(message, `GET.branch.annotation_mismatch.${key}`);
+      }
     }
     return record.branch;
   }
@@ -255,12 +301,18 @@ export class NeonPreview {
     for (const requested of result.operations) {
       let current = requested;
       for (;;) {
-        if (current.id !== requested.id || current.branch_id !== id || current.project_id !== this.#config.projectId) {
-          throw new Error("Neon 操作の対象が一致しません。");
+        // Neon synchronizes project endpoint configuration as part of branch creation.
+        const validScope = current.action === "epc_sync"
+          ? !current.branch_id && !current.endpoint_id
+          : current.branch_id === id;
+        if (!validScope || current.id !== requested.id || current.action !== requested.action
+          || current.project_id !== this.#config.projectId
+          || (current.endpoint_id ?? null) !== (requested.endpoint_id ?? null)) {
+          throw new NeonPreviewError("Neon 操作の対象が一致しません。", "operation.target_mismatch");
         }
         if (current.status === "finished" || current.status === "skipped") break;
         if (!["scheduling", "running", "cancelling"].includes(current.status) || Date.now() >= deadline) {
-          throw new Error("Neon 操作の完了を確認できません。");
+          throw new NeonPreviewError("Neon 操作の完了を確認できません。", "operation.incomplete");
         }
         await delay(1500);
         ({ operation: current } = await this.#request(`/operations/${requested.id}`, operationResponse));
