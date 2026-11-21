@@ -1,0 +1,30 @@
+{
+  "id": "261121-github-completion",
+  "issue": "https://github.com/tyask/mille/issues/25",
+  "branch": "codex/issue-25-github-completion",
+  "baseSha": "ef2dc4eb26b66133c1b8d356c23ffea0520c5b74",
+  "state": "frozen",
+  "approvedIssueSha256": "5976e942e4400461224871b97cb6c7b19c79e5e8106fe2551278d043da47a791",
+  "implementationPlanSha256": "50453be9451e1064cf8b341892c3f00220725a7826ee43b4e5e05b7af26df881",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-21T02:25:27Z",
+  "preCommitValidation": {
+    "checks": [
+      "git diff --check",
+      "文書内参照",
+      "自己レビュー"
+    ],
+    "readOnlyGitHub": {
+      "pr": "https://github.com/tyask/mille/pull/24",
+      "issue": "https://github.com/tyask/mille/issues/23",
+      "head": "2680ed27f7b94857bb8fa1a2734318cb75c96a93",
+      "confirmed": "最終SHA一致、draft=false、AC-01〜AC-05が保存済み。",
+      "incompleteExamples": [
+        "未チェック",
+        "draft",
+        "SHA不一致",
+        "Issue再取得失敗"
+      ]
+    }
+  }
+}

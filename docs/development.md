@@ -3,8 +3,20 @@
 ## 開発
 
 計画提示・承認 → 保存済み Issue 本文・URL の提示・別承認 → ブランチ・Intent → 実装・自己レビュー
-→ 記録を凍結して commit → 別 Agent レビュー → 最終 SHA の検証 → draft PR → CI・正式 Preview → Ready。
+→ 記録を凍結して commit → 別 Agent レビュー → 最終 SHA の検証 → draft PR → CI・正式 Preview
+→ Issue のチェック更新・PR の Ready 切り替え → GitHub で保存状態を確認 → 結果報告。
 merge と Production 操作は別判断。詳細は [AGENTS.md](../AGENTS.md)。Cloud は既存 checkout を使う。
+
+## PR と Issue の完了確認
+
+対象の Issue と PR、検証した完全 HEAD SHA、証拠が揃った受入条件の ID を照合する。既存の GitHub コネクタで次の操作を行う。
+
+1. `github_fetch_pr` で現在の HEAD を取得し、レビュー・CI・正式 Preview などの証拠と照合する。HEAD が変わった場合は、現在の SHA で必要なレビューと検証を揃え直す。
+2. `github_fetch_issue` で最新本文を取得する。証拠が揃った受入条件のチェックと関連記録を `github_update_issue` で更新する。複数の要件を含む項目はすべて確認できた時点でチェックし、既存の記載や他の項目を保持する。
+3. `github_update_pull_request` で PR 本文に検証結果を記録する。切り替えの直前に PR を再取得し、HEAD と既存の [Ready 条件](pr-preview.md#url-と-ready-条件)を照合する。条件を満たした draft PR は `github_mark_pull_request_ready_for_review` で GitHub 上の状態を切り替える。利用者による draft 維持の指定を尊重する。
+4. 操作後に `github_fetch_pr` と `github_fetch_issue` で保存状態を再取得する。PR の HEAD が検証済みの完全 SHA と一致すること、Ready と報告する場合は `draft: false` であること、Issue の対象 ID がチェック済みであることを確認する。結果報告には PR と Issue の URL、確認した SHA・状態・受入条件を含める。
+
+検証不足、SHA の不一致、更新・再取得の失敗がある場合は、確認済みの項目と未完了の項目を報告する。再開時は両方を再取得し、保存済みの状態を確認して残る操作から再開する。
 
 ## Cloud タスクの開始
 

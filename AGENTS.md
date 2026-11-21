@@ -11,7 +11,9 @@ Cake の開発手順を踏襲する。Issue・PR・記録・報告は日本語�
 5. 関連テスト・自己レビュー後に記録を凍結して commit する。
 6. 別 Agent が新しい文脈で要求・適用ルール・比較元・完全 SHA を受け取り、読み取り専用でレビューする。
 7. 最終 SHA の clean な checkout で lint・型検査・テスト・build・必要なブラウザ QA を確認する。
-8. draft PR を作成し、現在 HEAD の CI・正式 Preview・必要な検証を揃えて Ready と結果を報告する。
+8. draft PR を作成し、現在 HEAD の CI・正式 Preview・必要な検証を確認する。
+9. 検証済みの受入条件を Issue でチェックし、証拠を記録する。Ready 条件を満たした PR を GitHub 上で Ready for review に切り替える。
+10. [PR と Issue の完了確認](docs/development.md#pr-と-issue-の完了確認)に従って両方を再取得する。検証した完全 SHA、PR のドラフト状態、Issue の対象チェックが保存済みであることを確認してから完了を報告する。
 
 計画承認を Issue 承認へ流用しない。両承認がある同一範囲では再承認を求めない。
 利用者が調査のみ等を指定した場合は優先する。範囲変更は計画・Issue を更新して承認する。
