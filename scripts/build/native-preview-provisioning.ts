@@ -46,6 +46,7 @@ export function isNativePreviewProvisioning(environment: Environment): boolean {
   const branch = environment.MILLE_NATIVE_PREVIEW_SOURCE_BRANCH ?? "";
   const sha = environment.MILLE_NATIVE_PREVIEW_SOURCE_SHA ?? "";
   const pr = environment.MILLE_NATIVE_PREVIEW_PR ?? "";
+  const deploymentPr = environment.VERCEL_GIT_PULL_REQUEST_ID;
   const generation = environment.MILLE_NATIVE_PREVIEW_GENERATION ?? "";
   if (requested !== phase || environment.VERCEL !== "1" || !environment.VERCEL_BUILD_IMAGE?.trim()
     || environment.VERCEL_ENV !== "preview" || environment.AUTH_MODE !== "test"
@@ -54,7 +55,8 @@ export function isNativePreviewProvisioning(environment: Environment): boolean {
     || environment.VERCEL_GIT_REPO_OWNER !== "tyask" || environment.VERCEL_GIT_REPO_SLUG !== "mille"
     || !isTaskBranch(branch) || branch !== environment.VERCEL_GIT_COMMIT_REF
     || !/^[a-f0-9]{40}$/.test(sha) || sha !== environment.VERCEL_GIT_COMMIT_SHA
-    || !/^[1-9][0-9]*$/.test(pr) || !Number.isSafeInteger(Number(pr))
+    || !/^[1-9][0-9]*$/.test(pr) || Number(pr) > 2147483647
+    || (deploymentPr && deploymentPr !== pr)
     || !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(generation)) {
     throw new Error("Native Previewの準備用ビルドの対象を確認できません。");
   }

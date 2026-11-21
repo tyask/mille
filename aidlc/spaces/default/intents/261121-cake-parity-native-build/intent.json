@@ -12,10 +12,10 @@
   "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
   "implementationPlanSha256": "c0eefe16e9e4b1b4c42dca432b34208eef7c3adacd5bfb82beec8a8869ba42f3",
   "approvalEvidence": "approvals.json",
-  "frozenAt": "2026-11-21T07:51:36Z",
+  "frozenAt": "2026-11-21T07:53:21Z",
   "preCommitValidation": [
     "npm run check:fast",
-    "node --env-file=.env.test --import tsx --test tests/native-preview-provisioning.test.ts tests/vercel-build.test.ts (15 passed)",
+    "node --import tsx --test tests/native-preview-provisioning.test.ts tests/vercel-build.test.ts (15 passed)",
     "git diff --check",
     "Approved Issue and implementation plan SHA-256 verified"
   ]

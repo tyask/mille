@@ -16,7 +16,7 @@ const branch = "codex/issue-32-native-preview-build";
 const provision = Object.freeze({
   VERCEL: "1", VERCEL_BUILD_IMAGE: "al2023", VERCEL_ENV: "preview", VERCEL_TARGET_ENV: "preview",
   VERCEL_DEPLOYMENT_ID: "dpl_FixturePreview", AUTH_MODE: "test", VERCEL_GIT_REPO_OWNER: "tyask", VERCEL_GIT_REPO_SLUG: "mille",
-  VERCEL_GIT_COMMIT_REF: branch, VERCEL_GIT_COMMIT_SHA: sha,
+  VERCEL_GIT_COMMIT_REF: branch, VERCEL_GIT_COMMIT_SHA: sha, VERCEL_GIT_PULL_REQUEST_ID: "35",
   MILLE_NATIVE_PREVIEW_PHASE: "provision", MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: branch, MILLE_NATIVE_PREVIEW_SOURCE_SHA: sha,
   MILLE_NATIVE_PREVIEW_PR: "35", MILLE_NATIVE_PREVIEW_GENERATION: "1234a678-123b-4abc-9f12-123456789abc",
 });
@@ -36,7 +36,9 @@ function fixtureFile(root: string, name: string, contents = "fixture") {
 
 test("Native Preview provisioning requires the explicit phase and matching hosted PR identity", () => {
   assert.equal(isNativePreviewProvisioning({}), false);
-  assert.equal(isNativePreviewProvisioning({ ...provision, VERCEL_TARGET_ENV: undefined }), true);
+  assert.equal(isNativePreviewProvisioning({ ...provision, VERCEL_TARGET_ENV: undefined, VERCEL_GIT_PULL_REQUEST_ID: undefined }), true);
+  assert.equal(isNativePreviewProvisioning({ ...provision, VERCEL_GIT_PULL_REQUEST_ID: "" }), true);
+  assert.equal(isNativePreviewProvisioning({ ...provision, VERCEL_GIT_PULL_REQUEST_ID: undefined, MILLE_NATIVE_PREVIEW_PR: "2147483647" }), true);
   const noDatabaseReads = new Proxy(provision, {
     get(target, key, receiver) {
       if (/DATABASE|NEON/.test(String(key))) assert.fail(`Unexpected database configuration read: ${String(key)}`);
@@ -54,7 +56,8 @@ test("Native Preview provisioning requires the explicit phase and matching hoste
     { VERCEL_GIT_COMMIT_REF: "codex/../other", MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: "codex/../other" },
     { VERCEL_GIT_COMMIT_REF: "main", MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: "main" },
     { VERCEL_GIT_COMMIT_SHA: "b".repeat(40) }, { VERCEL_GIT_COMMIT_SHA: "a", MILLE_NATIVE_PREVIEW_SOURCE_SHA: "a" },
-    { MILLE_NATIVE_PREVIEW_PR: "0" }, { MILLE_NATIVE_PREVIEW_PR: "035" }, { MILLE_NATIVE_PREVIEW_PR: "9007199254740992" },
+    { MILLE_NATIVE_PREVIEW_PR: "0" }, { MILLE_NATIVE_PREVIEW_PR: "035" }, { MILLE_NATIVE_PREVIEW_PR: "36" },
+    { VERCEL_GIT_PULL_REQUEST_ID: undefined, MILLE_NATIVE_PREVIEW_PR: "2147483648" },
     { MILLE_NATIVE_PREVIEW_GENERATION: "1234a678-123b-4abc-7f12-123456789abc" },
     { MILLE_NATIVE_PREVIEW_GENERATION: provision.MILLE_NATIVE_PREVIEW_GENERATION.toUpperCase() },
   ];

@@ -17,7 +17,7 @@ Neon の PR 専用ブランチで、承認済みの適用済み SQL と原文が
 
 ## Neon Native の準備用ビルド
 
-Neon Native への移行に備え、Vercel のビルドコマンドに静的な準備フェーズを用意します。今後の信頼済み `main` の管理ジョブから、照合済みの Git ソースと `MILLE_NATIVE_PREVIEW_PHASE=provision` をデプロイごとに渡す設計です。準備フェーズは Vercel 上の組み込み Preview と `AUTH_MODE=test` を確認し、リポジトリ、`codex/*` のブランチ、PR 番号、ソースの完全 SHA、世代 ID を照合した場合に実行します。
+Neon Native への移行に備え、Vercel のビルドコマンドに静的な準備フェーズを用意します。今後の信頼済み `main` の管理ジョブが、GitHub 上で PR 番号と Git ソースの対応を照合し、世代 ID と `MILLE_NATIVE_PREVIEW_PHASE=provision` をデプロイごとに渡す設計です。ビルドは Vercel 上の組み込み Preview と `AUTH_MODE=test` を確認し、リポジトリ、`codex/*` のブランチ、ソースの完全 SHA を Vercel の情報と照合します。PR 番号と世代 ID の形式を確認し、Vercel から PR 番号も渡された場合は依頼時の番号と照合します。
 
 準備フェーズは `.next/output` に静的ページだけを生成します。ルート `/` の `GET`・`HEAD` に応答し、それ以外のパスやメソッドには `404` を返します。Next.js のアプリビルド、DB 接続、migration、seed は準備フェーズでは行いません。検証用 URL は、専用 DB の照合と後続のアプリデプロイの成功後に案内します。 [Cake の準備用ビルド](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/build/preview-provisioning.ts#L10-L56)
 
