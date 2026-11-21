@@ -4,6 +4,7 @@ import { previewMigrationSources } from "./database";
 import { previewContext } from "./github";
 import { assertPreviewGitDeploymentPolicy } from "./git-policy";
 import { executeNativePilot, nativePilotProviders } from "./native-pilot";
+import { assertNativePilotFirstCreation } from "./native-pilot-history";
 import { nativePilotPrs } from "./native-pilot-selection";
 import { NeonPreview, NeonPreviewError } from "./neon";
 import { loadPreviewSource } from "./source";
@@ -64,6 +65,7 @@ async function main() {
     });
     const outcome = await executeNativePilot({
       target, pilotPrs: pilots, controlSha: context.controlSha, read: context.read, neon, ...providers,
+      verifyFirstCreation: (pr, createdAt) => assertNativePilotFirstCreation(pr, createdAt, process.env, context.read),
     });
     const result = outcome === "prepared" ? "試験用 DB を照合・準備しました。" : "試験用資源を整理しました。";
     const line = `PR #${target.number} (${target.sha}) の Native Preview ${result}`;

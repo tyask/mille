@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { executeNativePilot } from "../scripts/preview/native-pilot";
 import { milleRepositoryId } from "../scripts/preview/native-identity";
+import { assertNativePilotFirstCreation } from "../scripts/preview/native-pilot-history";
 import type { NativePilotDeployment } from "../scripts/preview/native-pilot-vercel";
 import type { PreviewTarget } from "../scripts/preview/target";
 
@@ -66,6 +67,7 @@ function fixture(target: PreviewTarget, options: {
   const input: Parameters<typeof executeNativePilot>[0] = {
     target, controlSha: control, pilotPrs: [pr, peer], read,
     standingBranchId: "br-standing", standingEndpointId: "ep-standing",
+    async verifyFirstCreation(number) { assert.equal(number, pr); },
     vercel: {
       async preflight() { events.push("vercel preflight"); },
       async find(requested) { return requested.pr === pr ? options.existing ?? null : null; },
@@ -85,10 +87,6 @@ function fixture(target: PreviewTarget, options: {
     },
     neon: {
       async nativePreflight() { events.push("neon preflight"); },
-      async assertNativeEndpointAbsent(digest) {
-        assert.equal(digest, deployment.endpointDigest);
-        events.push("endpoint absent");
-      },
       async findNativeBranch(branchRef) { return branchRef === ref ? options.child ?? (created ? database : null) : null; },
       async prepareNativeBranch(_ref, exact, start, number, _standing, peers, verify, end) {
         await verify();
@@ -151,8 +149,53 @@ test("Native pilot keeps evidence until the exact branch is deleted and refuses 
   }
 });
 
-test("Native pilot proves the attested endpoint is absent even when the branch was already removed", async () => {
+test("Native pilot retains its receipt if it cannot directly prove deletion after an interrupted earlier attempt", async () => {
   const alreadyRemoved = fixture(cleanup, { existing: deployment });
-  assert.equal(await executeNativePilot(alreadyRemoved.input), "removed");
-  assert.deepEqual(alreadyRemoved.events.slice(-2), ["endpoint absent", "remove deployment"]);
+  await assert.rejects(executeNativePilot(alreadyRemoved.input), /直接確認できません/);
+  assert.ok(!alreadyRemoved.events.some(event => event.startsWith("remove")));
+});
+
+test("Native pilot never creates another deployment after an unknown previous creation", async () => {
+  const prior = fixture(deploy);
+  prior.input.verifyFirstCreation = async () => { throw new Error("unknown creation"); };
+  await assert.rejects(executeNativePilot(prior.input), /unknown creation/);
+  assert.ok(!prior.events.includes("provision"));
+});
+
+test("Native pilot uses complete prior workflow history before issuing a first create", async () => {
+  const actionsEnv = { GITHUB_RUN_ID: "500", GITHUB_RUN_NUMBER: "50", GITHUB_RUN_ATTEMPT: "1" };
+  const createdAt = "2026-11-25T13:00:00Z";
+  const history = {
+    total_count: 3, workflow_runs: [{ id: 500, run_number: 50 }, { id: 499, run_number: 49 }, { id: 501, run_number: 51 }],
+  };
+  let conclusion: string | null = "skipped";
+  let newerJobStatus = "queued";
+  const checked: string[] = [];
+  const read = async (path: string) => {
+    checked.push(path);
+    if (path.startsWith("actions/workflows/pr-preview.yml/runs?")) {
+      const params = new URLSearchParams(path.split("?")[1]);
+      assert.equal(params.get("created"), `>=${createdAt}`);
+      assert.equal(params.get("branch"), "main");
+      return history;
+    }
+    if (path === "actions/runs/501/jobs?filter=all&per_page=100") {
+      return { total_count: 1, jobs: [{ name: "PR 41 deploy", status: newerJobStatus, conclusion: null }] };
+    }
+    assert.equal(path, "actions/runs/499/jobs?filter=all&per_page=100");
+    return { total_count: 1, jobs: [{ name: "PR 41 deploy", status: "completed", conclusion }] };
+  };
+  await assertNativePilotFirstCreation(pr, createdAt, actionsEnv, read);
+  assert.equal(checked.length, 3);
+  conclusion = "failure";
+  await assert.rejects(assertNativePilotFirstCreation(pr, createdAt, actionsEnv, read), /以前の作成結果/);
+  conclusion = null;
+  await assert.rejects(assertNativePilotFirstCreation(pr, createdAt, actionsEnv, read), /以前の作成結果/);
+  conclusion = "skipped";
+  newerJobStatus = "completed";
+  await assert.rejects(assertNativePilotFirstCreation(pr, createdAt, actionsEnv, read), /以前の作成結果/);
+  await assert.rejects(assertNativePilotFirstCreation(pr, createdAt, { ...actionsEnv, GITHUB_RUN_ATTEMPT: "2" },
+    async () => assert.fail("a retry with no receipt must stop immediately")), /以前の作成結果/);
+  await assert.rejects(assertNativePilotFirstCreation(pr, createdAt, actionsEnv,
+    async () => ({ ...history, total_count: 103 })), /以前の作成結果/);
 });

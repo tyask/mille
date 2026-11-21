@@ -12,10 +12,10 @@
   "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
   "implementationPlanSha256": "380abbb5acb46762e6314ea92f67545fab3cf3b028f59ee6ae146e20800a5ea6",
   "approvalEvidence": "approvals.json",
-  "frozenAt": "2026-11-21T14:05:18Z",
+  "frozenAt": "2026-11-21T14:09:46Z",
   "preCommitValidation": [
     "npm run check:fast",
-    "試験の振り分け、ソース、Vercel、Neon、ビルド、従来処理の対象テスト61件が成功",
+    "試験の振り分け、ソース、Vercel、Neon、ビルド、従来処理、作成と削除の再試行の対象テスト63件が成功",
     "承認済みIssueと実装計画のSHA-256を照合",
     "git diff --check"
   ]

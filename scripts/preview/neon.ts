@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { neon } from "@neondatabase/serverless";
 import { z } from "zod";
@@ -461,13 +460,6 @@ export class NeonPreview {
       throw new Error("Neon Native Preview の接続先一覧を照合できません。");
     }
     return endpoints;
-  }
-
-  async assertNativeEndpointAbsent(digest: string): Promise<void> {
-    if (!/^[a-f0-9]{64}$/.test(digest)
-      || (await this.#nativeEndpoints()).some(item => createHash("sha256").update(item.host).digest("hex") === digest)) {
-      throw new Error("Neon Native Preview の試験用接続先の不在を確認できません。");
-    }
   }
 
   #assertNativeChild(item: Branch, name: string): void {

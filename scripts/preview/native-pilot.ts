@@ -16,7 +16,7 @@ const settings = z.object({
 
 type PilotIdentity = Awaited<ReturnType<typeof resolveNativePreviewIdentity>>;
 type PilotVercel = Pick<NativePilotVercel, "preflight" | "find" | "provision" | "confirmStatic" | "remove">;
-type PilotNeon = Pick<NeonPreview, "nativePreflight" | "findNativeBranch" | "prepareNativeBranch" | "removeNativeBranch" | "assertNativeEndpointAbsent">;
+type PilotNeon = Pick<NeonPreview, "nativePreflight" | "findNativeBranch" | "prepareNativeBranch" | "removeNativeBranch">;
 
 type PilotOperation = {
   target: PreviewTarget;
@@ -27,6 +27,7 @@ type PilotOperation = {
   neon: PilotNeon;
   standingBranchId: string;
   standingEndpointId: string;
+  verifyFirstCreation(pr: number, createdAt: string): Promise<void>;
 };
 
 const targetOf = (identity: PilotIdentity) => ({ pr: identity.number, ref: identity.ref, sha: identity.sha });
@@ -81,9 +82,11 @@ export async function executeNativePilot(input: PilotOperation): Promise<"prepar
     if (branch) {
       if (existing.readyAt === undefined) throw new Error("Native Preview の試験用ブランチの作成期間を確認できません。");
       verifyNativePilotEndpoint(branch.host, existing.endpointDigest);
+      // Keep these public IDs in the trusted job log for recovery if a run stops during deletion.
+      console.log(`Native Preview 削除照合 ${existing.id} ${branch.id} ${branch.endpointId}`);
       await neon.removeNativeBranch(identity.ref, branch, existing.requestedAt, verifyCurrent, existing.readyAt);
-    } else if (existing.endpointDigest) {
-      await neon.assertNativeEndpointAbsent(existing.endpointDigest);
+    } else {
+      throw new Error("先行試行の Neon ブランチと接続先の不在を直接確認できません。Deployment の記録を保持します。");
     }
     await vercel.remove(existing, verifyCurrent);
     return "removed";
@@ -93,6 +96,7 @@ export async function executeNativePilot(input: PilotOperation): Promise<"prepar
   if (!existing && await neon.findNativeBranch(identity.ref)) {
     throw new Error("Native Preview の試験用ブランチの所有を確認できません。");
   }
+  if (!existing) await input.verifyFirstCreation(target.number, identity.createdAt);
   const deployment = await vercel.confirmStatic(
     existing ?? await vercel.provision(requested, randomUUID(), verifyCurrent), verifyCurrent,
   );

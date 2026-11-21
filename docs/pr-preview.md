@@ -61,9 +61,9 @@ Vercel に接続する前に、信頼済みの `main` の checkout で `npm run 
 
 1. 切替に必要な処理を `main` に入れ、現行方式の PR 資源の削除と管理ジョブの終了を確認します。既存の停止設定で旧ジョブを休止し、別承認を得た切替で空の `mille-pr-template` を既定にし、Vercel の Preview にだけ既存ストアを接続します。Native 専用の接頭辞は `MILLE_NATIVE_PREVIEW_` です。常設 Preview の Git ブランチ向け接続設定は既存 endpoint を使います。
 2. 信頼済み `main` を起点に `codex/native-preview-pilot-a` と `codex/native-preview-pilot-b` で試験用 draft PR を2件用意します。各 PR の差分は `docs` ディレクトリへの通常ファイル `native-preview-pilot.md` の追加だけにします。管理ジョブは実際に渡す Git ツリーと信頼済み `main` のモードと blob を照合し、Vercel に管理トークンを渡さずに静的ビルドを要求します。
-3. 上記のストアと常設の識別子を GitHub Environment `mille-pr-preview` の variables に設定します。既存の管理資格情報を使い、Repository variables に `MILLE_PR_PREVIEW_MODE=native-pilot` と `MILLE_NATIVE_PREVIEW_PILOTS` を設定します。対象番号は2件を半角カンマで指定します。設定を照合した後に `MILLE_PR_PREVIEW_ENABLED=true` として、選んだ2件を直列に実行します。必要に応じて信頼済み `main` の手動の `deploy` に現在の PR 番号と完全 SHA を渡します。
+3. 上記のストアと常設の識別子を GitHub Environment `mille-pr-preview` の variables に設定します。既存の管理資格情報を使い、Repository variables に `MILLE_PR_PREVIEW_MODE=native-pilot` と `MILLE_NATIVE_PREVIEW_PILOTS` を設定します。対象番号は2件を半角カンマで指定します。設定を照合した後に `MILLE_PR_PREVIEW_ENABLED=true` とします。まだ実行していない試験 PR で文書だけを一度更新すると、現行の PR 更新イベントから試験ジョブを起動できます。管理ジョブは選んだ2件を直列に実行します。手動の `deploy` でも現在の PR 番号と完全 SHA を指定できます。
 4. 結果は管理ジョブの Summary で確認します。静的成果物、ブランチ・endpoint、既定・常設・観測済みの相手 PR とロールのパスワードが異なることを照合できた場合だけ、当該試験 DB に main の migration と架空ユーザー A/B を入れます。一般 PR のアプリはこのモードで公開されません。実際に Vercel から渡る資格情報を使った分離と、一般 PR のアプリ公開・更新は Native 実環境で引き続き検証します。 [Neon のロール仕様](https://neon.com/docs/guides/protected-branches#new-passwords-generated-for-postgres-roles-on-child-branches)
-5. 試験 PR をクローズし、同じ管理ジョブで所有が合うブランチ・endpoint・静的デプロイの不在を確認します。照合できない資源や結果が不明な作成要求がある場合は、デプロイ ID と PR を照合してから復旧します。試験ジョブを停止して実行中の処理の終了を確認し、Native 接続と既定ブランチを元に戻してから、試験モードを解除します。
+5. 試験 PR をクローズし、同じ管理ジョブで所有が合うブランチ・endpoint・静的デプロイの不在を確認します。作成結果が不明な場合、管理ジョブは過去の試行を照合して停止します。削除が途中で止まり、再実行でブランチを特定できない場合は、保持された Vercel の記録と先行ジョブの削除照合ログの ID で各資源の状態を確認します。試験ジョブを停止して実行中の処理の終了を確認し、Native 接続と既定ブランチを元に戻してから、試験モードを解除します。
 
 ## URL と Ready 条件
 
