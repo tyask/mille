@@ -3,6 +3,8 @@ import { z } from "zod";
 import { previewMigrationSources } from "./database";
 import { previewContext } from "./github";
 import { assertPreviewGitDeploymentPolicy } from "./git-policy";
+import { executeNativePilot, nativePilotProviders } from "./native-pilot";
+import { nativePilotPrs } from "./native-pilot-selection";
 import { NeonPreview, NeonPreviewError } from "./neon";
 import { loadPreviewSource } from "./source";
 import { previewTargetIsCurrent, previewTargetSchema, samePreviewTarget } from "./target";
@@ -35,6 +37,8 @@ async function main() {
     }
   };
   await verifyCurrent();
+  const pilots = nativePilotPrs(process.env.MILLE_PR_PREVIEW_MODE, process.env.MILLE_NATIVE_PREVIEW_PILOTS);
+  if (pilots && !pilots.includes(target.number)) return;
   if (target.operation === "deploy") {
     stage = "通常の Git デプロイを制限する設定の照合";
     await assertPreviewGitDeploymentPolicy(context.controlSha, target.sha, context.read);
@@ -49,13 +53,30 @@ async function main() {
     role: "mille_pr_owner",
     maxPrBranches: config.MILLE_PR_PREVIEW_MAX_BRANCHES,
   });
+  const summary = process.env.GITHUB_STEP_SUMMARY;
+  if (pilots) {
+    stage = "Native Preview の試験用リソース照合・準備・整理";
+    const providers = nativePilotProviders(process.env, {
+      token: config.VERCEL_TOKEN,
+      teamId: config.MILLE_PR_PREVIEW_VERCEL_TEAM_ID,
+      projectId: config.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID,
+      neonProjectId: config.MILLE_PR_PREVIEW_NEON_PROJECT_ID,
+    });
+    const outcome = await executeNativePilot({
+      target, pilotPrs: pilots, controlSha: context.controlSha, read: context.read, neon, ...providers,
+    });
+    const result = outcome === "prepared" ? "試験用 DB を照合・準備しました。" : "試験用資源を整理しました。";
+    const line = `PR #${target.number} (${target.sha}) の Native Preview ${result}`;
+    if (summary) await appendFile(summary, `${line}\n`);
+    console.log(line);
+    return;
+  }
   const vercel = new VercelPreview({
     token: config.VERCEL_TOKEN,
     teamId: config.MILLE_PR_PREVIEW_VERCEL_TEAM_ID,
     projectId: config.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID,
   });
 
-  const summary = process.env.GITHUB_STEP_SUMMARY;
   if (target.operation === "cleanup") {
     stage = "PR 専用 Vercel デプロイの削除";
     await vercel.remove(target.number, verifyCurrent);

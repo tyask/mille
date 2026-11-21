@@ -80,10 +80,18 @@ export async function resolveNativePreviewSource(target: PreviewTarget, read: Re
   const failure = "Native Preview の PR ソースを照合できません。";
   const expected = previewTargetSchema.safeParse(target);
   if (!expected.success || expected.data.operation !== "deploy") throw new Error(failure);
+  const result = await resolveNativePreviewIdentity(expected.data.number, read);
+  if (!samePreviewTarget(result.target, expected.data)) throw new Error(failure);
+  const { number, sha, ref, repoId, createdAt } = result;
+  return { number, sha, ref, repoId, createdAt };
+}
 
+export async function resolveNativePreviewIdentity(number: number, read: ReadGitHub) {
+  const failure = "Native Preview の PR ソースを照合できません。";
+  if (!positive.safeParse(number).success) throw new Error(failure);
   let response: unknown;
   try {
-    response = await read(`pulls/${expected.data.number}`);
+    response = await read(`pulls/${number}`);
   } catch {
     throw new Error(failure);
   }
@@ -92,10 +100,10 @@ export async function resolveNativePreviewSource(target: PreviewTarget, read: Re
   const pr = parsed.data;
   const actual = targetFor(pr);
   const repoId = pr.head.repo?.id;
-  if (!actual || !samePreviewTarget(actual, expected.data) || repoId !== milleRepositoryId
+  if (!actual || actual.number !== number || repoId !== milleRepositoryId
     || !isNativePreviewTaskBranch(pr.head.ref)) throw new Error(failure);
 
-  return { number: pr.number, sha: pr.head.sha, ref: pr.head.ref, repoId, createdAt: pr.created_at };
+  return { target: actual, number: pr.number, sha: pr.head.sha, ref: pr.head.ref, repoId, createdAt: pr.created_at };
 }
 
 function belongsTo(run: z.infer<typeof runIdentity>, id: number): boolean {

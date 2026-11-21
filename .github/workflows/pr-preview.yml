@@ -77,6 +77,8 @@ jobs:
       - id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
+          MILLE_PR_PREVIEW_MODE: ${{ vars.MILLE_PR_PREVIEW_MODE }}
+          MILLE_NATIVE_PREVIEW_PILOTS: ${{ vars.MILLE_NATIVE_PREVIEW_PILOTS }}
         run: node --import tsx scripts/preview/prepare.ts
   notify_start:
     needs: prepare
@@ -120,7 +122,7 @@ jobs:
         target: ${{ fromJSON(needs.prepare.outputs.targets) }}
     name: PR ${{ matrix.target.number }} ${{ matrix.target.operation }}
     concurrency:
-      group: mille-pr-preview-${{ matrix.target.number }}
+      group: ${{ vars.MILLE_PR_PREVIEW_MODE == 'native-pilot' && 'mille-pr-native-preview-pilot' || format('mille-pr-preview-{0}', matrix.target.number) }}
       cancel-in-progress: false
       queue: max
     environment: mille-pr-preview
@@ -148,6 +150,13 @@ jobs:
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           MILLE_PR_PREVIEW_ENABLED: ${{ vars.MILLE_PR_PREVIEW_ENABLED }}
+          MILLE_PR_PREVIEW_MODE: ${{ vars.MILLE_PR_PREVIEW_MODE }}
+          MILLE_NATIVE_PREVIEW_PILOTS: ${{ vars.MILLE_NATIVE_PREVIEW_PILOTS }}
+          MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: ${{ vars.MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID }}
+          MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: ${{ vars.MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID }}
+          MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: ${{ vars.MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID }}
+          MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID: ${{ vars.MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID }}
+          MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID: ${{ vars.MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID }}
           MILLE_PR_PREVIEW_TARGET: ${{ toJSON(matrix.target) }}
           MILLE_PR_PREVIEW_VERCEL_TEAM_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_TEAM_ID }}
           MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID }}

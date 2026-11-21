@@ -1,0 +1,22 @@
+{
+  "id": "261121-cake-parity-native-preview-pilot",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-03"
+  ],
+  "phase": "Native Previewの試験DB準備と削除",
+  "branch": "codex/issue-32-native-preview-pilot",
+  "baseSha": "36c8dbe00bcd6044b4e9bd93fe2ec5a4755ef79d",
+  "referenceSha": "bc737a52701cc3ddf56a17fb947b8c952a379e22",
+  "state": "frozen",
+  "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
+  "implementationPlanSha256": "380abbb5acb46762e6314ea92f67545fab3cf3b028f59ee6ae146e20800a5ea6",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-21T14:05:18Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "試験の振り分け、ソース、Vercel、Neon、ビルド、従来処理の対象テスト61件が成功",
+    "承認済みIssueと実装計画のSHA-256を照合",
+    "git diff --check"
+  ]
+}
