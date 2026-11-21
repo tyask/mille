@@ -1,0 +1,23 @@
+{
+  "id": "261121-cake-parity-reuse-preview-project",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-03"
+  ],
+  "phase": "既存Previewプロジェクトの共用",
+  "branch": "codex/issue-32-reuse-preview-project",
+  "baseSha": "e587d5f95f3f5371f41c8ec4b2bb89e391a1533d",
+  "referenceSha": "bc737a52701cc3ddf56a17fb947b8c952a379e22",
+  "state": "frozen",
+  "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
+  "implementationPlanSha256": "a09dd7ad206a9c5f799aeca523498a6e0d4bd1c9d6cce22d8a3308f5b60c6190",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-21T12:25:53Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "共用構成の照合テスト9件が成功",
+    "架空の応答でCLIの読み取りと二つの接続先の照合、資格情報の抑制を確認",
+    "承認済みIssueと実装計画のSHA-256を照合",
+    "git diff --check"
+  ]
+}
