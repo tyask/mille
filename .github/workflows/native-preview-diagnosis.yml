@@ -1,0 +1,64 @@
+name: Mille Native Preview Diagnosis
+on:
+  workflow_dispatch:
+    inputs:
+      store:
+        description: Vercel Marketplace store ID
+        type: string
+        required: true
+      integration:
+        description: Vercel Marketplace integration configuration ID
+        type: string
+        required: true
+      product:
+        description: Vercel Marketplace product ID
+        type: string
+        required: true
+      neon_organization:
+        description: Neon organization ID for the Preview project
+        type: string
+        required: true
+      standing_branch:
+        description: Neon branch ID for the standing Preview
+        type: string
+        required: true
+      standing_endpoint:
+        description: Neon endpoint ID for the standing Preview
+        type: string
+        required: true
+permissions: {}
+jobs:
+  diagnose:
+    name: Diagnose the restored Preview configuration
+    if: >-
+      github.repository == 'tyask/mille' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch'
+    environment: mille-pr-preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .node-version
+      - run: npm ci --ignore-scripts
+      - name: Check provider access and resource configuration
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          MILLE_PR_PREVIEW_VERCEL_TEAM_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_TEAM_ID }}
+          MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID }}
+          MILLE_PR_PREVIEW_NEON_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_NEON_PROJECT_ID }}
+          MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: ${{ vars.MILLE_PR_PREVIEW_NEON_TEMPLATE_ID }}
+          MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: ${{ inputs.store }}
+          MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: ${{ inputs.integration }}
+          MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: ${{ inputs.product }}
+          MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID: ${{ inputs.neon_organization }}
+          MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID: ${{ inputs.standing_branch }}
+          MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID: ${{ inputs.standing_endpoint }}
+        run: node --import tsx scripts/preview/diagnose-native.ts
