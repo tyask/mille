@@ -84,7 +84,9 @@ function scenario(options: {
 test("現在 SHA の専用 Preview を作成し、検証済みの READY URL を返す", async () => {
   const { preview, creates } = scenario();
   let checks = 0;
-  assert.equal(await preview.deploy(target, db, files, async () => { checks++; }), `https://${deployment.url}`);
+  assert.deepEqual(await preview.deploy(target, db, files, async () => { checks++; }), {
+    id: deployment.id, url: `https://${deployment.url}`,
+  });
   assert.ok(checks >= 3);
   assert.equal(creates.length, 1);
   const call = creates[0];
@@ -104,7 +106,7 @@ test("現在 SHA の専用 Preview を作成し、検証済みの READY URL を�
 
 test("同じ SHA・DB の READY Deployment を再利用する", async () => {
   const { preview, creates } = scenario({ initial: [deployment] });
-  assert.equal(await preview.deploy(target, db, files), `https://${deployment.url}`);
+  assert.deepEqual(await preview.deploy(target, db, files), { id: deployment.id, url: `https://${deployment.url}` });
   assert.equal(creates.length, 0);
 });
 

@@ -38,6 +38,7 @@ jobs:
       pull-requests: read
     outputs:
       targets: ${{ steps.resolve.outputs.targets }}
+      deploy_target: ${{ steps.resolve.outputs.deploy_target }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -51,6 +52,37 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node --import tsx scripts/preview/prepare.ts
+  notify_start:
+    needs: prepare
+    if: >-
+      github.repository == 'tyask/mille' && github.ref == 'refs/heads/main' &&
+      needs.prepare.outputs.deploy_target != '' && vars.MILLE_PR_PREVIEW_ENABLED == 'true'
+    concurrency:
+      group: mille-pr-preview-notification-${{ fromJSON(needs.prepare.outputs.deploy_target || '{}').number }}
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .node-version
+      - run: npm ci --ignore-scripts
+      - name: Publish the Preview start
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MILLE_PR_PREVIEW_TARGET: ${{ needs.prepare.outputs.deploy_target }}
+          MILLE_PR_PREVIEW_NOTIFICATION: start
+        run: node --import tsx scripts/preview/announce.ts
   preview:
     needs: prepare
     if: >-
@@ -72,6 +104,8 @@ jobs:
       actions: read
       contents: read
       pull-requests: read
+    outputs:
+      ready: ${{ steps.manage.outputs.ready }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -81,7 +115,8 @@ jobs:
         with:
           node-version-file: .node-version
       - run: npm ci --ignore-scripts
-      - name: Manage the verified PR Preview
+      - id: manage
+        name: Manage the verified PR Preview
         env:
           GH_TOKEN: ${{ github.token }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
@@ -94,3 +129,36 @@ jobs:
           MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: ${{ vars.MILLE_PR_PREVIEW_NEON_TEMPLATE_ID }}
           MILLE_PR_PREVIEW_MAX_BRANCHES: ${{ vars.MILLE_PR_PREVIEW_MAX_BRANCHES }}
         run: node --import tsx scripts/preview/manage.ts
+  notify_result:
+    needs: [prepare, notify_start, preview]
+    if: >-
+      !cancelled() && github.repository == 'tyask/mille' && github.ref == 'refs/heads/main' &&
+      needs.prepare.result == 'success' && needs.prepare.outputs.deploy_target != ''
+    concurrency:
+      group: mille-pr-preview-notification-${{ fromJSON(needs.prepare.outputs.deploy_target || '{}').number }}
+      cancel-in-progress: false
+      queue: max
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .node-version
+      - run: npm ci --ignore-scripts
+      - name: Publish the Preview result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MILLE_PR_PREVIEW_TARGET: ${{ needs.prepare.outputs.deploy_target }}
+          MILLE_PR_PREVIEW_NOTIFICATION: result
+          MILLE_PR_PREVIEW_RESULT: ${{ needs.preview.result }}
+          MILLE_PR_PREVIEW_READY: ${{ needs.preview.outputs.ready }}
+        run: node --import tsx scripts/preview/announce.ts
