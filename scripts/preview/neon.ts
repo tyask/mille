@@ -3,6 +3,7 @@ import { neon } from "@neondatabase/serverless";
 import { z } from "zod";
 import type { MigrationSource } from "../db/sql";
 import { preparePreviewDatabase, previewDatabaseEnvironmentId } from "./database";
+import { isNativePreviewTaskBranch } from "./native-identity";
 
 const api = "https://console.neon.tech/api/v2";
 const projectName = "mille-preview";
@@ -92,10 +93,45 @@ const endpoint = z.object({
   type: z.string(),
   disabled: z.boolean(),
 });
+const nativeBranchDetails = z.object({ branch: branch.extend({ created_at: z.iso.datetime() }) });
+const terminalCursor = z.union([z.literal(""), z.null()]).optional();
+const completeInventory = z.object({ next: terminalCursor, cursor: terminalCursor }).nullish();
+const nativeBranchInventory = z.object({ branches: z.array(branch), pagination: completeInventory });
+const nativeEndpointInventory = z.object({ endpoints: z.array(endpoint), pagination: completeInventory });
+const nativeIdentity = z.object({ id: branchId, endpointId: endpointIdentifier, host: z.string() });
 
 type Config = z.input<typeof configSchema>;
 type Branch = z.infer<typeof branch>;
 type VerifyCurrent = () => Promise<void>;
+export type NativeNeonBranch = z.infer<typeof nativeIdentity>;
+
+function nativeBranchName(ref: string, notBefore?: number, notAfter?: number): string {
+  if (!isNativePreviewTaskBranch(ref)
+    || [notBefore, notAfter].some(time => time !== undefined && (!Number.isSafeInteger(time) || time < 0))
+    || (notBefore !== undefined && notAfter !== undefined && notAfter < notBefore)) {
+    throw new Error("Neon Native Preview のブランチ照合条件が無効です。");
+  }
+  return `preview/${ref}`;
+}
+
+function isNativeDirectHost(id: string, host: string): boolean {
+  return /^ep-[a-z0-9-]+(?:\.[a-z0-9-]+)*\.neon\.tech$/.test(host)
+    && host.split(".")[0] === id && !id.endsWith("-pooler");
+}
+
+function sameNativeBranch(left: NativeNeonBranch, right: NativeNeonBranch): boolean {
+  return left.id === right.id && left.endpointId === right.endpointId && left.host === right.host;
+}
+
+function nativePassword(connection: string): string {
+  try {
+    const password = decodeURIComponent(new URL(connection).password);
+    if (password && !/[\u0000-\u001f\u007f]/.test(password)) return password;
+  } catch {
+    // Do not expose connection strings or decoder errors.
+  }
+  throw new Error("Neon Native Preview のロール資格情報を照合できません。");
+}
 
 export class NeonPreviewError extends Error {
   constructor(message: string, readonly diagnostic: string) {
@@ -236,14 +272,15 @@ export class NeonPreview {
     }
   }
 
-  async #assertEmptyTemplate(): Promise<void> {
+  async #assertEmptyTemplate(nativeRoot?: NativeNeonBranch): Promise<void> {
     const { parentBranchId } = this.#config;
     const [parent, resources] = await Promise.all([
       this.#request(`/branches/${parentBranchId}`, branchDetails),
       this.#postgresResources(parentBranchId),
     ]);
     if (parent.branch.id !== parentBranchId || parent.branch.project_id !== this.#config.projectId
-      || parent.branch.name !== templateName || parent.branch.current_state !== "ready" || parent.branch.pending_state) {
+      || parent.branch.name !== templateName || parent.branch.current_state !== "ready" || parent.branch.pending_state
+      || (nativeRoot && (!parent.branch.default || parent.branch.parent_id != null))) {
       throw new Error("Neon テンプレートの準備完了を確認できません。");
     }
     if (resources.databases.length !== 1 || resources.databases[0].name !== templateDatabase
@@ -251,7 +288,7 @@ export class NeonPreview {
       || resources.roles[0].name !== templateRole || resources.roles[0].protected) {
       throw new Error("Neon テンプレートの DB またはロールの一覧が一致しません。");
     }
-    const { connectionString } = await this.#connection(parentBranchId, templateDatabase, templateRole);
+    const { connectionString } = await this.#connection(parentBranchId, templateDatabase, templateRole, nativeRoot);
     for (const name of [templateDatabase, "postgres", "template1"]) {
       const url = new URL(connectionString);
       url.pathname = `/${name}`;
@@ -330,7 +367,7 @@ export class NeonPreview {
     throw new Error("Neon PR 専用ブランチの準備完了を確認できません。");
   }
 
-  async #connection(id: string, database: string, role: string) {
+  async #writableEndpoint(id: string) {
     const { projectId } = this.#config;
     const { endpoints } = await this.#request(`/branches/${id}/endpoints`, z.object({ endpoints: z.array(endpoint) }));
     const writable = endpoints.filter(item => item.type === "read_write");
@@ -342,6 +379,14 @@ export class NeonPreview {
     if (!host.endsWith(".neon.tech") || host.split(".")[0] !== endpointId) {
       throw new Error("Neon エンドポイントのホストが一致しません。");
     }
+    return writable[0];
+  }
+
+  async #connection(id: string, database: string, role: string, expected?: NativeNeonBranch) {
+    const { id: endpointId, host } = await this.#writableEndpoint(id);
+    if (expected && !sameNativeBranch(expected, { id, endpointId, host })) {
+      throw new Error("Neon Native Preview の接続先が変わりました。");
+    }
     const params = new URLSearchParams({ branch_id: id, endpoint_id: endpointId, database_name: database, role_name: role, pooled: "false" });
     const { uri } = await this.#request(`/connection_uri?${params}`, z.object({ uri: z.string() }));
     let parsed: URL;
@@ -352,6 +397,194 @@ export class NeonPreview {
       throw new Error("Neon 接続情報が専用の接続先と一致しません。");
     }
     return { connectionString: uri, expectedHost: host, expectedDatabase: database };
+  }
+
+  async #nativeRoot(id: string, name: string, isDefault: boolean): Promise<NativeNeonBranch> {
+    if (!branchId.safeParse(id).success) throw new Error("Neon Native Preview の分岐元設定が無効です。");
+    const { branch: root } = await this.#request(`/branches/${id}`, branchDetails);
+    if (root.id !== id || root.project_id !== this.#config.projectId || root.name !== name
+      || root.default !== isDefault || root.parent_id != null || root.current_state !== "ready" || root.pending_state != null) {
+      throw new Error("Neon Native Preview の分岐元と常設 root を照合できません。");
+    }
+    return this.#nativeEndpoint(id);
+  }
+
+  async #nativeEndpoint(id: string): Promise<NativeNeonBranch> {
+    const { id: endpointId, host } = await this.#writableEndpoint(id);
+    if (!isNativeDirectHost(endpointId, host)) throw new Error("Neon Native Preview の直接接続先を照合できません。");
+    return { id, endpointId, host };
+  }
+
+  async nativePreflight(standingBranchId: string, expectedStandingEndpointId: string, pilotRefs: readonly string[] = []): Promise<void> {
+    const { projectId, parentBranchId } = this.#config;
+    if (standingBranchId === parentBranchId || !branchId.safeParse(standingBranchId).success
+      || !endpointIdentifier.safeParse(expectedStandingEndpointId).success) {
+      throw new Error("Neon Native Preview の分岐元設定が無効です。");
+    }
+    const { project } = await this.#request("", z.object({ project: z.object({ id: identifier, name: z.string() }) }));
+    if (project.id !== projectId || project.name !== projectName) throw new Error("Neon Native Preview のプロジェクトが一致しません。");
+    const [template, standing] = await Promise.all([
+      this.#nativeRoot(parentBranchId, templateName, true), this.#nativeRoot(standingBranchId, "main", false),
+    ]);
+    if (standing.endpointId !== expectedStandingEndpointId || template.endpointId === standing.endpointId) {
+      throw new Error("Neon Native Preview の常設接続先が一致しません。");
+    }
+    const names = new Set(pilotRefs.map(ref => nativeBranchName(ref)));
+    const [inventory, endpoints] = await Promise.all([this.#nativeBranches(), this.#nativeEndpoints()]);
+    if (!inventory.some(item => item.id === template.id) || !inventory.some(item => item.id === standing.id)) {
+      throw new Error("Neon Native Preview の分岐元と常設ブランチを一覧で確認できません。");
+    }
+    if (endpoints.some(item => !inventory.some(branch => branch.id === item.branch_id))) {
+      throw new Error("Neon Native Preview の接続先の所属を一覧で確認できません。");
+    }
+    for (const child of inventory.filter(item => item.id !== template.id && item.id !== standing.id)) {
+      if (!names.has(child.name)) throw new Error("Neon Native Preview の試験対象以外のブランチが存在します。");
+      this.#assertNativeChild(child, child.name);
+    }
+    await this.#assertEmptyTemplate(template);
+  }
+
+  async #nativeBranches(): Promise<Branch[]> {
+    const { branches } = await this.#request("/branches?limit=100", nativeBranchInventory);
+    if (new Set(branches.map(item => item.id)).size !== branches.length
+      || branches.some(item => item.project_id !== this.#config.projectId)) {
+      throw new Error("Neon Native Preview のブランチ一覧を照合できません。");
+    }
+    return branches;
+  }
+
+  async #nativeEndpoints() {
+    const { endpoints } = await this.#request("/endpoints", nativeEndpointInventory);
+    if (new Set(endpoints.map(item => item.id)).size !== endpoints.length
+      || endpoints.some(item => item.project_id !== this.#config.projectId)) {
+      throw new Error("Neon Native Preview の接続先一覧を照合できません。");
+    }
+    return endpoints;
+  }
+
+  #assertNativeChild(item: Branch, name: string): void {
+    if (item.project_id !== this.#config.projectId || item.parent_id !== this.#config.parentBranchId
+      || item.id === this.#config.parentBranchId || item.name !== name || item.default || item.primary || item.protected) {
+      throw new Error("Neon Native Preview の子ブランチの所属が一致しません。");
+    }
+  }
+
+  async #verifiedNativeBranch(
+    branches: readonly Branch[], name: string, notBefore?: number, notAfter?: number,
+  ): Promise<NativeNeonBranch | null> {
+    const matches = branches.filter(item => item.name === name);
+    if (!matches.length) return null;
+    if (matches.length !== 1) throw new Error("Neon Native Preview の子ブランチが一意ではありません。");
+    const [listed] = matches;
+    this.#assertNativeChild(listed, name);
+    const { branch: current } = await this.#request(`/branches/${listed.id}`, nativeBranchDetails);
+    this.#assertNativeChild(current, name);
+    const createdAt = Date.parse(current.created_at);
+    if (current.id !== listed.id || current.current_state !== "ready" || current.pending_state != null
+      || (notBefore !== undefined && createdAt < notBefore) || (notAfter !== undefined && createdAt > notAfter)) {
+      throw new Error("Neon Native Preview の子ブランチの状態または作成時刻が一致しません。");
+    }
+    return this.#nativeEndpoint(current.id);
+  }
+
+  async findNativeBranch(ref: string, notBefore?: number, notAfter?: number): Promise<NativeNeonBranch | null> {
+    const name = nativeBranchName(ref, notBefore, notAfter);
+    return this.#verifiedNativeBranch(await this.#nativeBranches(), name, notBefore, notAfter);
+  }
+
+  async prepareNativeBranch(
+    ref: string, expected: NativeNeonBranch, notBefore: number, pr: number, standingBranchId: string,
+    peerRefs: readonly string[], verifyCurrent: VerifyCurrent, notAfter?: number,
+  ): Promise<void> {
+    previewDatabaseEnvironmentId(pr);
+    const name = nativeBranchName(ref, notBefore, notAfter);
+    const peerNames = peerRefs.map(peer => nativeBranchName(peer));
+    if (peerNames.includes(name) || new Set(peerNames).size !== peerNames.length
+      || standingBranchId === this.#config.parentBranchId) {
+      throw new Error("Neon Native Preview の比較対象が一致しません。");
+    }
+
+    const inventory = await this.#nativeBranches();
+    const child = await this.#verifiedNativeBranch(inventory, name, notBefore, notAfter);
+    if (!child || !sameNativeBranch(child, expected)) throw new Error("Neon Native Preview の専用接続先が一致しません。");
+    const { roles, databases } = await this.#postgresResources(child.id);
+    if (roles.length !== 1 || roles[0].name !== templateRole || roles[0].protected
+      || databases.length !== 1 || databases[0].name !== templateDatabase || databases[0].owner_name !== templateRole) {
+      throw new Error("Neon Native Preview の標準 DB とロールが一致しません。");
+    }
+
+    const [template, standing, ...peers] = await Promise.all([
+      this.#nativeRoot(this.#config.parentBranchId, templateName, true), this.#nativeRoot(standingBranchId, "main", false),
+      ...peerNames.map(peer => this.#verifiedNativeBranch(inventory, peer)),
+    ]);
+    const otherBranches = [template, standing, ...peers].filter(other => other !== null);
+    const endpoints = new Set([child, ...otherBranches].map(item => item.endpointId));
+    if (otherBranches.length !== peerNames.length + 2 || endpoints.size !== otherBranches.length + 1) {
+      throw new Error("Neon Native Preview の比較対象を確認できません。");
+    }
+    const connection = await this.#connection(child.id, templateDatabase, templateRole, child);
+    const password = nativePassword(connection.connectionString);
+    for (const other of otherBranches) {
+      const otherConnection = await this.#connection(other.id, templateDatabase, templateRole, other);
+      if (nativePassword(otherConnection.connectionString) === password) {
+        throw new Error("Neon Native Preview のロール資格情報が共有されています。");
+      }
+    }
+
+    await verifyCurrent();
+    try {
+      await preparePreviewDatabase({ pr, ...connection, initialize: true });
+    } catch {
+      throw new Error("Neon Native Preview の DB 照合・migration・seed を確認できません。");
+    }
+  }
+
+  async #requireNativeAbsent<T>(path: string, schema: z.ZodType<T>): Promise<void> {
+    try {
+      await this.#request(path, schema);
+    } catch (error) {
+      if (error instanceof NeonRequestError && error.status === 404) return;
+      throw error;
+    }
+    throw new Error("Neon Native Preview の専用資源を直接取得できる状態です。");
+  }
+
+  async removeNativeBranch(
+    ref: string, expected: NativeNeonBranch, notBefore: number, verifyCurrent: VerifyCurrent, notAfter?: number,
+  ): Promise<void> {
+    const name = nativeBranchName(ref, notBefore, notAfter);
+    if (!nativeIdentity.safeParse(expected).success || !isNativeDirectHost(expected.endpointId, expected.host)
+      || expected.id === this.#config.parentBranchId) {
+      throw new Error("Neon Native Preview の削除対象が無効です。");
+    }
+    const branches = await this.#nativeBranches();
+    const child = await this.#verifiedNativeBranch(branches, name, notBefore, notAfter);
+    if (child) {
+      if (!sameNativeBranch(child, expected) || branches.some(item => item.parent_id === expected.id)) {
+        throw new Error("Neon Native Preview の削除対象が一致しません。");
+      }
+      const removed = await this.#request(`/branches/${expected.id}`, branchChange, "DELETE", undefined, verifyCurrent)
+        .catch((error: unknown) => {
+          if (error instanceof NeonRequestError && error.status === 404) return null;
+          throw error;
+        });
+      if (removed) {
+        this.#assertNativeChild(removed.branch, name);
+        if (removed.branch.id !== expected.id) throw new Error("削除した Neon Native Preview ブランチが一致しません。");
+        await this.#waitOperations(removed, expected.id);
+      }
+    }
+
+    const [remaining, endpoints] = await Promise.all([this.#nativeBranches(), this.#nativeEndpoints()]);
+    if (remaining.some(item => item.id === expected.id || item.parent_id === expected.id || item.name === name)
+      || endpoints.some(item => item.project_id !== this.#config.projectId || item.id === expected.endpointId
+        || item.branch_id === expected.id || item.host === expected.host)) {
+      throw new Error("Neon Native Preview の専用資源が一覧に残っています。");
+    }
+    await Promise.all([
+      this.#requireNativeAbsent(`/branches/${expected.id}`, branchDetails),
+      this.#requireNativeAbsent(`/endpoints/${expected.endpointId}`, z.object({ endpoint })),
+    ]);
   }
 
   async ensure(pr: number, verifyCurrent?: VerifyCurrent, migrations?: readonly MigrationSource[]) {

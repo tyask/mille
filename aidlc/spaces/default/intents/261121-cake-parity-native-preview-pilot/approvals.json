@@ -1,0 +1,31 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "recordedAt": "2026-11-21T05:51:58Z",
+  "planApproval": {
+    "reply": "承認します",
+    "sequence": 1,
+    "scope": "Cakeに揃える開発・デプロイ運用の全体計画。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "再取得した保存済みIssue #32の全文、AC-01〜AC-06。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-21T05:19:57Z",
+    "sha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db"
+  },
+  "implementationDirection": {
+    "question": "Cakeでは、常設PreviewとPRのpreviewは同じDBプロジェクトを使っていませんか?",
+    "reply": "今のmilleの構成は破壊的に修正してもいいです。",
+    "scope": "Cake同様に既存のmille-previewを共用する。AC-03の空の分岐元とAC-05の常設データ・URL保持を優先する。",
+    "recordedAt": "2026-11-21T12:24:27Z"
+  },
+  "pilotImplementationDirection": {
+    "reply": "進めてください",
+    "scope": "既存の共用プロジェクトで、信頼済みの試験用PRのNative起動、専用DB準備、終了時削除を実装・検証する。",
+    "recordedAt": "2026-11-21T14:02:01Z"
+  }
+}

@@ -8,6 +8,7 @@ import { migrateDatabase } from "../db/migrate";
 import {
   clearNativePreviewProvisioningOutput,
   isNativePreviewProvisioning,
+  nativePilotEndpointDigest,
   writeNativePreviewProvisioningOutput,
 } from "./native-preview-provisioning";
 
@@ -16,7 +17,7 @@ type HostedConfiguration = Extract<DatabaseConfiguration, { mode: "hosted" }>;
 type BuildSteps = {
   build(): void | Promise<void>;
   migrate(configuration: HostedConfiguration): void | Promise<void>;
-  provision?(): void | Promise<void>;
+  provision?(endpointDigest?: string): void | Promise<void>;
 };
 const projectDirectory = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -68,7 +69,7 @@ export async function runVercelBuild(environment: BuildEnvironment, steps: Build
   if (isNativePreviewProvisioning(environment)) {
     if (!steps.provision) throw new Error("Native Previewの準備工程を起動できません。");
     try {
-      await steps.provision();
+      await steps.provision(nativePilotEndpointDigest(environment));
     } catch {
       throw new Error("Native Previewの準備用ファイルを生成できません。");
     }
@@ -90,8 +91,8 @@ export async function runVercelBuild(environment: BuildEnvironment, steps: Build
 }
 
 const buildSteps: BuildSteps = {
-  provision() {
-    writeNativePreviewProvisioningOutput(projectDirectory);
+  provision(endpointDigest) {
+    writeNativePreviewProvisioningOutput(projectDirectory, endpointDigest);
     console.log("Mille: Native Previewの静的な準備ページを生成しました。");
   },
   build() {
