@@ -29,30 +29,33 @@ GitHub Actions の `Mille PR Preview` で **Run workflow** を開き、ブラン
 
 実行結果は Actions の該当 run の **Summary** にある `Inspect Native Preview Git source` の結果を確認します。この確認は GitHub の読み取り権限だけで実行し、PR コードの実行、通知、Vercel デプロイ、プロバイダー設定や DB の変更は行いません。
 
-## Neon Native 専用リソースの確認
+## Neon Native の切替前確認
 
-作成は別途承認された範囲で、Vercel Marketplace の Neon Native を使用します。Vercel の `fumin1` スコープで Free プランを確認し、シンガポール（`sin1`）に専用の `mille-native-preview` を作成します。Auth と Realtime はオフにし、**Connect a Project** では **Skip** を選びます。 [Neon の Marketplace 導入手順](https://neon.com/docs/guides/vercel-managed-integration#installation-walkthrough)
+Vercel Marketplace の既存 Free リソース `mille-preview` を、常設 Preview と PR 専用 Preview で共用します。常設 Preview は現在の `main` ブランチの endpoint を使い、PR 専用 Preview は空の `mille-pr-template` を分岐元にします。Vercel 連携の Preview 分岐は、プロジェクトの現在の既定ブランチを使用します。 [Neon の Preview 分岐仕様](https://neon.com/docs/guides/vercel-managed-integration#enable-automated-preview-branching-recommended) · [Cake の共通設定](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/preview.config.json)
 
-作成後、信頼済みの `main` の checkout で `npm run preview:verify-native-resource` を実行します。対象を読み取れる既存の `VERCEL_TOKEN` と `NEON_API_KEY` をプロセス環境に渡します。資格情報の値はコマンド引数、ログ、検証記録に含めません。次の環境変数には管理画面で照合した識別子を設定します。
+Vercel に接続する前に、信頼済みの `main` の checkout で `npm run preview:verify-native-resource` を実行します。対象を読み取れる既存の `VERCEL_TOKEN` と `NEON_API_KEY` をプロセス環境に渡します。資格情報の値はコマンド引数、ログ、検証記録に含めません。次の環境変数には管理画面で照合した識別子を設定します。
 
 | 環境変数 | 対象 |
 | --- | --- |
 | `MILLE_PR_PREVIEW_VERCEL_TEAM_ID` | Vercel の `fumin1` スコープの ID |
-| `MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID` | 専用の Marketplace ストア ID |
+| `MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID` | `mille-preview` の Marketplace ストア ID |
 | `MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID` | Marketplace のインストール（構成）ID |
 | `MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID` | Neon の Marketplace 製品 ID |
-| `MILLE_NATIVE_PREVIEW_NEON_PROJECT_ID` | 専用の Neon プロジェクト ID |
-| `MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID` | 専用プロジェクトが所属する Neon 組織 ID |
+| `MILLE_PR_PREVIEW_NEON_PROJECT_ID` | `mille-preview` の Neon プロジェクト ID |
+| `MILLE_PR_PREVIEW_NEON_TEMPLATE_ID` | `mille-pr-template` のブランチ ID |
+| `MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID` | `mille-preview` が所属する Neon 組織 ID |
+| `MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID` | 常設用 `main` のブランチ ID |
+| `MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID` | 常設 Preview の既存 endpoint ID |
 
-コマンドは両プロバイダーの管理 API を読み取り、指定した Vercel ストアが Neon の Free プランで、アプリへの接続が 0 件であることを確認します。ストアの `externalResourceId` が専用 Neon プロジェクトの ID と一致すること、専用プロジェクトの所属組織と Marketplace 由来であることを照合します。Neon では、親のない `ready` の既定ブランチ 1 件と、そのブランチの読み書き用 endpoint 1 件を確認します。データベースとロールの一覧も照合します。
+コマンドは両プロバイダーの管理 API を読み取り、Free プランでアプリへの接続が 0 件のストアを、同じ Neon プロジェクト ID と照合します。Neon では、分岐元候補と常設の独立したブランチと endpoint を照合し、現在の既定ブランチを表示します。分岐元候補の標準 DB とロールも確認します。現行の PR 用子ブランチがある場合は、分岐元候補の子として照合します。
 
-管理 API の一覧で確認できるのはリソースの構成です。既定ブランチのスキーマやデータが空であることは、確認した専用 DB に対する読み取り専用 SQL で照合します。
+分岐元候補の空の状態は、照合した `mille-pr-template` に対する読み取り専用 SQL で確認します。常設 Preview の既存接続変数が常設用 Git ブランチに限定され、現在の常設 endpoint を指すことも確認します。
 
 ## Neon Native の接続と切替計画
 
-既存の `mille-preview` の既定ブランチは常設 Preview の DB を含み、Native 連携は既定ブランチから分岐します。Free の利用枠を確認し、専用の `mille-native-preview` プロジェクトに空の既定ブランチを用意する計画です。既存 Vercel プロジェクトの組み込み Preview に限定して接続し、既存の接続変数と重複しない Native 専用の接頭辞を使います。本番と常設 Preview の接続先、URL、保護設定を保持します。 [Neon の Vercel 管理連携](https://neon.com/docs/guides/vercel-managed-integration#enable-automated-preview-branching-recommended)
+現行の管理ジョブは、`mille-pr-template` が既定のときは動作を停止します。Native 用の管理処理を用意し、現行 PR 用資源の状態と復旧手順を照合し、プロバイダー設定変更の別承認を得てから、空の `mille-pr-template` を既定に変更します。既存 Vercel プロジェクトの組み込み Preview に限定して接続し、Native 専用の接頭辞を使います。常設用の接続情報は従来の endpoint に固定し、常設 URL と本番設定を照合します。 [Neon の既定ブランチ切替](https://neon.com/docs/manage/branches#set-a-branch-as-default)
 
-Native 用の管理処理と接続先の照合を実装し、プロバイダー設定変更の別承認を得てから、試験用 PR で動作を確認します。管理ジョブで準備用デプロイのビルド定義と成果物を照合し、静的ページだけが公開されることを確かめてから、専用 DB の準備に進みます。PR・現在 HEAD・Deployment・Neon branch・endpoint・世代を照合し、同じ PR の更新でデータが維持され、別の PR と分離されることを確認します。マージとクローズ後は専用資源の不在を確認します。これらの確認を終えるまでは、現行の管理ジョブと手動の `deploy`・`cleanup` を使います。 [Cake のデプロイ手順](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/preview/preview-service.ts#L50-L97)
+既定ブランチを変更する直前までは、現行の管理ジョブと手動の `deploy`・`cleanup` を使います。変更後は現行の PR Preview 処理を休止し、試験用 PR で Native 経路を確認します。管理ジョブで準備用デプロイのビルド定義と成果物を照合し、静的ページだけが公開されることを確かめてから、専用 DB の準備に進みます。PR・現在 HEAD・Deployment・Neon branch・endpoint・世代を照合し、同じ PR の更新でデータが維持され、別の PR と分離されることを確認します。マージとクローズ後は専用資源の不在を確認します。検証が失敗した場合は Native 専用の接続設定を戻し、`main` を既定に戻してから、現行の管理ジョブを再開します。 [Cake のデプロイ手順](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/preview/preview-service.ts#L50-L97)
 
 ## URL と Ready 条件
 

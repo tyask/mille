@@ -8,8 +8,11 @@ const environment = z.object({
   MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: z.string().min(1),
   MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: z.string().min(1),
   MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: z.string().min(1),
-  MILLE_NATIVE_PREVIEW_NEON_PROJECT_ID: z.string().min(1),
+  MILLE_PR_PREVIEW_NEON_PROJECT_ID: z.string().min(1),
+  MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: z.string().min(1),
   MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID: z.string().min(1),
+  MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID: z.string().min(1),
+  MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID: z.string().min(1),
 });
 
 async function readProvider(url: URL, token: string): Promise<unknown> {
@@ -32,8 +35,11 @@ async function main() {
     storeId: env.MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID,
     integrationId: env.MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID,
     productId: env.MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID,
-    neonProjectId: env.MILLE_NATIVE_PREVIEW_NEON_PROJECT_ID,
+    neonProjectId: env.MILLE_PR_PREVIEW_NEON_PROJECT_ID,
     neonOrganizationId: env.MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID,
+    templateBranchId: env.MILLE_PR_PREVIEW_NEON_TEMPLATE_ID,
+    standingBranchId: env.MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID,
+    standingEndpointId: env.MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID,
   };
   const result = await inspectDetachedNativeResource(config, {
     vercel(path) {
