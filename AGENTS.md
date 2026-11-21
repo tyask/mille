@@ -11,12 +11,16 @@ Cake の開発手順を踏襲する。Issue・PR・記録・報告は日本語�
 5. 関連テスト・自己レビュー後に記録を凍結して commit する。
 6. 別 Agent が新しい文脈で要求・適用ルール・比較元・完全 SHA を受け取り、読み取り専用でレビューする。
 7. 最終 SHA の clean な checkout で lint・型検査・テスト・build・必要なブラウザ QA を確認する。
-8. draft PR を作成し、現在 HEAD の CI・正式 Preview・必要な検証を揃えて Ready と結果を報告する。
+8. draft PR を作成する。GitHub CI と正式 Preview の作成は並行で進め、状況と結果を PR に記録する。
+9. 検証済みの受入条件を Issue でチェックし、証拠を記録する。現在 HEAD のレビューと Cloud テストが揃った PR を GitHub 上で Ready for review に切り替える。
+10. [PR と Issue の完了確認](docs/development.md#pr-と-issue-の完了確認)に従って両方を再取得する。検証した完全 SHA、PR のドラフト状態、Issue の対象チェックが保存済みであることを確認してから完了を報告する。
+
+Ready 後に現在 HEAD の正式 Preview URL を案内し、利用者がブラウザで動作を確認する。
 
 計画承認を Issue 承認へ流用しない。両承認がある同一範囲では再承認を求めない。
 利用者が調査のみ等を指定した場合は優先する。範囲変更は計画・Issue を更新して承認する。
 PR merge、Production 操作、新規課金、永続資格情報の発行、アクセス権拡大は別途明示承認が必要。
-不可能な検証を成功扱いせず、draft を維持して具体的な阻害要因を報告する。
+Ready に必要なレビュー・Cloud テストが不足している間は draft を維持し、具体的な阻害要因を報告する。
 Issue は `目的・背景`、`対象範囲・対象外`、`受入条件`、`関連記録`、`進捗` の独立見出しと
 `- [ ] AC-01: ...` 形式を使う。Intent は `aidlc/spaces/default/intents/` に保存する。
 凍結後の結果は PR／Issue に記録する。追跡ファイルを変更した場合は新 SHA で再レビューする。
