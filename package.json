@@ -21,6 +21,7 @@
     "setup:cloud": "node scripts/cloud/setup.mjs",
     "dev:cloud": "node --no-wasm-code-gc --import tsx scripts/cloud/dev.ts",
     "qa:cloud": "node --no-wasm-code-gc --import tsx scripts/cloud/verify.ts",
+    "preview:verify-native-resource": "node --import tsx scripts/preview/check-native-resource.ts",
     "db:setup": "node --import tsx scripts/db/manage.ts migrate",
     "db:seed:test": "node --import tsx scripts/db/manage.ts seed",
     "user:register": "node --import tsx scripts/db/manage.ts register",

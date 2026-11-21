@@ -29,6 +29,25 @@ GitHub Actions の `Mille PR Preview` で **Run workflow** を開き、ブラン
 
 実行結果は Actions の該当 run の **Summary** にある `Inspect Native Preview Git source` の結果を確認します。この確認は GitHub の読み取り権限だけで実行し、PR コードの実行、通知、Vercel デプロイ、プロバイダー設定や DB の変更は行いません。
 
+## Neon Native 専用リソースの確認
+
+作成は別途承認された範囲で、Vercel Marketplace の Neon Native を使用します。Vercel の `fumin1` スコープで Free プランを確認し、シンガポール（`sin1`）に専用の `mille-native-preview` を作成します。Auth と Realtime はオフにし、**Connect a Project** では **Skip** を選びます。 [Neon の Marketplace 導入手順](https://neon.com/docs/guides/vercel-managed-integration#installation-walkthrough)
+
+作成後、信頼済みの `main` の checkout で `npm run preview:verify-native-resource` を実行します。対象を読み取れる既存の `VERCEL_TOKEN` と `NEON_API_KEY` をプロセス環境に渡します。資格情報の値はコマンド引数、ログ、検証記録に含めません。次の環境変数には管理画面で照合した識別子を設定します。
+
+| 環境変数 | 対象 |
+| --- | --- |
+| `MILLE_PR_PREVIEW_VERCEL_TEAM_ID` | Vercel の `fumin1` スコープの ID |
+| `MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID` | 専用の Marketplace ストア ID |
+| `MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID` | Marketplace のインストール（構成）ID |
+| `MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID` | Neon の Marketplace 製品 ID |
+| `MILLE_NATIVE_PREVIEW_NEON_PROJECT_ID` | 専用の Neon プロジェクト ID |
+| `MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID` | 専用プロジェクトが所属する Neon 組織 ID |
+
+コマンドは両プロバイダーの管理 API を読み取り、指定した Vercel ストアが Neon の Free プランで、アプリへの接続が 0 件であることを確認します。ストアの `externalResourceId` が専用 Neon プロジェクトの ID と一致すること、専用プロジェクトの所属組織と Marketplace 由来であることを照合します。Neon では、親のない `ready` の既定ブランチ 1 件と、そのブランチの読み書き用 endpoint 1 件を確認します。データベースとロールの一覧も照合します。
+
+管理 API の一覧で確認できるのはリソースの構成です。既定ブランチのスキーマやデータが空であることは、確認した専用 DB に対する読み取り専用 SQL で照合します。
+
 ## Neon Native の接続と切替計画
 
 既存の `mille-preview` の既定ブランチは常設 Preview の DB を含み、Native 連携は既定ブランチから分岐します。Free の利用枠を確認し、専用の `mille-native-preview` プロジェクトに空の既定ブランチを用意する計画です。既存 Vercel プロジェクトの組み込み Preview に限定して接続し、既存の接続変数と重複しない Native 専用の接頭辞を使います。本番と常設 Preview の接続先、URL、保護設定を保持します。 [Neon の Vercel 管理連携](https://neon.com/docs/guides/vercel-managed-integration#enable-automated-preview-branching-recommended)
