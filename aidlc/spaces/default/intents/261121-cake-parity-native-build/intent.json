@@ -1,0 +1,22 @@
+{
+  "id": "261121-cake-parity-native-build",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-03"
+  ],
+  "phase": "静的な準備用ビルド",
+  "branch": "codex/issue-32-native-preview-build",
+  "baseSha": "d764473201322bf10889991ab99d168202a82c81",
+  "referenceSha": "bc737a52701cc3ddf56a17fb947b8c952a379e22",
+  "state": "frozen",
+  "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
+  "implementationPlanSha256": "c0eefe16e9e4b1b4c42dca432b34208eef7c3adacd5bfb82beec8a8869ba42f3",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-21T07:51:36Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "node --env-file=.env.test --import tsx --test tests/native-preview-provisioning.test.ts tests/vercel-build.test.ts (15 passed)",
+    "git diff --check",
+    "Approved Issue and implementation plan SHA-256 verified"
+  ]
+}
