@@ -4,10 +4,21 @@
   "branch": "codex/issue-25-github-completion",
   "baseSha": "ef2dc4eb26b66133c1b8d356c23ffea0520c5b74",
   "state": "frozen",
-  "approvedIssueSha256": "5976e942e4400461224871b97cb6c7b19c79e5e8106fe2551278d043da47a791",
-  "implementationPlanSha256": "50453be9451e1064cf8b341892c3f00220725a7826ee43b4e5e05b7af26df881",
-  "approvalEvidence": "approvals.json",
-  "frozenAt": "2026-11-21T02:25:27Z",
+  "approvedIssueSha256": "cc002009b483eaa0ff164a13b77f9898981cefff1afdafd29aa9941c225fc541",
+  "implementationPlanSha256": "cd3fe8f5a4127e6daa709ca00f4f5d455d305efe141febed3b067cb4126755d2",
+  "approvalEvidence": "approvals-revised.json",
+  "revisionHistory": [
+    {
+      "priorSha": "7847b283af77cfe0529bbf7e80daa9884c6f30a9",
+      "recordedAt": "2026-11-21T02:47:30Z",
+      "priorApprovedIssueSha256": "5976e942e4400461224871b97cb6c7b19c79e5e8106fe2551278d043da47a791",
+      "priorImplementationPlanSha256": "50453be9451e1064cf8b341892c3f00220725a7826ee43b4e5e05b7af26df881",
+      "reason": "利用者が通常の正式Preview確認をReady後に行うよう手順を変更する。"
+    }
+  ],
+  "approvedIssueSnapshot": "issue-revised.md",
+  "implementationPlan": "plan-revised.md",
+  "frozenAt": "2026-11-21T02:48:42Z",
   "preCommitValidation": {
     "checks": [
       "git diff --check",
@@ -24,6 +35,15 @@
         "draft",
         "SHA不一致",
         "Issue再取得失敗"
+      ]
+    },
+    "readyExamples": {
+      "eligible": [
+        "現HEADのレビューとCloudテストが完了し、CI・Preview作成が進行中"
+      ],
+      "ineligible": [
+        "HEAD不一致",
+        "Cloudテスト未完了"
       ]
     }
   }
