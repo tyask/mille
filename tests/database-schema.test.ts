@@ -9,6 +9,7 @@ import type { DatabaseConfiguration } from "../lib/server/database/environment";
 const preview: DatabaseConfiguration = { mode: "hosted", url: "", host: "", environment: "preview", environmentId: "mille-preview" };
 const production: DatabaseConfiguration = { ...preview, environment: "production", environmentId: "mille-production" };
 type MigrationRow = { name: string; sha256: string; applied_at: Date };
+const migrationNames = ["001_auth.sql", "002_workspaces.sql", "003_meals.sql", "004_meal_api.sql"];
 
 test("auth, workspace and meal schemas initialize atomically without changing disabled users or creating workspace data", async t => {
   const database = new PGlite(); t.after(() => database.close());
@@ -23,7 +24,8 @@ test("auth, workspace and meal schemas initialize atomically without changing di
   assert.equal((await database.query<{ count: number }>("SELECT count(*)::int AS count FROM app_users")).rows[0].count, 2);
   assert.equal((await database.query<{ count: number }>("SELECT count(*)::int AS count FROM workspaces")).rows[0].count, 0);
   assert.equal((await database.query<{ count: number }>("SELECT count(*)::int AS count FROM meals")).rows[0].count, 0);
-  assert.deepEqual((await database.query<{ name: string }>("SELECT name FROM schema_migrations ORDER BY name")).rows.map(row => row.name), ["001_auth.sql", "002_workspaces.sql", "003_meals.sql"]);
+  assert.equal((await database.query<{ count: number }>("SELECT count(*)::int AS count FROM meal_command_requests")).rows[0].count, 0);
+  assert.deepEqual((await database.query<{ name: string }>("SELECT name FROM schema_migrations ORDER BY name")).rows.map(row => row.name), migrationNames);
   await assert.rejects(database.query("INSERT INTO app_users (id,email,name) VALUES ('upper','Upper@Example.invalid','Upper')"));
 });
 
@@ -45,7 +47,7 @@ test("upgrading the original auth-only database preserves users, disabled state,
   assert.deepEqual((await database.query("SELECT * FROM mille_environment")).rows, marker);
   assert.deepEqual((await database.query("SELECT * FROM schema_migrations WHERE name = '001_auth.sql'")).rows, history);
   const upgraded = (await database.query<MigrationRow>("SELECT * FROM schema_migrations ORDER BY name")).rows;
-  assert.deepEqual(upgraded.map(row => row.name), ["001_auth.sql", "002_workspaces.sql", "003_meals.sql"]);
+  assert.deepEqual(upgraded.map(row => row.name), migrationNames);
   await database.exec(migrationSql(preview));
   assert.deepEqual((await database.query("SELECT * FROM schema_migrations ORDER BY name")).rows, upgraded);
   await database.query("UPDATE schema_migrations SET sha256 = 'tampered' WHERE name = '002_workspaces.sql'");
@@ -80,10 +82,42 @@ test("applying the meal migration to a 002 database preserves users, workspaces,
   assert.deepEqual((await database.query("SELECT * FROM mille_environment")).rows, marker);
   const upgraded = (await database.query<MigrationRow>("SELECT * FROM schema_migrations ORDER BY name")).rows;
   assert.deepEqual(upgraded.slice(0, 2), history);
-  assert.equal(upgraded[2]?.name, "003_meals.sql");
+  assert.deepEqual(upgraded.map(row => row.name), migrationNames);
   assert.equal((await database.query<{ count: number }>("SELECT count(*)::int AS count FROM meals")).rows[0].count, 0);
   await database.exec(migrationSql(preview));
   assert.deepEqual((await database.query("SELECT * FROM schema_migrations ORDER BY name")).rows, upgraded);
+});
+
+test("the meal API migration preserves a 003 database's existing meals and migration history", async t => {
+  const database = new PGlite(); t.after(() => database.close());
+  const previousMigrations = repositoryMigrationSources().filter(({ name }) => name < "004_meal_api.sql");
+  await database.exec(migrationSql(preview, true, previousMigrations));
+  await database.exec(seedSql(preview));
+  await database.exec(`
+    INSERT INTO workspaces (id, name, type, created_by)
+      VALUES ('existing-workspace', '既存の家族', 'SHARED', 'mille-test-user-a');
+    INSERT INTO workspace_members (workspace_id, user_id, role)
+      VALUES ('existing-workspace', 'mille-test-user-a', 'OWNER');
+    INSERT INTO meals (id, workspace_id, meal_date, meal_type, created_by, updated_by)
+      VALUES ('existing-meal', 'existing-workspace', '2026-11-10', 'DINNER', 'mille-test-user-a', 'mille-test-user-a');
+    INSERT INTO meal_dishes (id, meal_id, position, name) VALUES ('existing-dish', 'existing-meal', 0, 'みそ汁');
+    INSERT INTO dish_ingredients (id, dish_id, position, name, amount_text, unit)
+      VALUES ('existing-ingredient', 'existing-dish', 0, '豆腐', '1/2', '丁');
+  `);
+  const readMeal = () => database.query("SELECT mille_meal_json(m, true) AS meal FROM meals m WHERE id = 'existing-meal'");
+  const oldMeal = (await readMeal()).rows;
+  assert.equal(oldMeal.length, 1);
+  const historyQuery = "SELECT * FROM schema_migrations ORDER BY name";
+  const history = (await database.query<MigrationRow>(historyQuery)).rows;
+  assert.deepEqual(history.map(row => row.name), migrationNames.slice(0, 3));
+
+  await database.exec(migrationSql(preview));
+  assert.deepEqual((await readMeal()).rows, oldMeal);
+  const upgraded = (await database.query<MigrationRow>(historyQuery)).rows;
+  assert.deepEqual(upgraded.slice(0, 3), history);
+  assert.deepEqual(upgraded.map(row => row.name), migrationNames);
+  await database.exec(migrationSql(preview));
+  assert.deepEqual((await database.query(historyQuery)).rows, upgraded);
 });
 
 test("initialization refuses an existing foreign database and does not leave Mille schema behind", async t => {

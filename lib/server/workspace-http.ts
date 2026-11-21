@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AppUser } from "../shared/types";
 import { DomainError, getWorkspaceRepository, type WorkspaceRepository } from "./workspaces";
 
-const privateHeaders = {
+export const privateApiHeaders = {
   "Cache-Control": "private, no-store, max-age=0, must-revalidate",
   Vary: "Cookie",
 };
@@ -27,7 +27,7 @@ export function assertWorkspaceSameOrigin(request: Request, environment: Readonl
 }
 
 /** Bound bytes before decoding or parsing, including requests without Content-Length. */
-export async function readWorkspaceJson<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
+export async function readWorkspaceJson<T>(request: Request, schema: z.ZodType<T>, byteLimit = maximumBodySize): Promise<T> {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get("content-type") ?? "")) {
     throw new DomainError(400, "JSON形式で送信してください。");
   }
@@ -40,8 +40,8 @@ export async function readWorkspaceJson<T>(request: Request, schema: z.ZodType<T
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > maximumBodySize) {
-        await reader.cancel();
+      if (size > byteLimit) {
+        void reader.cancel().catch(() => {});
         throw new DomainError(413, "入力が大きすぎます。");
       }
       chunks.push(value);
@@ -75,14 +75,14 @@ export async function handleWorkspaceApi(
     const repository = await (dependencies?.getRepository ?? getWorkspaceRepository)(user);
     const result = await operation(repository);
     const status = options.status ?? 200;
-    return status === 204 ? new Response(null, { status, headers: privateHeaders })
-      : Response.json(result, { status, headers: privateHeaders });
+    return status === 204 ? new Response(null, { status, headers: privateApiHeaders })
+      : Response.json(result, { status, headers: privateApiHeaders });
   } catch (error) {
-    if (error instanceof DomainError) return Response.json({ error: error.message }, { status: error.status, headers: privateHeaders });
+    if (error instanceof DomainError) return Response.json({ error: error.message }, { status: error.status, headers: privateApiHeaders });
     if (error instanceof z.ZodError) {
-      return Response.json({ error: error.issues[0]?.message ?? "入力内容を確認してください。" }, { status: 400, headers: privateHeaders });
+      return Response.json({ error: error.issues[0]?.message ?? "入力内容を確認してください。" }, { status: 400, headers: privateApiHeaders });
     }
     // Do not expose SQL, session data, raw invitation tokens or stack traces.
-    return Response.json({ error: "処理に失敗しました。時間をおいてもう一度お試しください。" }, { status: 500, headers: privateHeaders });
+    return Response.json({ error: "処理に失敗しました。時間をおいてもう一度お試しください。" }, { status: 500, headers: privateApiHeaders });
   }
 }

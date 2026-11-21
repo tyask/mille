@@ -75,6 +75,16 @@ export const updateMealSchema = z.strictObject({
 
 export const deleteMealSchema = z.strictObject({ expectedVersion });
 
+export const copyMealSchema = z.strictObject({
+  sourceVersion: expectedVersion,
+  targetDate: mealDate,
+  targetMealType: mealType,
+});
+
+// A comma can represent multiple header values joined together by Fetch.
+export const mealIdempotencyKeySchema = z.string().regex(/^[!-~]{1,128}$/)
+  .refine(value => !value.includes(","));
+
 const dayInMilliseconds = 24 * 60 * 60 * 1_000;
 // An expanded ISO date is needed only for the exclusive end of 9999-12-31.
 const lastRangeEnd = "+010000-01-01";
@@ -84,7 +94,22 @@ export const mealRangeSchema = z.strictObject({ from: mealDate, to: z.union([mea
     return days > 0 && days <= 62;
   }, { path: ["to"], message: "取得する日付の範囲を1〜62日にしてください。" });
 
+export const dishSearchSchema = z.strictObject({
+  q: textWithin(100).refine(value => value.length > 0, "料理名を入力してください。"),
+  limit: z.number().int().min(1).max(50).default(20),
+  cursor: z.string().regex(/^[A-Za-z0-9_-]{1,2048}$/).optional(),
+});
+
+export const dishSearchPositionSchema = z.strictObject({
+  mealDate,
+  mealId: mealIdSchema.max(128),
+  position: z.number().int().min(0).max(19),
+  dishId: mealIdSchema.max(128),
+});
+
 export type CreateMealInput = z.input<typeof createMealSchema>;
 export type UpdateMealInput = z.input<typeof updateMealSchema>;
 export type DeleteMealInput = z.input<typeof deleteMealSchema>;
+export type CopyMealInput = z.input<typeof copyMealSchema>;
 export type MealRangeInput = z.input<typeof mealRangeSchema>;
+export type DishSearchInput = z.input<typeof dishSearchSchema>;
