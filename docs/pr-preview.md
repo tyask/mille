@@ -21,6 +21,14 @@ Neon Native への移行に備え、Vercel のビルドコマンドに静的な�
 
 準備フェーズは `.next/output` に静的ページだけを生成します。ルート `/` の `GET`・`HEAD` に応答し、それ以外のパスやメソッドには `404` を返します。Next.js のアプリビルド、DB 接続、migration、seed は準備フェーズでは行いません。検証用 URL は、専用 DB の照合と後続のアプリデプロイの成功後に案内します。 [Cake の準備用ビルド](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/build/preview-provisioning.ts#L10-L56)
 
+## Neon Native の Git ソース確認
+
+GitHub Actions の `Mille PR Preview` で **Run workflow** を開き、ブランチに `main`、操作に `inspect-native` を選びます。`pr` に PR 番号、`sha` に確認する現在 HEAD の完全 SHA を入力して実行します。この操作はワークフローが `main` に導入された後に利用できます。
+
+`main` 上の確認コードが、同じリポジトリの `codex/*` から `main` に向けた開いている PR と指定した HEAD を GitHub API で照合します。該当コミットの `vercel.json` と `package.json` を読み取り、Git 制御設定と準備用ビルドコマンドを確認します。確認後に PR の状態と HEAD を再取得し、同じ対象であれば Vercel の GitSource に使用する候補を記録します。
+
+実行結果は Actions の該当 run の **Summary** にある `Inspect Native Preview Git source` の結果を確認します。この確認は GitHub の読み取り権限だけで実行し、PR コードの実行、通知、Vercel デプロイ、プロバイダー設定や DB の変更は行いません。
+
 ## Neon Native の接続と切替計画
 
 既存の `mille-preview` の既定ブランチは常設 Preview の DB を含み、Native 連携は既定ブランチから分岐します。Free の利用枠を確認し、専用の `mille-native-preview` プロジェクトに空の既定ブランチを用意する計画です。既存 Vercel プロジェクトの組み込み Preview に限定して接続し、既存の接続変数と重複しない Native 専用の接頭辞を使います。本番と常設 Preview の接続先、URL、保護設定を保持します。 [Neon の Vercel 管理連携](https://neon.com/docs/guides/vercel-managed-integration#enable-automated-preview-branching-recommended)

@@ -7,7 +7,7 @@ on:
       operation:
         description: Operation for the current PR state
         type: choice
-        options: [deploy, cleanup]
+        options: [deploy, cleanup, inspect-native]
         required: true
       pr:
         description: Pull request number
@@ -22,10 +22,36 @@ on:
     types: [completed]
 permissions: {}
 jobs:
+  inspect_native:
+    name: Inspect Native Preview Git source
+    if: >-
+      github.repository == 'tyask/mille' && github.ref == 'refs/heads/main' &&
+      github.event_name == 'workflow_dispatch' && inputs.operation == 'inspect-native'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .node-version
+      - run: npm ci --ignore-scripts
+      - name: Inspect the current PR Git source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MILLE_NATIVE_PREVIEW_INSPECT_PR: ${{ inputs.pr }}
+          MILLE_NATIVE_PREVIEW_INSPECT_SHA: ${{ inputs.sha }}
+        run: node --import tsx scripts/preview/inspect-native.ts
   prepare:
     if: >-
       github.repository == 'tyask/mille' && github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' ||
+       (github.event_name == 'workflow_dispatch' && inputs.operation != 'inspect-native') ||
        (github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_repository.full_name == github.repository &&
