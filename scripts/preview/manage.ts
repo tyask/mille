@@ -3,7 +3,7 @@ import { z } from "zod";
 import { previewMigrationSources } from "./database";
 import { previewContext } from "./github";
 import { assertPreviewGitDeploymentPolicy } from "./git-policy";
-import { NeonPreview } from "./neon";
+import { NeonPreview, NeonPreviewError } from "./neon";
 import { loadPreviewSource } from "./source";
 import { previewTargetIsCurrent, previewTargetSchema, samePreviewTarget } from "./target";
 import { VercelPreview } from "./vercel";
@@ -81,7 +81,8 @@ async function main() {
   console.log(`PR #${target.number} (${target.sha}) Preview ${url}`);
 }
 
-main().catch(() => {
+main().catch((error: unknown) => {
   console.error(`Mille PR Preview は「${stage}」で停止しました。資格情報やプロバイダーの応答本文は出力しません。`);
+  if (error instanceof NeonPreviewError) console.error(`Neon 診断 ${error.diagnostic}`);
   process.exitCode = 1;
 });

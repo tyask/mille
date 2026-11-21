@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { NeonPreview } from "../scripts/preview/neon";
+import { NeonPreview, NeonPreviewError } from "../scripts/preview/neon";
 
 const config = {
   apiKey: "fake-key",
@@ -27,21 +27,47 @@ const host = "ep-pr-8.ap-southeast-1.aws.neon.tech";
 const uri = `postgresql://${role.name}:fake-password@${host}/${database.name}?sslmode=require`;
 const templateHost = "ep-template.ap-southeast-1.aws.neon.tech";
 const templateUri = `postgresql://neondb_owner:fake-template-password@${templateHost}/neondb?sslmode=require`;
+const epcSync = {
+  id: "34068510-0ba7-4d0c-be0c-3205414fafff",
+  project_id: config.projectId,
+  action: "epc_sync",
+  status: "running",
+  failures_count: 0,
+  created_at: "2026-11-21T00:31:57Z",
+  updated_at: "2026-11-21T00:31:57Z",
+  total_duration_ms: 0,
+};
+const startCompute = {
+  id: "9bcdc4c0-982a-40c5-8fae-6a41367a3677",
+  project_id: config.projectId,
+  branch_id: child.id,
+  endpoint_id: "ep-pr-8",
+  action: "start_compute",
+  status: "finished",
+  failures_count: 0,
+  created_at: "2026-11-21T00:31:57Z",
+  updated_at: "2026-11-21T00:31:59Z",
+  total_duration_ms: 2000,
+};
 
 function mockNeon(t: TestContext, options: {
   existing?: boolean;
-  ownership?: Record<string, string>;
+  ownership?: Record<string, unknown>;
   connectionString?: string;
   owner?: string;
   unexpectedTemplateDatabase?: boolean;
   nonemptyTemplateDatabase?: string;
   deleteLocked?: boolean;
+  createOperations?: readonly Record<string, unknown>[];
+  roleOperations?: readonly Record<string, unknown>[];
+  polledOperation?: Record<string, unknown>;
 } = {}) {
   let branchExists = options.existing ?? false;
   let roleExists = branchExists;
   let databaseExists = branchExists;
   const writes: string[] = [];
   const inspectedDatabases: string[] = [];
+  const polledIds: string[] = [];
   let checks = 0;
   const verifyCurrent = async () => { checks++; };
   t.mock.method(globalThis, "fetch", async (input: string | URL, init: RequestInit) => {
@@ -88,13 +114,13 @@ function mockNeon(t: TestContext, options: {
         assert.deepEqual(body.branch, { name: child.name, parent_id: parent.id, init_source: "parent-data" });
         assert.deepEqual(body.annotation_value, ownership);
         branchExists = true;
-        return Response.json({ branch: child, ...operation }, { status: 201 });
+        return Response.json({ branch: child, operations: options.createOperations ?? [] }, { status: 201 });
       }
       if (path === `${childPath}/roles`) {
         assert.equal(roleExists, false);
         assert.deepEqual(body.role, { name: role.name });
         roleExists = true;
-        return Response.json({ role, ...operation }, { status: 201 });
+        return Response.json({ role, operations: options.roleOperations ?? [] }, { status: 201 });
       }
       if (path === `${childPath}/databases`) {
         assert.equal(databaseExists, false);
@@ -108,10 +134,14 @@ function mockNeon(t: TestContext, options: {
       branchExists = false;
       return Response.json({
         branch: child,
-        operations: [{ id: "delete-op", branch_id: child.id, project_id: config.projectId, status: "skipped" }],
+        operations: [{ id: "delete-op", action: "delete_timeline", branch_id: child.id, project_id: config.projectId, status: "skipped" }],
       });
     } else if (init.method === "GET") {
       if (!path) return Response.json({ project: { id: config.projectId, name: "mille-preview" } });
+      if (path === `/operations/${epcSync.id}`) {
+        polledIds.push(epcSync.id);
+        return Response.json({ operation: options.polledOperation });
+      }
       if (path === parentPath) return Response.json({ branch: parent });
       if (path === `${parentPath}/roles`) {
         return Response.json({ roles: [{ branch_id: parent.id, name: "neondb_owner", protected: false }] });
@@ -157,7 +187,7 @@ function mockNeon(t: TestContext, options: {
     }
     assert.fail(`Unexpected test request ${init.method} ${path}`);
   });
-  return { writes, inspectedDatabases, checks: () => checks, verifyCurrent };
+  return { writes, inspectedDatabases, polledIds, checks: () => checks, verifyCurrent };
 }
 
 test("Neon の PR 専用 DB を作成し、同じ PR の更新では既存資源を再利用する", async t => {
@@ -175,6 +205,46 @@ test("Neon の PR 専用 DB を作成し、同じ PR の更新では既存資源
   await service.remove(8, fixture.verifyCurrent);
   assert.equal(fixture.writes.at(-1), "DELETE /branches/br-pr-8");
   assert.equal(fixture.checks(), 6);
+});
+
+test("Neon がブランチ作成と一緒に返すプロジェクト内の epc_sync を完了まで確認する", async t => {
+  const fixture = mockNeon(t, {
+    createOperations: [epcSync, startCompute],
+    roleOperations: [{ ...epcSync, id: "00aed1fa-06b4-4bb9-81bc-10319fc8d3ae", status: "finished" }],
+    polledOperation: { ...epcSync, status: "finished", updated_at: "2026-11-21T00:31:59Z", total_duration_ms: 2000 },
+  });
+  await new NeonPreview(config).ensure(8);
+  assert.deepEqual(fixture.polledIds, [epcSync.id]);
+  assert.deepEqual(fixture.writes, ["/branches", "/branches/br-pr-8/roles", "/branches/br-pr-8/databases", "migrate", "seed"]);
+});
+
+test("epc_sync 以外のブランチなし操作、別プロジェクト、別ブランチの操作を拒否する", async t => {
+  for (const operation of [
+    { ...epcSync, action: "create_branch" },
+    { ...epcSync, project_id: "other-project" },
+    { ...epcSync, endpoint_id: "ep-pr-8" },
+    { ...startCompute, branch_id: "br-another" },
+  ]) {
+    const fixture = mockNeon(t, { createOperations: [operation] });
+    await assert.rejects(new NeonPreview(config).ensure(8), /操作の対象/);
+    assert.deepEqual(fixture.polledIds, []);
+    assert.deepEqual(fixture.writes, ["/branches"]);
+    t.mock.restoreAll();
+  }
+});
+
+test("Neon 操作のポーリングで ID や action が変わった場合は停止する", async t => {
+  for (const operation of [
+    { ...epcSync, status: "finished", id: "other-operation" },
+    { ...epcSync, status: "finished", branch_id: child.id },
+    { ...epcSync, status: "finished", action: "create_branch", branch_id: child.id },
+  ]) {
+    const fixture = mockNeon(t, { createOperations: [epcSync], polledOperation: operation });
+    await assert.rejects(new NeonPreview(config).ensure(8), /操作の対象/);
+    assert.deepEqual(fixture.polledIds, [epcSync.id]);
+    assert.deepEqual(fixture.writes, ["/branches"]);
+    t.mock.restoreAll();
+  }
 });
 
 test("余分な DB や利用者オブジェクトがあるテンプレートは分岐元にしない", async t => {
@@ -195,6 +265,17 @@ test("同名でも Neon の所有情報が別 PR のブランチは更新・削�
   const service = new NeonPreview(config);
   await assert.rejects(service.ensure(8, fixture.verifyCurrent), /所有情報/);
   await assert.rejects(service.remove(8, fixture.verifyCurrent), /所有情報/);
+  assert.deepEqual(fixture.writes, []);
+});
+
+test("Neon API の形式エラーには応答値や任意のキーを含めない", async t => {
+  const fixture = mockNeon(t, { existing: true, ownership: { ...ownership, providerKey: ["mock-private-body"] } });
+  await assert.rejects(new NeonPreview(config).ensure(8), (error: unknown) => {
+    assert.ok(error instanceof NeonPreviewError);
+    assert.equal(error.diagnostic, "GET.branch.schema.annotation.value");
+    assert.doesNotMatch(String(error), /providerKey|mock-private-body/);
+    return true;
+  });
   assert.deepEqual(fixture.writes, []);
 });
 
