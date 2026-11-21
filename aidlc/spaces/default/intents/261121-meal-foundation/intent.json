@@ -1,0 +1,27 @@
+{
+  "id": "261121-meal-foundation",
+  "issue": "https://github.com/tyask/mille/issues/23",
+  "branch": "codex/issue-23-meal-foundation",
+  "baseSha": "ef2dc4eb26b66133c1b8d356c23ffea0520c5b74",
+  "state": "frozen",
+  "approvedIssueSha256": "77eb5ae4afbe7972b4d00371b023abda413bc2c8211637d8f10067a3ac6dac96",
+  "implementationPlanSha256": "2bc7075156a8070300c954b9ff675af9dde4a3f5e961eceed1d652edc682aedb",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-21T01:50:00Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "移行生成後の対象19テスト",
+      "git diff --check",
+      "自己レビュー"
+    ],
+    "migrationSha256": "6a00446fca1293f006ac71df6fa71f3a7b81c31e3009268c9811b5ed674473d4"
+  },
+  "revisionHistory": [
+    {
+      "recordedAt": "2026-11-21T01:50:00Z",
+      "priorSha": "172386462ea7841d48092ada99d172e68609e1b0",
+      "reason": "独立レビューで判明した9999-12-31の一覧取得を、排他的な終了日と回帰テストで修正。"
+    }
+  ]
+}
