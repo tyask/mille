@@ -59,6 +59,7 @@ function mockNeon(t: TestContext, options: {
   nonemptyTemplateDatabase?: string;
   deleteLocked?: boolean;
   createOperations?: readonly Record<string, unknown>[];
+  roleOperations?: readonly Record<string, unknown>[];
   polledOperation?: Record<string, unknown>;
 } = {}) {
   let branchExists = options.existing ?? false;
@@ -119,7 +120,7 @@ function mockNeon(t: TestContext, options: {
         assert.equal(roleExists, false);
         assert.deepEqual(body.role, { name: role.name });
         roleExists = true;
-        return Response.json({ role, ...operation }, { status: 201 });
+        return Response.json({ role, operations: options.roleOperations ?? [] }, { status: 201 });
       }
       if (path === `${childPath}/databases`) {
         assert.equal(databaseExists, false);
@@ -209,6 +210,7 @@ test("Neon の PR 専用 DB を作成し、同じ PR の更新では既存資源
 test("Neon がブランチ作成と一緒に返すプロジェクト内の epc_sync を完了まで確認する", async t => {
   const fixture = mockNeon(t, {
     createOperations: [epcSync, startCompute],
+    roleOperations: [{ ...epcSync, id: "00aed1fa-06b4-4bb9-81bc-10319fc8d3ae", status: "finished" }],
     polledOperation: { ...epcSync, status: "finished", updated_at: "2026-11-21T00:31:59Z", total_duration_ms: 2000 },
   });
   await new NeonPreview(config).ensure(8);
@@ -234,6 +236,7 @@ test("epc_sync 以外のブランチなし操作、別プロジェクト、別�
 test("Neon 操作のポーリングで ID や action が変わった場合は停止する", async t => {
   for (const operation of [
     { ...epcSync, status: "finished", id: "other-operation" },
+    { ...epcSync, status: "finished", branch_id: child.id },
     { ...epcSync, status: "finished", action: "create_branch", branch_id: child.id },
   ]) {
     const fixture = mockNeon(t, { createOperations: [epcSync], polledOperation: operation });

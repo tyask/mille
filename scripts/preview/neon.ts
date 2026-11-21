@@ -302,11 +302,11 @@ export class NeonPreview {
       let current = requested;
       for (;;) {
         // Neon synchronizes project endpoint configuration as part of branch creation.
-        const validScope = current.action === "epc_sync"
-          ? !current.branch_id && !current.endpoint_id
-          : current.branch_id === id;
+        const validScope = current.branch_id === id
+          || (current.action === "epc_sync" && !current.branch_id && !current.endpoint_id);
         if (!validScope || current.id !== requested.id || current.action !== requested.action
           || current.project_id !== this.#config.projectId
+          || (current.branch_id ?? null) !== (requested.branch_id ?? null)
           || (current.endpoint_id ?? null) !== (requested.endpoint_id ?? null)) {
           throw new NeonPreviewError("Neon 操作の対象が一致しません。", "operation.target_mismatch");
         }
