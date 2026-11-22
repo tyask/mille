@@ -1,0 +1,26 @@
+{
+  "id": "261123-preview-ready",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-04"
+  ],
+  "phase": "正式 Preview の Ready 条件",
+  "branch": "codex/issue-32-preview-ready",
+  "baseSha": "0fcd0dd64ff7e3452617b3bbee41221ea552caf6",
+  "referenceSha": "5975e5f20d9eb755d991b8725840feab0b778d65",
+  "state": "frozen",
+  "plan": "plan.md",
+  "planSha256": "32ce7647081170bc712767fbe0db389821faacd6939fd8302a982f396dfd4a23",
+  "approvedPlan": "../261121-cake-parity-ci/plan.md",
+  "approvedPlanSha256": "b0377e7832481c600e4ec7fc1a38716274563aa0541161eac765183e17cac58c",
+  "approvedIssueSnapshot": "../261121-cake-parity-ci/issue.md",
+  "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
+  "issueSource": "../261121-cake-parity-ci/issue-source.json",
+  "approvalEvidence": "../261121-cake-parity-ci/approvals.json",
+  "frozenAt": "2026-11-22T16:57:17Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "git diff --check と差分の自己レビュー。未解決の指摘・競合・検証失敗時の draft 維持と、実行時 SHA の一致を明示",
+    "信頼済み main から #64 の対象識別子、実行 SHA、公式 status と verify の4ケースを照合"
+  ]
+}

@@ -107,7 +107,14 @@ gh workflow run pr-preview.yml --repo tyask/mille --ref main \
 
 ## URL と Ready 条件
 
-最終 HEAD の独立レビューと [Cloud での最終検証](development.md#最終検証初回-preview)が完了したら、GitHub 上で PR を Ready for review に切り替えます。GitHub CI と正式 Preview の作成は並行で進め、状況と結果を PR に記録します。
+GitHub CI と正式 Preview の自動作成は並行で進めます。Ready for review にする前に、次を確認します。
+
+1. clean な checkout、同一リポジトリのリモートブランチ、開いている draft PR の完全 HEAD が一致することを確認します。同じ HEAD の自己レビュー、独立レビュー、[Cloud での最終検証](development.md#最終検証初回-preview)を完了します。
+2. 現 HEAD の [push・pull_request CI](development.md#github-ci-の照合) の最新試行と専用 Preview の管理ジョブが成功していることを確認します。信頼済み `main` の `status` を実行し、PR・ブランチ・HEAD、デプロイ ID、固有 URL、専用 DB のブランチ・endpoint・世代の一致を確認します。
+3. アプリの動作を変えるコード、DB、依存、実行設定を変更した PR では、同じ対象に対する `verify` が PC・スマホ × 架空 A/B の全4ケースで成功し、実行時 SHA が現 HEAD と一致することを確認します。変更箇所に応じた正式 Preview の確認も成功したことを記録します。文書や運用だけを変更した PR では、実施した確認の範囲とその理由を PR に記録します。
+4. 現 HEAD のレビューと検証を PR 本文に記録します。`status` と必要な `verify` の実行 URL、試行番号、実行元の `main` SHA、対象の識別子とケース結果を照合します。Ready 直前に PR と CI を再取得し、最新の `status` が現 HEAD と既存の証跡に一致することを確認します。要修正の指摘やマージ競合が残る場合、検証が未完了または失敗した場合、照合対象が変わった場合は draft を維持します。
+
+Ready 後に追修正が必要な場合は、着手前に `gh pr ready --undo <PR番号> --repo tyask/mille` で draft に戻します。GitHub で draft を再取得してから修正し、新しい HEAD のレビュー、Cloud 検証、CI、正式 Preview を同じ手順で確認して Ready に切り替えます。 [Cake の Ready 条件](https://github.com/tyask/Cake/blob/5975e5f20d9eb755d991b8725840feab0b778d65/docs/development-workflow.md#L569-L615)
 
 Ready 後の正式 Preview 確認は利用者が Vercel にログインしたブラウザで行います。案内するときは、Actions の `Mille PR Preview` 管理ジョブの Summary で現在の PR HEAD に対応する固有の Vercel URL を確認し、PR に記録して共有します。利用者から確認結果を受け取ったら、PR に追記します。
 
