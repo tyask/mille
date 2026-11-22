@@ -137,7 +137,7 @@ export type NativePilotDeployment = NativePilotTarget & {
 } & DeploymentPhase;
 type ProvisionDeployment = Extract<NativePilotDeployment, { phase: "provision" }>;
 type ApplicationDeployment = Extract<NativePilotDeployment, { phase: "application" }>;
-type OwnedDeployment = { deployment: NativePilotDeployment; advertisedAlias: boolean };
+type OwnedDeployment = { deployment: NativePilotDeployment; hasListedAlias: boolean };
 type VerifyCurrent = () => Promise<void>;
 type Config = z.infer<typeof configSchema>;
 type Method = "GET" | "POST" | "DELETE";
@@ -271,20 +271,21 @@ export class NativePilotVercel {
     return { status: response.status, value };
   }
 
-  private async deploymentAdvertisesAlias(id: string, branch: z.infer<typeof ref>, detailAliases: readonly string[]): Promise<boolean> {
+  private async hasListedAlias(id: string, branch: z.infer<typeof ref>, detailAliases: readonly string[]): Promise<boolean> {
     const host = branchAlias(branch);
     const list = await this.read(`/v2/deployments/${id}/aliases`, aliasList);
     const names = [...detailAliases, ...list.aliases.map(alias => alias.alias)];
     if (names.some(alias => alias !== host) || (list.pagination?.count !== undefined && list.pagination.count !== list.aliases.length)) {
       throw new Error("Native 試験用 Deployment に想定外のエイリアスがあります。");
     }
-    return names.length > 0;
+    // The deployment detail can retain the old hostname after its assignment is deleted.
+    return list.aliases.length > 0;
   }
 
   private async verifiedAlias(branch: z.infer<typeof ref>, owned: readonly OwnedDeployment[]) {
     const host = branchAlias(branch);
     const direct = await this.alias(host);
-    if (direct.value === null && !owned.some(item => item.advertisedAlias)) return null;
+    if (direct.value === null && !owned.some(item => item.hasListedAlias)) return null;
     const aliased = parse(aliasDetails, direct.value, direct.status);
     if (aliased.alias !== host || aliased.projectId !== this.config.projectId
       || !owned.some(item => item.deployment.id === aliased.deploymentId)) {
@@ -314,14 +315,14 @@ export class NativePilotVercel {
       if (allowMissing) return null;
       throw new NativePilotHttpError("対象の Vercel Deployment は削除済みです。", response.status);
     }
-    const advertisedAlias = await this.deploymentAdvertisesAlias(id, gitSource.ref, item.alias ?? []);
+    const hasListedAlias = await this.hasListedAlias(id, gitSource.ref, item.alias ?? []);
     const phase: DeploymentPhase = meta.milleNativePilotPhase === "provision" ? { phase: "provision" } : {
       phase: "application", database: {
         branchId: meta.milleNativePilotBranchId, endpointId: meta.milleNativePilotEndpointId, hostDigest: meta.milleNativePilotHostDigest,
       },
     };
     return {
-      advertisedAlias,
+      hasListedAlias,
       deployment: {
         id, pr: target.pr, ref: target.ref, sha: gitSource.sha, generation: meta.milleNativePilotGeneration,
         requestedAt: meta.milleNativePilotRequestedAt, createdAt: item.createdAt, url: `https://${item.url}`, readyState: item.readyState,

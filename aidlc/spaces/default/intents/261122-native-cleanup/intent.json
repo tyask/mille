@@ -1,0 +1,24 @@
+{
+  "id": "261122-native-cleanup",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": ["AC-03"],
+  "phase": "Native Preview 終了時の Vercel エイリアス照合",
+  "branch": "codex/issue-32-native-cleanup",
+  "baseSha": "1a5f3f0bd9b2269c2fc5c60af000694b7847b907",
+  "state": "frozen",
+  "plan": "plan.md",
+  "planSha256": "935a121e997470425a2c2a18dfafc031c9d715bf408225a0a0717958b6573906",
+  "approvedPlan": "../261122-native-application/plan.md",
+  "approvedPlanSha256": "9eea62d17180fc39dc3fda50fd73f26ec5023978a37a86d80205e2e03fc7cfc0",
+  "approvedIssueSnapshot": "../261122-native-application/issue.md",
+  "approvedIssueSha256": "ded299dca2e9ced3e08e6a1ea29cada6da75955b3a7cf19d0679985929a69f4a",
+  "issueSource": "../261122-native-application/issue-source.json",
+  "approvalEvidence": "../261122-native-application/approvals.json",
+  "frozenAt": "2026-11-22T09:38:46Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "Native Vercel とライフサイクルの関連テスト41件",
+    "割り当て削除後の再取得と、途中からの再開、想定外割り当ての停止を自己レビュー",
+    "git diff --check"
+  ]
+}

@@ -124,8 +124,7 @@ function scenario(options: {
       case `/v2/aliases/${aliasUid}`:
         assert.equal(method, "DELETE");
         if (!options.aliasPersists) {
-          const record = existing.get(String(directAlias?.deploymentId));
-          if (record) record.alias = [];
+          // Vercel can retain the old alias in the deployment detail after deleting the live assignment.
           aliases = undefined;
           directAlias = undefined;
         }
@@ -305,7 +304,8 @@ test("一覧を全ページ調べ、同じ ref の別 Deployment と不完全な
     { deployment: { meta: { githubCommitRef: target.ref } }, inventory: () => ({ deployments: [{ ...own, meta: { githubCommitRef: target.ref } }], pagination: { count: 1, next: null } }) },
     { inventory: () => ({ deployments: [own], pagination: { count: 1, next: 25 } }) },
     { inventory: () => ({ deployments: [own], pagination: { count: 2, next: null } }) },
-    { deployment: { target: "production" } }, { deployment: { public: true } }, { aliases: [{ alias: "mille-fumin1.vercel.app" }] },
+    { deployment: { target: "production" } }, { deployment: { public: true } },
+    { aliases: [{ alias: "mille-fumin1.vercel.app" }] }, { deployment: { alias: ["mille-fumin1.vercel.app"] } },
     { deployment: { gitSource: { ...source, repoId: 42 } } }, { deployment: { gitSource: { ...source, ref: "codex/other" } } },
     { deployment: { createdAt: 19000 } }, { deployment: { ready: null } }, { deployment: { ready: 20000 } },
     { deployment: { functions: { api: {} } } }, { deployment: { crons: [{ path: "/api" }] } },
@@ -352,6 +352,9 @@ test("固定 ref の生成エイリアスだけを正確な割り当てと照合
   const lingering = scenario({ aliases: [{ alias: aliasHost }], directAlias: attachedAlias, aliasPersists: true });
   await assert.rejects(lingering.client.remove(found, current), /エイリアスが残っています/);
   assert.deepEqual(lingering.requests.filter(request => request.startsWith("DELETE")), [`DELETE /v2/aliases/${aliasUid}`]);
+  const conflicting = scenario({ aliases: [{ alias: aliasHost }] });
+  await assert.rejects(conflicting.client.remove(found, current), { status: 404 });
+  assert.ok(conflicting.requests.every(request => !request.startsWith("DELETE")));
   const reassigned = scenario({ directAlias: attachedAlias, aliasReadback: reads => reads === 3
     ? { ...attachedAlias, deploymentId: "dpl_Other" } : attachedAlias });
   const [beforeReassignment] = await reassigned.client.list(target);
@@ -362,13 +365,23 @@ test("固定 ref の生成エイリアスだけを正確な割り当てと照合
   await assert.rejects(wrongRef.client.list({ ...target, ref: "codex/other" }));
   assert.deepEqual(wrongRef.requests, []);
   for (const badAlias of [
-    undefined, { ...attachedAlias, projectId: "prj_Other" }, { ...attachedAlias, deploymentId: "dpl_Other" },
+    { ...attachedAlias, projectId: "prj_Other" }, { ...attachedAlias, deploymentId: "dpl_Other" },
     { ...attachedAlias, uid: "../other" }, { ...attachedAlias, uid: undefined },
     { ...attachedAlias, redirect: "example.com" }, { ...attachedAlias, protectionBypass: { [secret]: true } },
   ]) {
     const { client } = scenario({ aliases: [{ alias: aliasHost }], directAlias: badAlias });
     await assert.rejects(client.list(target));
   }
+});
+
+test("詳細に削除済みエイリアスが残っていてもデプロイの削除を再開する", async () => {
+  const { client, requests } = scenario({ deployments: [{ ...application, alias: [aliasHost] }] });
+  const [found] = await client.list(target);
+  assert.equal(found?.phase, "application");
+  assert.ok(found);
+  await client.remove(found, current);
+  assert.deepEqual(requests.filter(request => request.startsWith("DELETE")), [`DELETE /v13/deployments/${applicationId}`]);
+  assert.deepEqual(await client.list(target), []);
 });
 
 test("READY と同じ Deployment の静的ビルド照合記録を待つ", async () => {
