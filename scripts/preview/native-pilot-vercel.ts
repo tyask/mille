@@ -97,6 +97,14 @@ const aliasList = z.object({
   aliases: z.array(z.object({ alias: z.string(), redirect: z.null().optional() })).max(1),
   pagination: completePagination,
 });
+const createRejectionLabels = new Map([
+  ["missing_files", "デプロイに必要なファイルが不足"],
+  ["no_files", "デプロイ対象のファイルが空"],
+  ["env_too_many_keys", "環境変数の件数上限を超過"],
+]);
+const createRejection = z.object({
+  error: z.object({ code: z.string() }),
+}).transform(({ error }) => createRejectionLabels.get(error.code));
 
 export type NativePilotTarget = { pr: number; ref: string; sha: string };
 export { inventory as nativeVercelDeploymentInventory };
@@ -121,6 +129,14 @@ function verifyStatus(response: Response, method: Method): void {
   if (!response.ok) {
     throw new NativePilotHttpError(`Vercel API ${method} が失敗しました (HTTP ${response.status})。`, response.status);
   }
+}
+
+async function verifyCreateStatus(response: Response): Promise<void> {
+  if (response.status === 400) {
+    const { data: label } = createRejection.safeParse(await response.json().catch(() => undefined));
+    if (label) console.log(`Native Preview 診断 Vercel のデプロイ作成要求（${label}） (HTTP ${response.status})。`);
+  }
+  verifyStatus(response, "POST");
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -334,7 +350,7 @@ export class NativePilotVercel {
       MILLE_NATIVE_PREVIEW_ATTEST_ENDPOINT: "1",
     };
     const body = {
-      name: projectName, project: this.config.projectId, public: false,
+      name: projectName, project: this.config.projectId,
       gitSource: { type: "github", repoId: milleRepositoryId, ref: target.ref, sha: target.sha },
       env, build: { env },
       meta: {
@@ -346,7 +362,7 @@ export class NativePilotVercel {
     const response = await nativePilotStage("vercel-create-request", async () => {
       console.log("Native Preview 診断 Vercel のデプロイ作成要求を開始しました。");
       const result = await this.send("/v13/deployments?forceNew=1", "POST", body);
-      verifyStatus(result, "POST");
+      await verifyCreateStatus(result);
       return result;
     });
     const { id } = await nativePilotStage("vercel-create-response", async () =>

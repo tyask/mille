@@ -1,0 +1,22 @@
+{
+  "id": "261122-native-vercel-create",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": ["AC-03"],
+  "phase": "Native の Git デプロイ作成要求を Cake と揃える",
+  "branch": "codex/issue-32-native-vercel-create",
+  "baseSha": "ac064cc2651a097d9dc6790b929c9d6eed435967",
+  "state": "frozen",
+  "approvedIssueSnapshot": "../261122-native-preview-completion/issue.md",
+  "approvedIssueSha256": "f42ae356f224c13bbc80cdb712d50f4673ed4daf8799e903ab344b8755e354bf",
+  "approvedPlan": "../261122-native-preview-completion/plan.md",
+  "approvedPlanSha256": "e74b184a2d3e6117a6779fa8fb86770646e719d63acf107c918400dd6d5c0fdd",
+  "approvalEvidence": "../261122-native-preview-completion/approvals.json",
+  "implementationPlanSha256": "164ef1847b34172c080ffaba9c2d1b143f014961a9cacd59b4d13537d7c783a2",
+  "frozenAt": "2026-11-22T06:14:21Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "Native の作成要求、GitHub、Vercel、Neon と従来方式の関連テスト95件",
+    "Cake の成功済み Git デプロイ要求との照合、非公開の読み戻し、固定診断の範囲と再送防止を自己レビュー",
+    "承認済み計画と Issue 本文の SHA-256、git diff --check"
+  ]
+}
