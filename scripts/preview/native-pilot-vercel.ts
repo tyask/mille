@@ -8,7 +8,8 @@ const repository = "tyask/mille";
 const protocol = "mille-native-preview-pilot/v1";
 const prefix = "MILLE_NATIVE_PREVIEW_";
 const nativeDatabaseUrl = `${prefix}DATABASE_URL`;
-const endpointHeader = "x-mille-native-endpoint-sha256";
+const buildEvidenceLabel = "Mille: Native Preview 静的ビルド照合";
+const buildEventLimit = 200;
 const nativeVariables = new Set([
   "DATABASE_URL", "DATABASE_URL_UNPOOLED", "NEON_PROJECT_ID", "PGHOST", "PGHOST_UNPOOLED",
   "PGUSER", "PGDATABASE", "PGPASSWORD", "POSTGRES_URL", "POSTGRES_URL_NON_POOLING",
@@ -19,7 +20,8 @@ const teamId = z.string().regex(/^team_[A-Za-z0-9]+$/);
 const projectId = z.string().regex(/^prj_[A-Za-z0-9]+$/);
 const deploymentId = z.string().regex(/^dpl_[A-Za-z0-9]+$/);
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
-const sha256 = z.string().length(64).regex(/^[a-f0-9]{64}$/);
+const endpointId = z.string().refine(value =>
+  /^ep-[a-z0-9][a-z0-9-]{0,56}$/.test(value) && value === value.trim() && !value.endsWith("-pooler"));
 const generationId = z.string().regex(/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
 const ref = z.enum(["codex/native-preview-pilot-a", "codex/native-preview-pilot-b"]);
 const pr = z.int().positive().max(2147483647);
@@ -68,7 +70,6 @@ const detailSchema = z.object({
   alias: z.array(z.string()).max(1).optional(), createdAt: time, ready: time.nullish(), readyState, meta: markerSchema,
   deletedAt: time.nullish(), softDeletedByRetention: z.boolean().optional(),
   gitSource: z.object({ type: z.literal("github"), repoId: repositoryId, ref, sha }),
-  routes: z.array(z.object({ headers: z.record(z.string(), z.string()).optional() })).nullish(),
   functions: z.strictObject({}).nullish(), crons: z.tuple([]).nullish(),
 });
 const inventory = z.object({
@@ -82,15 +83,18 @@ const inventory = z.object({
   })).max(100),
   pagination,
 });
-const builds = z.object({
-  builds: z.array(z.object({
-    deploymentId, readyState: z.literal("READY"),
-    output: z.array(z.object({ type: z.literal("file"), path: z.enum(["index.html", "/index.html"]), lambda: z.null().optional() })),
-  })).min(1),
-  pagination: completePagination,
+// A result at the requested limit cannot establish that the marker is unique.
+const buildEvents = z.array(z.object({
+  text: z.string().nullish(), deploymentId: z.unknown().optional(),
+  type: z.unknown().optional(), info: z.unknown().optional(),
+})).max(buildEventLimit - 1);
+const buildEvidenceEvent = z.object({
+  text: z.string(), deploymentId, type: z.literal("stdout"), info: z.object({ type: z.literal("build") }),
 });
+const aliasUid = z.string().max(128).refine(value =>
+  /^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(value) && value === value.trim());
 const aliasDetails = z.object({
-  alias: z.string(), projectId, deploymentId, redirect: z.null().optional(), redirectStatusCode: z.null().optional(),
+  alias: z.string(), uid: aliasUid, projectId, deploymentId, redirect: z.null().optional(), redirectStatusCode: z.null().optional(),
   microfrontends: z.never().optional(), protectionBypass: z.strictObject({}).optional(),
 });
 const aliasList = z.object({
@@ -110,7 +114,7 @@ export type NativePilotTarget = { pr: number; ref: string; sha: string };
 export { inventory as nativeVercelDeploymentInventory };
 export type NativePilotDeployment = NativePilotTarget & {
   id: string; generation: string; requestedAt: number; createdAt: number; readyAt?: number;
-  endpointDigest?: string; url: string; readyState: z.infer<typeof readyState>;
+  url: string; readyState: z.infer<typeof readyState>;
 };
 type VerifyCurrent = () => Promise<void>;
 type Config = z.infer<typeof configSchema>;
@@ -147,8 +151,7 @@ async function readJson(response: Response): Promise<unknown> {
 function sameDeployment(a: NativePilotDeployment, b: NativePilotDeployment): boolean {
   return a.id === b.id && a.pr === b.pr && a.ref === b.ref && a.sha === b.sha && a.generation === b.generation
     && a.requestedAt === b.requestedAt && a.createdAt === b.createdAt && a.url === b.url
-    && (a.readyAt === undefined || a.readyAt === b.readyAt)
-    && (a.endpointDigest === undefined || a.endpointDigest === b.endpointDigest);
+    && (a.readyAt === undefined || a.readyAt === b.readyAt);
 }
 
 function branchAlias(branch: z.infer<typeof ref>): string {
@@ -234,13 +237,25 @@ export class NativePilotVercel {
     const response = await this.send(`/v4/aliases/${host}`, "GET");
     if (response.status === 404) return { status: response.status, value: null };
     verifyStatus(response, "GET");
-    return { status: response.status, value: await readJson(response) };
+    const value = await readJson(response);
+    if (value === null) {
+      throw new NativePilotHttpError("Vercel のエイリアス応答を確認できません。", response.status);
+    }
+    return { status: response.status, value };
   }
 
   private async assertAliasUnassigned(branch: z.infer<typeof ref>): Promise<void> {
     if ((await this.alias(branchAlias(branch))).value !== null) {
       throw new Error("Native 試験用のブランチ URL は既に割り当てられています。");
     }
+  }
+
+  private ownedAliasUid(host: string, id: string, direct: { status: number; value: unknown }): string {
+    const aliased = parse(aliasDetails, direct.value, direct.status);
+    if (aliased.alias !== host || aliased.projectId !== this.config.projectId || aliased.deploymentId !== id) {
+      throw new NativePilotHttpError("Native 試験用のブランチ URL の割り当てを確認できません。", direct.status);
+    }
+    return aliased.uid;
   }
 
   private async verifyDeploymentAlias(id: string, branch: z.infer<typeof ref>, detailAliases: readonly string[]): Promise<void> {
@@ -254,10 +269,7 @@ export class NativePilotVercel {
       throw new Error("Native 試験用 Deployment に想定外のエイリアスがあります。");
     }
     if (direct.value === null && names.length === 0) return;
-    const aliased = parse(aliasDetails, direct.value, direct.status);
-    if (aliased.alias !== host || aliased.projectId !== this.config.projectId || aliased.deploymentId !== id) {
-      throw new NativePilotHttpError("Native 試験用のブランチ URL の割り当てを確認できません。", direct.status);
-    }
+    this.ownedAliasUid(host, id, direct);
   }
 
   private async deployment(
@@ -267,9 +279,7 @@ export class NativePilotVercel {
     const response = await this.send(`/v13/deployments/${id}?withGitRepoInfo=true`, "GET");
     if (allowMissing && response.status === 404) return null;
     verifyStatus(response, "GET");
-    const value = await readJson(response);
-    if (allowMissing && value === null) return null;
-    const item = parse(detailSchema, value, response.status);
+    const item = parse(detailSchema, await readJson(response), response.status);
     const { meta, gitSource } = item;
     if (item.id !== id || item.projectId !== this.config.projectId || item.ownerId !== this.config.teamId
       || meta.milleNativePilotPr !== String(target.pr) || meta.milleNativePilotRef !== target.ref || gitSource.ref !== target.ref
@@ -283,17 +293,10 @@ export class NativePilotVercel {
       throw new NativePilotHttpError("対象の Vercel Deployment は削除済みです。", response.status);
     }
     await this.verifyDeploymentAlias(id, gitSource.ref, item.alias ?? []);
-    const endpointDigests = (item.routes ?? []).flatMap(route => Object.entries(route.headers ?? {}))
-      .filter(([name]) => name.toLowerCase() === endpointHeader).map(([, value]) => value);
-    if (endpointDigests.length > 1) {
-      throw new NativePilotHttpError("複数の Native エンドポイント確認ヘッダーがあります。", response.status);
-    }
-    const endpointDigest = parse(sha256.optional(), endpointDigests[0], response.status);
     return {
       id, pr: target.pr, ref: target.ref, sha: gitSource.sha, generation: meta.milleNativePilotGeneration,
       requestedAt: meta.milleNativePilotRequestedAt, createdAt: item.createdAt, url: `https://${item.url}`, readyState: item.readyState,
       ...(item.readyState === "READY" && item.ready != null ? { readyAt: item.ready } : {}),
-      ...(endpointDigest == null ? {} : { endpointDigest }),
     };
   }
 
@@ -378,26 +381,46 @@ export class NativePilotVercel {
     });
   }
 
-  async confirmStatic(deployment: NativePilotDeployment, verifyCurrent?: VerifyCurrent): Promise<NativePilotDeployment> {
+  private async readBuildEndpoint(deployment: NativePilotDeployment): Promise<string | undefined> {
+    const { id, pr, ref, sha, generation } = deployment;
+    const path = `/v3/deployments/${id}/events?builds=1&follow=0&direction=forward&limit=${buildEventLimit}`;
+    const events = await this.read(path, buildEvents);
+    const markers = events.filter(event => event.text?.includes(buildEvidenceLabel));
+    if (markers.length === 0) return undefined;
+    const marker = buildEvidenceEvent.safeParse(markers[0]);
+    const expected = `${buildEvidenceLabel} v1 ${id} ${pr} ${ref} ${sha} ${generation} `;
+    if (markers.length !== 1 || !marker.success || marker.data.deploymentId !== id
+      || !marker.data.text.startsWith(expected)) {
+      throw new Error("Vercel の静的な準備用ビルド照合記録が一致しません。");
+    }
+    const endpoint = endpointId.safeParse(marker.data.text.slice(expected.length));
+    if (!endpoint.success) throw new Error("Vercel の静的な準備用ビルド接続先を照合できません。");
+    return endpoint.data;
+  }
+
+  async confirmStatic(
+    deployment: NativePilotDeployment, verifyCurrent?: VerifyCurrent,
+  ): Promise<NativePilotDeployment & { endpointId: string }> {
     const target = parse(targetSchema, deployment);
     const deadline = Date.now() + 10 * 60_000;
+    let previous = deployment;
     for (let attempt = 0; attempt < 120 && Date.now() < deadline; attempt++) {
       await verifyCurrent?.();
       const current = await this.deployment(deployment.id, target, true);
-      if (!current || !sameDeployment(deployment, current)) throw new Error("準備用 Deployment の所有が変わりました。");
+      if (!current || !sameDeployment(previous, current)) throw new Error("準備用 Deployment の所有が変わりました。");
+      previous = current;
       if (current.readyState === "READY") {
-        const output = await this.read(`/v11/deployments/${current.id}/builds`, builds);
-        if (!current.endpointDigest || output.builds.some(build => build.deploymentId !== current.id)
-          || output.builds.flatMap(build => build.output).length !== 1
-          || (output.pagination?.count !== undefined && output.pagination.count !== output.builds.length)) {
-          throw new Error("Vercel の静的な準備用ビルド成果物を確認できません。");
+        const endpointId = await this.readBuildEndpoint(current);
+        if (endpointId !== undefined) {
+          await verifyCurrent?.();
+          return { ...current, endpointId };
         }
-        await verifyCurrent?.();
-        return current;
+      } else if (terminal.has(current.readyState)) {
+        throw new Error(`Vercel の準備用ビルドは ${current.readyState} で終了しました。`);
       }
-      if (terminal.has(current.readyState)) throw new Error(`Vercel の準備用ビルドは ${current.readyState} で終了しました。`);
       await this.wait(5_000);
     }
+    if (previous.readyState === "READY") throw new Error("Vercel の静的な準備用ビルド照合記録を確認できません。");
     throw new Error("Vercel の準備用ビルドが READY になりませんでした。");
   }
 
@@ -412,6 +435,15 @@ export class NativePilotVercel {
     if (!sameDeployment(deployment, current) || !terminal.has(current.readyState)) {
       throw new Error("Vercel の削除対象またはビルド終了を確認できません。");
     }
+    const host = branchAlias(target.ref);
+    const direct = await this.alias(host);
+    if (direct.value !== null) {
+      const uid = this.ownedAliasUid(host, current.id, direct);
+      await verifyCurrent();
+      const aliasRemoved = await this.send(`/v2/aliases/${uid}`, "DELETE");
+      if (aliasRemoved.status !== 404) verifyStatus(aliasRemoved, "DELETE");
+    }
+    await this.assertAliasUnassigned(target.ref);
     await verifyCurrent();
     const response = await this.send(`/v13/deployments/${current.id}`, "DELETE");
     if (response.status !== 404) verifyStatus(response, "DELETE");

@@ -1,0 +1,22 @@
+{
+  "id": "261122-native-build-evidence",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": ["AC-03"],
+  "phase": "Native 静的ビルドと専用エイリアスの照合",
+  "branch": "codex/issue-32-native-build-evidence",
+  "baseSha": "71f5f1a8160b1e12445456c76c3a94dde8f10e61",
+  "state": "frozen",
+  "approvedIssueSnapshot": "../261122-native-preview-completion/issue.md",
+  "approvedIssueSha256": "f42ae356f224c13bbc80cdb712d50f4673ed4daf8799e903ab344b8755e354bf",
+  "approvedPlan": "../261122-native-preview-completion/plan.md",
+  "approvedPlanSha256": "e74b184a2d3e6117a6779fa8fb86770646e719d63acf107c918400dd6d5c0fdd",
+  "approvalEvidence": "../261122-native-preview-completion/approvals.json",
+  "implementationPlanSha256": "0d1cda0907f8b686efb0ae4cae9c22760e7610756df7cde0a23753689b87a99b",
+  "frozenAt": "2026-11-22T06:55:14Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "Native のビルド、Vercel、Neon、管理ジョブと従来方式を含む関連テスト86件",
+    "静的生成、固定のビルドイベント、各 endpoint とエイリアスの所有照合および fail-closed の自己レビュー",
+    "承認済み計画と Issue 本文の SHA-256、git diff --check"
+  ]
+}

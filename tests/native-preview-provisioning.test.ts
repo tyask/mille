@@ -7,7 +7,7 @@ import test, { type TestContext } from "node:test";
 import {
   clearNativePreviewProvisioningOutput,
   isNativePreviewProvisioning,
-  nativePilotEndpointDigest,
+  nativePilotEndpointId,
   writeNativePreviewProvisioningOutput,
 } from "../scripts/build/native-preview-provisioning";
 import { runVercelBuild } from "../scripts/build/vercel-build";
@@ -67,8 +67,9 @@ test("Native Preview provisioning requires the explicit phase and matching hoste
   }
 });
 
-test("the Vercel build uses just the preparation step for valid Native previews", async () => {
+test("the Vercel build uses just the preparation step for Native previews without attestation", async t => {
   const calls: string[] = [];
+  const log = t.mock.method(console, "log", () => {});
   const steps = {
     build() { calls.push("build"); },
     migrate() { calls.push("migrate"); },
@@ -94,6 +95,7 @@ test("the Vercel build uses just the preparation step for valid Native previews"
   await assert.rejects(runVercelBuild({ ...provision, VERCEL_ENV: "production", VERCEL_TARGET_ENV: "production" }, steps));
   await assert.rejects(runVercelBuild(provision, { build: steps.build, migrate: steps.migrate }));
   assert.deepEqual(calls, []);
+  assert.deepEqual(log.mock.calls, []);
 });
 
 test("preparation publishes one static page with private routing and removes stale runtime output", t => {
@@ -139,42 +141,64 @@ test("preparation publishes one static page with private routing and removes sta
   assert.equal(readFileSync(projectConfig, "utf8"), "project configuration");
 });
 
-test("pilot provisioning attests to the direct hostname only and rejects the wrong source or connection", async t => {
+test("pilot provisioning logs one exact identity receipt after checking the static output", async t => {
   const root = directory(t);
+  const output = join(root, ".next/output");
   const pilotRef = "codex/native-preview-pilot-a";
   const credential = "pilot-fixture-password";
+  const host = "ep-fixture-pooler.ap-southeast-1.aws.neon.tech";
+  const url = `postgresql://neondb_owner:${credential}@${host}/neondb?sslmode=require`;
   const environment = {
     ...provision,
     MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: pilotRef,
     VERCEL_GIT_COMMIT_REF: pilotRef,
     MILLE_NATIVE_PREVIEW_ATTEST_ENDPOINT: "1",
-    MILLE_NATIVE_PREVIEW_DATABASE_URL: `postgresql://neondb_owner:${credential}@ep-fixture-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require`,
+    MILLE_NATIVE_PREVIEW_DATABASE_URL: url,
   };
-  const expected = createHash("sha256").update("ep-fixture.ap-southeast-1.aws.neon.tech").digest("hex");
-  assert.equal(nativePilotEndpointDigest(environment), expected);
+  const receipt = `Mille: Native Preview 静的ビルド照合 v1 dpl_FixturePreview 35 ${pilotRef} ${sha} 1234a678-123b-4abc-9f12-123456789abc ep-fixture`;
+  const log = t.mock.method(console, "log", () => {
+    assert.deepEqual(readdirSync(output).sort(), ["config.json", "static"]);
+    assert.deepEqual(readdirSync(join(output, "static")), ["index.html"]);
+  });
   const steps = {
-    provision(digest?: string) { writeNativePreviewProvisioningOutput(root, digest); },
+    provision() { writeNativePreviewProvisioningOutput(root); },
     build() { assert.fail("pilot built the application"); },
     migrate() { assert.fail("pilot migrated a database"); },
   };
-  await runVercelBuild(environment, steps);
-  const output = readFileSync(join(root, ".next/output/config.json"), "utf8");
-  assert.equal(JSON.parse(output).routes[0].headers["X-Mille-Native-Endpoint-SHA256"], expected);
-  assert.ok(!output.includes(credential) && !output.includes("ep-fixture"));
-  clearNativePreviewProvisioningOutput(root);
-  assert.ok(!existsSync(join(root, ".next/output")));
-  const url = environment.MILLE_NATIVE_PREVIEW_DATABASE_URL;
+  for (const connection of [url, url.replace("-pooler.", ".")]) {
+    log.mock.resetCalls();
+    const pilot = { ...environment, MILLE_NATIVE_PREVIEW_DATABASE_URL: connection };
+    assert.equal(nativePilotEndpointId(pilot), "ep-fixture");
+    await runVercelBuild(pilot, steps);
+    assert.deepEqual(log.mock.calls.map(call => call.arguments), [[receipt]]);
+    const routes = readFileSync(join(output, "config.json"), "utf8");
+    assert.equal(JSON.parse(routes).routes[0].headers["X-Mille-Native-Endpoint-SHA256"], undefined);
+    assert.ok(!routes.includes(credential) && !routes.includes("ep-fixture"));
+    clearNativePreviewProvisioningOutput(root);
+    assert.ok(!existsSync(output));
+  }
+
+  log.mock.resetCalls();
   for (const override of [
     { MILLE_NATIVE_PREVIEW_ATTEST_ENDPOINT: "0" },
     { MILLE_NATIVE_PREVIEW_DATABASE_URL: undefined },
     { MILLE_NATIVE_PREVIEW_DATABASE_URL: url.replace("aws.neon.tech", "other.test") },
     { MILLE_NATIVE_PREVIEW_DATABASE_URL: url.replace("sslmode=require", "sslmode=disable") },
+    { MILLE_NATIVE_PREVIEW_DATABASE_URL: `${url}&sslmode=require` },
+    { MILLE_NATIVE_PREVIEW_DATABASE_URL: url.replace(host, `${host}:5432`) },
+    { MILLE_NATIVE_PREVIEW_DATABASE_URL: url.replace("/neondb?", "/different?") },
+    { MILLE_NATIVE_PREVIEW_DATABASE_URL: url.replace("-pooler.", "-pooler-pooler.") },
     { MILLE_NATIVE_PREVIEW_DATABASE_URL: url.replace("neondb_owner", "another_role") },
     { MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: provision.MILLE_NATIVE_PREVIEW_SOURCE_BRANCH, VERCEL_GIT_COMMIT_REF: provision.VERCEL_GIT_COMMIT_REF },
   ]) {
     await assert.rejects(runVercelBuild({ ...environment, ...override }, steps), /準備用ファイル/);
-    assert.ok(!existsSync(join(root, ".next/output")));
+    assert.ok(!existsSync(output));
   }
+  const outside = directory(t);
+  symlinkSync(outside, join(root, ".vercel"), "junction");
+  await assert.rejects(runVercelBuild(environment, steps), /準備用ファイル/);
+  assert.ok(!existsSync(output));
+  assert.deepEqual(log.mock.calls, []);
 });
 
 test("app builds preserve normal output even when a preparation marker remains", t => {

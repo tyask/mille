@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { neonConfig } from "@neondatabase/serverless";
 import { NativePilotHttpError, NativePilotStageError, formatNativePilotFailure } from "../scripts/preview/native-pilot-diagnostics";
-import { NeonPreview, NeonPreviewError, type NativeNeonBranch } from "../scripts/preview/neon";
+import { NeonPreview, NeonPreviewError, type NativeNeonBranch, type NativePeerBranch } from "../scripts/preview/neon";
 
 const config = { apiKey: "fixture-api-token", projectId: "fixture-preview-project", parentBranchId: "br-template",
   database: "mille_pr", role: "mille_pr_owner", maxPrBranches: 2 };
@@ -27,6 +27,11 @@ function endpoint(branch: typeof template) {
 
 const { id: candidateEndpoint, host } = endpoint(candidate);
 const expected: NativeNeonBranch = { id: candidate.id, endpointId: candidateEndpoint, host };
+const peerEndpoint = endpoint(peer);
+const expectedPeers: readonly NativePeerBranch[] = [{
+  ref: peerRef,
+  branch: { id: peer.id, endpointId: peerEndpoint.id, host: peerEndpoint.host },
+}];
 
 function scenario(t: TestContext, options: {
   branches?: Array<typeof template>;
@@ -267,7 +272,7 @@ test("デプロイの READY より後に作成された同名の子を更新・�
   const fixture = scenario(t, { branches: [template, standing, replacement, peer] });
   const service = new NeonPreview(config);
   await assert.rejects(service.findNativeBranch(ref, notBefore, notBefore), /作成時刻/);
-  await assert.rejects(service.prepareNativeBranch(ref, claimed, notBefore, 8, standing.id, [peerRef], fixture.verifyCurrent, notBefore),
+  await assert.rejects(service.prepareNativeBranch(ref, claimed, notBefore, 8, standing.id, expectedPeers, fixture.verifyCurrent, notBefore),
     /作成時刻/);
   await assert.rejects(service.removeNativeBranch(ref, claimed, notBefore, fixture.verifyCurrent, notBefore), /作成時刻/);
   assert.deepEqual(fixture.passwordReads, []);
@@ -297,29 +302,46 @@ test("不完全な一覧、同名の競合、別の親や endpoint を Native �
 test("子の資格情報の分離と現在の PR を確認してから既存 DB 準備を実行する", async t => {
   const fixture = scenario(t);
   const service = new NeonPreview(config);
-  await service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], fixture.verifyCurrent);
+  await service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, fixture.verifyCurrent);
   assert.deepEqual(fixture.passwordReads, [candidate.id, template.id, standing.id, peer.id]);
   assert.deepEqual(fixture.events, ["current", "migration", "marker", "seed"]);
+});
+
+test("照合済みの比較対象が同名の別ブランチや接続先に変わった場合は資格情報と DB に触れない", async t => {
+  const service = new NeonPreview(config);
+  const otherEndpoints = [template, standing, candidate].map(endpoint);
+  for (const variation of [
+    { branches: [template, standing, candidate, { ...peer, id: "br-replaced-peer" }] },
+    { endpoints: [...otherEndpoints, { ...peerEndpoint, id: "ep-replaced-peer", host: "ep-replaced-peer.ap-southeast-1.aws.neon.tech" }] },
+    { endpoints: [...otherEndpoints, { ...peerEndpoint, host: `${peerEndpoint.id}.c-1.ap-southeast-1.aws.neon.tech` }] },
+  ]) {
+    const fixture = scenario(t, variation);
+    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, fixture.verifyCurrent),
+      failureIn("neon-isolation"));
+    assert.deepEqual(fixture.passwordReads, []);
+    assert.deepEqual(fixture.events, []);
+    t.mock.restoreAll();
+  }
 });
 
 test("共有資格情報、欠けた比較対象、別ロール、古い PR では DB 処理を拒否する", async t => {
   const service = new NeonPreview(config);
   for (const sharedWith of [template, standing, peer]) {
     const fixture = scenario(t, { passwords: { [candidate.id]: "fixture%2Dshared", [sharedWith.id]: "fixture-shared" } });
-    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], fixture.verifyCurrent),
+    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, fixture.verifyCurrent),
       failureIn("neon-shared-credentials"));
     assert.deepEqual(fixture.events, []);
     t.mock.restoreAll();
   }
   for (const variation of [{ branches: [template, standing, candidate] }, { childOwner: "different_owner" }]) {
     const fixture = scenario(t, variation);
-    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], fixture.verifyCurrent));
+    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, fixture.verifyCurrent));
     assert.deepEqual(fixture.passwordReads, []);
     assert.deepEqual(fixture.events, []);
     t.mock.restoreAll();
   }
   const fixture = scenario(t);
-  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], async () => {
+  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, async () => {
     throw new Error("stale PR");
   }), /stale PR/);
   assert.deepEqual(fixture.events, []);
@@ -328,7 +350,7 @@ test("共有資格情報、欠けた比較対象、別ロール、古い PR で�
 test("Native 診断は分離照合と初期化の失敗を区別する", async t => {
   const service = new NeonPreview(config);
   const missing = scenario(t, { branches: [template, standing, candidate] });
-  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], missing.verifyCurrent),
+  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, missing.verifyCurrent),
     failureIn("neon-isolation"));
   assert.deepEqual(missing.events, []);
   t.mock.restoreAll();
@@ -340,7 +362,7 @@ test("Native 診断は分離照合と初期化の失敗を区別する", async t
     [{ ownershipCheckFails: "marker" }, 200, ["current", "migration", "marker"]],
   ] as const) {
     const initialization = scenario(t, options);
-    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], initialization.verifyCurrent),
+    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, initialization.verifyCurrent),
       failureIn("neon-initialize", status));
     assert.deepEqual(initialization.passwordReads, [candidate.id, template.id, standing.id, peer.id]);
     assert.deepEqual(initialization.events, events);

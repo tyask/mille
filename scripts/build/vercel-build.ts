@@ -8,7 +8,7 @@ import { migrateDatabase } from "../db/migrate";
 import {
   clearNativePreviewProvisioningOutput,
   isNativePreviewProvisioning,
-  nativePilotEndpointDigest,
+  nativePilotEndpointId,
   writeNativePreviewProvisioningOutput,
 } from "./native-preview-provisioning";
 
@@ -17,7 +17,7 @@ type HostedConfiguration = Extract<DatabaseConfiguration, { mode: "hosted" }>;
 type BuildSteps = {
   build(): void | Promise<void>;
   migrate(configuration: HostedConfiguration): void | Promise<void>;
-  provision?(endpointDigest?: string): void | Promise<void>;
+  provision?(): void | Promise<void>;
 };
 const projectDirectory = fileURLToPath(new URL("../../", import.meta.url));
 
@@ -69,7 +69,18 @@ export async function runVercelBuild(environment: BuildEnvironment, steps: Build
   if (isNativePreviewProvisioning(environment)) {
     if (!steps.provision) throw new Error("Native Previewの準備工程を起動できません。");
     try {
-      await steps.provision(nativePilotEndpointDigest(environment));
+      const endpointId = nativePilotEndpointId(environment);
+      const receipt = endpointId === undefined ? undefined : [
+        "Mille: Native Preview 静的ビルド照合 v1",
+        environment.VERCEL_DEPLOYMENT_ID,
+        environment.MILLE_NATIVE_PREVIEW_PR,
+        environment.VERCEL_GIT_COMMIT_REF,
+        environment.VERCEL_GIT_COMMIT_SHA,
+        environment.MILLE_NATIVE_PREVIEW_GENERATION,
+        endpointId,
+      ].join(" ");
+      await steps.provision();
+      if (receipt !== undefined) console.log(receipt);
     } catch {
       throw new Error("Native Previewの準備用ファイルを生成できません。");
     }
@@ -91,8 +102,8 @@ export async function runVercelBuild(environment: BuildEnvironment, steps: Build
 }
 
 const buildSteps: BuildSteps = {
-  provision(endpointDigest) {
-    writeNativePreviewProvisioningOutput(projectDirectory, endpointDigest);
+  provision() {
+    writeNativePreviewProvisioningOutput(projectDirectory);
     console.log("Mille: Native Previewの静的な準備ページを生成しました。");
   },
   build() {
