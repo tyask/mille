@@ -114,8 +114,13 @@ test("Native app runtime refuses mismatched Preview metadata, connection identit
     { MILLE_NATIVE_PREVIEW_DATABASE_URL: nativeUrl.replace(nativeHost, `${nativeHost}:5432`) },
     { MILLE_NATIVE_PREVIEW_DATABASE_URL: nativeUrl.replace("/neondb?", "/other?") },
     { MILLE_NATIVE_PREVIEW_DATABASE_URL: nativeUrl.replace("neondb_owner", "another_role") },
+    { MILLE_NATIVE_PREVIEW_DATABASE_URL: nativeUrl.replace("native-fixture-password", "%ZZ") },
+    { MILLE_NATIVE_PREVIEW_DATABASE_URL: nativeUrl.replace("native-fixture-password", "%0Avalid") },
     { MILLE_NATIVE_PREVIEW_DATABASE_URL: nativeUrl.replace("sslmode=require", "sslmode=disable") },
     { MILLE_NATIVE_PREVIEW_DATABASE_URL: `${nativeUrl}&sslmode=require` },
+    { MILLE_NATIVE_PREVIEW_DATABASE_URL: nativeUrl.replace("channel_binding=require", "channel_binding=disable") },
+    { MILLE_NATIVE_PREVIEW_DATABASE_URL: `${nativeUrl}&channel_binding=require` },
+    { MILLE_NATIVE_PREVIEW_DATABASE_URL: `${nativeUrl}&application_name=another` },
   ]) {
     const variables = { ...native, ...override };
     assert.throws(() => databaseConfiguration(variables), {

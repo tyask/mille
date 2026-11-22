@@ -50,11 +50,18 @@ export function nativePreviewApplication(environment: Environment) {
 
   const url = environment.MILLE_NATIVE_PREVIEW_DATABASE_URL ?? "";
   let parsed: URL;
-  try { parsed = new URL(url); } catch { throw invalid(); }
+  let password: string;
+  try {
+    parsed = new URL(url);
+    password = decodeURIComponent(parsed.password);
+  } catch { throw invalid(); }
   const host = parsed.hostname;
   const directHost = host.replace(/^(ep-[a-z0-9-]+)-pooler\./, "$1.");
+  const parameters = [...parsed.searchParams];
   if (parsed.protocol !== "postgresql:" || parsed.port || parsed.hash || parsed.pathname !== "/neondb"
-    || parsed.username !== "neondb_owner" || !parsed.password || parsed.searchParams.getAll("sslmode").join() !== "require"
+    || parsed.username !== "neondb_owner" || !password || /[\u0000-\u001f\u007f]/.test(password)
+    || parameters.some(([name, value]) => value !== "require" || (name !== "sslmode" && name !== "channel_binding"))
+    || parsed.searchParams.getAll("sslmode").length !== 1 || parsed.searchParams.getAll("channel_binding").length > 1
     || !neonHost.test(host) || directHost.split(".")[0] !== endpointId
     || sha256(directHost) !== environment.MILLE_NATIVE_PREVIEW_DATABASE_HOST_SHA256) {
     throw invalid();
