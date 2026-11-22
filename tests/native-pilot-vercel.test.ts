@@ -111,6 +111,7 @@ test("不完全な連携変数、共有スコープ、誤ったプロジェク�
     { envs: [] },
     { envs: [nativeEnv, nativeEnv] },
     { envs: [nativeEnv, { ...nativeEnv, key: "MILLE_NATIVE_PREVIEW_NEON_AUTH_BASE_URL" }] },
+    { envs: [nativeEnv, { ...nativeEnv, key: "MILLE_NATIVE_PREVIEW_NEON_AUTH_BASE_URL", target: ["production"] }] },
     { envs: [{ ...nativeEnv, gitBranch: "mille-standing-preview" }] },
     { envs: [{ ...nativeEnv, customEnvironmentIds: ["env_Other"] }] },
     { envPagination: { count: 2, next: null } },

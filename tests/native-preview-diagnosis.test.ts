@@ -137,6 +137,7 @@ test("Vercel プロジェクトの対象違いと不適合な保護・Preview �
     { link: { ...vercelProject.link, repoId: 1 } },
     { protectionBypass: { [providerSecret]: {} } },
     { env: [{ key: "MILLE_NATIVE_PREVIEW_DATABASE_URL", target: ["preview"], value: providerSecret }] },
+    { env: [{ key: "MILLE_NATIVE_PREVIEW_DATABASE_URL", target: ["production"], value: providerSecret }] },
   ]) {
     const fixture = scenario({ [vercelProjectPath]: Response.json({ ...vercelProject, ...change }) });
     const checks = await diagnoseNativePreview(env, fixture.request);
@@ -145,9 +146,11 @@ test("Vercel プロジェクトの対象違いと不適合な保護・Preview �
   }
 });
 
-test("全 Preview に適用される環境変数と不完全な一覧を診断する", async () => {
+test("全 Preview に適用される環境変数、Native 専用変数の残存、不完全な一覧を診断する", async () => {
   for (const response of [
-    { envs: [{ key: "MILLE_NATIVE_PREVIEW_DATABASE_URL", target: ["preview"], value: providerSecret }] },
+    { envs: [{ key: "PREVIEW_ONLY", target: ["preview"], value: providerSecret }] },
+    { envs: [{ key: "MILLE_NATIVE_PREVIEW_DATABASE_URL", target: ["production"], value: providerSecret }] },
+    { envs: [{ key: "MILLE_NATIVE_PREVIEW_DATABASE_URL", target: ["preview"], gitBranch: "mille-standing-preview" }] },
     { envs: [], pagination: { count: 1 } },
   ]) {
     const fixture = scenario({ [environmentPath]: Response.json(response) });

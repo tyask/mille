@@ -47,7 +47,7 @@ Vercel Marketplace の既存 Free リソース `mille-preview` を、常設 Prev
 
 コマンドは既存資格情報を使い、Cake と同様に Vercel のチーム・プロジェクトと GitHub リポジトリの対応、Neon のプロジェクトと分岐元候補を照合します。 [Cake の照合処理](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/preview/preview-provider.ts#L41-L49)
 
-試験用ブランチに継承される Preview 変数がないこと、分岐元候補と常設のブランチ・endpoint が独立していること、分岐元候補の標準 DB とロールを確認します。現在の既定ブランチを表示します。現行の PR 用子ブランチがある場合は、分岐元候補の子として照合します。
+Native 専用変数が残っておらず、試験用ブランチに継承される Preview 変数がないことを確認します。分岐元候補と常設のブランチ・endpoint の独立、分岐元候補の標準 DB とロールを照合し、現在の既定ブランチを表示します。現行の PR 用子ブランチがある場合は、分岐元候補の子として照合します。
 
 分岐元候補の空の状態は、照合した `mille-pr-template` に対する読み取り専用 SQL で確認します。常設 Preview の既存接続変数が常設用 Git ブランチに限定され、現在の常設 endpoint を指すことも確認します。
 

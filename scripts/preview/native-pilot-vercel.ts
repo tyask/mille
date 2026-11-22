@@ -128,7 +128,8 @@ function isTrustedPreviewBranch(branch: string | null | undefined): boolean {
 }
 
 function hasDetachedPreviewEnvironments(envs: readonly z.infer<typeof environment>[]): boolean {
-  return envs.every(env => !env.target.includes("preview") || isTrustedPreviewBranch(env.gitBranch));
+  return envs.every(env => !env.key.startsWith(prefix)
+    && (!env.target.includes("preview") || isTrustedPreviewBranch(env.gitBranch)));
 }
 
 export function detachedNativeVercelProject(team: string, id: string) {
@@ -145,10 +146,9 @@ export const detachedNativeVercelEnvironmentInventory = completeEnvironmentInven
 function nativeEnvironmentKeys(envs: readonly z.infer<typeof environment>[]): Set<string> | null {
   const keys = new Set<string>();
   for (const env of envs) {
-    const native = nativeVariables.has(env.key);
     const preview = env.target.includes("preview");
-    if (!native && (!preview || isTrustedPreviewBranch(env.gitBranch))) continue;
-    if (!native || !preview || env.target.length !== 1 || env.gitBranch != null || env.customEnvironmentIds?.length
+    if (!env.key.startsWith(prefix) && (!preview || isTrustedPreviewBranch(env.gitBranch))) continue;
+    if (!nativeVariables.has(env.key) || !preview || env.target.length !== 1 || env.gitBranch != null || env.customEnvironmentIds?.length
       || keys.has(env.key) || env.contentHint?.type !== "integration-store-secret") return null;
     keys.add(env.key);
   }
