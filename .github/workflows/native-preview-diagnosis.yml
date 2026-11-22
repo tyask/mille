@@ -2,18 +2,6 @@ name: Mille Native Preview Diagnosis
 on:
   workflow_dispatch:
     inputs:
-      store:
-        description: Vercel Marketplace store ID
-        type: string
-        required: true
-      integration:
-        description: Vercel Marketplace integration configuration ID
-        type: string
-        required: true
-      product:
-        description: Vercel Marketplace product ID
-        type: string
-        required: true
       neon_organization:
         description: Neon organization ID for the Preview project
         type: string
@@ -55,9 +43,6 @@ jobs:
           MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID }}
           MILLE_PR_PREVIEW_NEON_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_NEON_PROJECT_ID }}
           MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: ${{ vars.MILLE_PR_PREVIEW_NEON_TEMPLATE_ID }}
-          MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: ${{ inputs.store }}
-          MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: ${{ inputs.integration }}
-          MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: ${{ inputs.product }}
           MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID: ${{ inputs.neon_organization }}
           MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID: ${{ inputs.standing_branch }}
           MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID: ${{ inputs.standing_endpoint }}

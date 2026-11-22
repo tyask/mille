@@ -61,7 +61,6 @@ async function main() {
       token: config.VERCEL_TOKEN,
       teamId: config.MILLE_PR_PREVIEW_VERCEL_TEAM_ID,
       projectId: config.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID,
-      neonProjectId: config.MILLE_PR_PREVIEW_NEON_PROJECT_ID,
     });
     const outcome = await executeNativePilot({
       target, pilotPrs: pilots, controlSha: context.controlSha, read: context.read, neon, ...providers,

@@ -1,13 +1,12 @@
 import { z } from "zod";
-import { inspectDetachedNativeResource, NativeResourceInspectionError } from "./native-resource";
+import { detachedNativeVercelProject, detachedNativeVercelEnvironmentInventory } from "./native-pilot-vercel";
+import { inspectNativePreviewNeonResource, NativeResourceInspectionError } from "./native-resource";
 
 const environment = z.object({
   VERCEL_TOKEN: z.string().min(1),
   NEON_API_KEY: z.string().min(1),
-  MILLE_PR_PREVIEW_VERCEL_TEAM_ID: z.string().min(1),
-  MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: z.string().min(1),
-  MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: z.string().min(1),
-  MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: z.string().min(1),
+  MILLE_PR_PREVIEW_VERCEL_TEAM_ID: z.string().regex(/^team_[A-Za-z0-9]+$/),
+  MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: z.string().regex(/^prj_[A-Za-z0-9]+$/),
   MILLE_PR_PREVIEW_NEON_PROJECT_ID: z.string().min(1),
   MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: z.string().min(1),
   MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID: z.string().min(1),
@@ -31,27 +30,30 @@ async function main() {
   if (!configured.success) throw new NativeResourceInspectionError("configuration");
   const env = configured.data;
   const config = {
-    teamId: env.MILLE_PR_PREVIEW_VERCEL_TEAM_ID,
-    storeId: env.MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID,
-    integrationId: env.MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID,
-    productId: env.MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID,
     neonProjectId: env.MILLE_PR_PREVIEW_NEON_PROJECT_ID,
     neonOrganizationId: env.MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID,
     templateBranchId: env.MILLE_PR_PREVIEW_NEON_TEMPLATE_ID,
     standingBranchId: env.MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID,
     standingEndpointId: env.MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID,
   };
-  const result = await inspectDetachedNativeResource(config, {
-    vercel(path) {
-      const url = new URL(`https://api.vercel.com${path}`);
-      url.searchParams.set("teamId", config.teamId);
-      return readProvider(url, env.VERCEL_TOKEN);
-    },
-    neon(path) {
-      return readProvider(new URL(`https://console.neon.tech/api/v2${path}`), env.NEON_API_KEY);
-    },
-  });
-  console.log(JSON.stringify(result, null, 2));
+  const result = await inspectNativePreviewNeonResource(config,
+    path => readProvider(new URL(`https://console.neon.tech/api/v2${path}`), env.NEON_API_KEY));
+  const teamId = env.MILLE_PR_PREVIEW_VERCEL_TEAM_ID;
+  const vercelProjectId = env.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID;
+  const readVercel = (path: string) => {
+    const url = new URL(`https://api.vercel.com${path}`);
+    url.searchParams.set("teamId", teamId);
+    return readProvider(url, env.VERCEL_TOKEN);
+  };
+  const [project, environmentVariables] = await Promise.all([
+    readVercel(`/v9/projects/${vercelProjectId}`),
+    readVercel(`/v10/projects/${vercelProjectId}/env?decrypt=false`),
+  ]);
+  if (!detachedNativeVercelProject(teamId, vercelProjectId).safeParse(project).success
+    || !detachedNativeVercelEnvironmentInventory.safeParse(environmentVariables).success) {
+    throw new Error("Vercel プロジェクトまたは Preview 環境変数の照合に失敗しました。");
+  }
+  console.log(JSON.stringify({ teamId, vercelProjectId, ...result }, null, 2));
 }
 
 main().catch((error: unknown) => {

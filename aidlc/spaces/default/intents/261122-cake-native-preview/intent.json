@@ -1,0 +1,20 @@
+{
+  "id": "261122-cake-native-preview",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": ["AC-03"],
+  "phase": "Native Preview の照合を Cake の方式に揃える",
+  "branch": "codex/issue-32-native-preview-cake",
+  "baseSha": "3aa0ac3938b5bb6a3979196ec7b0aba62c13d338",
+  "state": "frozen",
+  "approvedIssueSha256": "05de36d8648b6e85ee051303274cc5ee0de3319ab9afd8ed6f25f753b8d30f0f",
+  "implementationPlanSha256": "4db0d79a3255c727cfabcd3e8570e153aef2b4e43f3ba33c291f25521988992a",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-22T03:56:14Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "Native 試験、診断、Vercel と Neon の関連テスト60件",
+    "モック接続でローカル事前確認コマンドの成功と対象 GitHub リポジトリ不一致時の失敗を確認",
+    "ストア API と関連設定が実行経路に残っていないこと、既存の所有照合と DB 初期化前停止を自己レビュー",
+    "承認済み本文と計画の SHA-256 を照合し、git diff --check を実施"
+  ]
+}

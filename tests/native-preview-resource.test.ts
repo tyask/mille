@@ -1,12 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { inspectDetachedNativeResource, NativeResourceInspectionError } from "../scripts/preview/native-resource";
+import { inspectNativePreviewNeonResource, NativeResourceInspectionError } from "../scripts/preview/native-resource";
 
 const config = {
-  teamId: "team_Fixture",
-  storeId: "store_Fixture",
-  integrationId: "icfg_Fixture",
-  productId: "iap_Fixture",
   neonProjectId: "native-project-123",
   neonOrganizationId: "org-fixture-123",
   templateBranchId: "br-fixture-template",
@@ -31,18 +27,11 @@ const legacyEndpoint = { ...templateEndpoint, id: "ep-fixture-legacy", branch_id
 const endpoints = [templateEndpoint, standingEndpoint];
 const database = { branch_id: template.id, name: "neondb", owner_name: "neondb_owner" };
 const role = { branch_id: template.id, name: "neondb_owner", protected: false };
-const store = {
-  id: config.storeId, ownerId: config.teamId, type: "integration", status: "available", name: "mille-preview",
-  externalResourceId: config.neonProjectId, projectsMetadata: [] as unknown[], totalConnectedProjects: 0,
-  product: { id: config.productId, slug: "neon", integrationConfigurationId: config.integrationId },
-  billingPlan: { id: "free_v3", name: "Free" },
-};
 const project = {
   id: config.neonProjectId, org_id: config.neonOrganizationId, name: "mille-preview",
   region_id: "aws-ap-southeast-1", creation_source: "vercel_marketplace",
 };
 
-const storePath = `/v1/storage/stores/${config.storeId}`;
 const projectPath = `/projects/${config.neonProjectId}`;
 const branchesPath = `${projectPath}/branches?limit=100`;
 const endpointsPath = `${projectPath}/endpoints`;
@@ -52,7 +41,6 @@ const rawSecret = "example-provider-secret-value";
 
 function scenario(overrides: Record<string, unknown> = {}) {
   const responses: Record<string, unknown> = {
-    [storePath]: { store: { ...store, credential: rawSecret } },
     [projectPath]: { project },
     [branchesPath]: { branches, pagination: { next: null } },
     [endpointsPath]: { endpoints },
@@ -61,15 +49,14 @@ function scenario(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
   const requests: string[] = [];
-  const reader = (provider: string) => async (path: string) => {
-    requests.push(`${provider} ${path}`);
-    assert.equal(provider, path === storePath ? "Vercel" : "Neon");
+  const read = async (path: string) => {
+    requests.push(path);
     assert.ok(Object.hasOwn(responses, path), path);
     const response = responses[path];
     if (response instanceof Error) throw response;
     return response;
   };
-  return { requests, readers: { vercel: reader("Vercel"), neon: reader("Neon") } };
+  return { requests, read };
 }
 
 function rejectsInspection(message: RegExp) {
@@ -82,52 +69,32 @@ function rejectsInspection(message: RegExp) {
   };
 }
 
-test("常設 main が既定の場合に未接続のリソースを照合し、安全な識別情報を返す", async () => {
-  const { readers, requests } = scenario();
-  const result = await inspectDetachedNativeResource(config, readers);
+test("常設 main が既定の場合に Neon の構成を照合し、安全な識別情報を返す", async () => {
+  const { read, requests } = scenario();
+  const result = await inspectNativePreviewNeonResource(config, read);
   const { templateBranchId, ...expected } = config;
   assert.deepEqual(result, {
     ...expected, region: project.region_id, branchId: templateBranchId, endpointId: templateEndpoint.id,
     host: templateEndpoint.host, database: database.name, role: role.name,
     currentDefaultBranchId: standing.id, templateIsDefault: false, standingHost: standingEndpoint.host,
   });
-  assert.deepEqual(requests, [
-    `Vercel ${storePath}`, `Neon ${projectPath}`, `Neon ${branchesPath}`,
-    `Neon ${endpointsPath}`, `Neon ${databasesPath}`, `Neon ${rolesPath}`,
-  ]);
+  assert.deepEqual(requests, [projectPath, branchesPath, endpointsPath, databasesPath, rolesPath]);
 });
 
 test("テンプレートが既定になった場合も常設を区別し、既存の PR 用接続先は候補に混ぜない", async () => {
-  const { readers, requests } = scenario({
+  const { read, requests } = scenario({
     [branchesPath]: { branches: [legacy, { ...standing, default: false }, { ...template, default: true }] },
     [endpointsPath]: { endpoints: [legacyEndpoint, ...endpoints, {
       ...legacyEndpoint, id: "ep-fixture-legacy-readonly", host: "ep-fixture-legacy-readonly.ap-southeast-1.aws.neon.tech",
       type: "read_only", disabled: true,
     }] },
   });
-  const result = await inspectDetachedNativeResource(config, readers);
+  const result = await inspectNativePreviewNeonResource(config, read);
   assert.equal(result.currentDefaultBranchId, template.id);
   assert.equal(result.templateIsDefault, true);
   assert.equal(result.endpointId, templateEndpoint.id);
   assert.equal(result.standingEndpointId, standingEndpoint.id);
-  assert.deepEqual(requests.slice(-2), [`Neon ${databasesPath}`, `Neon ${rolesPath}`]);
-});
-
-test("ストアの ID、所有、製品、接続先、Free プランの不一致を拒否する", async () => {
-  const unsafe: Partial<typeof store>[] = [
-    { id: "store_Foreign" }, { ownerId: "team_Foreign" }, { name: "mille-native-preview" }, { type: "postgres" },
-    { status: "initializing" }, { externalResourceId: "foreign-neon-project" },
-    { projectsMetadata: [{ projectId: "prj_Other" }] }, { projectsMetadata: undefined },
-    { totalConnectedProjects: 1 }, { totalConnectedProjects: undefined },
-    { product: { ...store.product, id: "iap_Foreign" } }, { product: { ...store.product, slug: "other" } },
-    { product: { ...store.product, integrationConfigurationId: "icfg_Foreign" } },
-    { billingPlan: { ...store.billingPlan, id: "paid", name: "Free" } }, { billingPlan: undefined },
-  ];
-  for (const change of unsafe) {
-    const { readers, requests } = scenario({ [storePath]: { store: { ...store, ...change } } });
-    await assert.rejects(inspectDetachedNativeResource(config, readers), rejectsInspection(/Vercel/));
-    assert.deepEqual(requests, [`Vercel ${storePath}`]);
-  }
+  assert.deepEqual(requests.slice(-2), [databasesPath, rolesPath]);
 });
 
 test("Neon プロジェクトの ID、組織、地域、Marketplace の作成元を確認する", async () => {
@@ -135,9 +102,9 @@ test("Neon プロジェクトの ID、組織、地域、Marketplace の作成元
     { id: "foreign-neon-project" }, { org_id: "org-foreign" }, { org_id: undefined }, { name: "mille-native-preview" },
     { region_id: "aws-us-east-2" }, { creation_source: "console" },
   ]) {
-    const { readers, requests } = scenario({ [projectPath]: { project: { ...project, ...change } } });
-    await assert.rejects(inspectDetachedNativeResource(config, readers), rejectsInspection(/Native Preview 用プロジェクト/));
-    assert.deepEqual(requests, [`Vercel ${storePath}`, `Neon ${projectPath}`]);
+    const { read, requests } = scenario({ [projectPath]: { project: { ...project, ...change } } });
+    await assert.rejects(inspectNativePreviewNeonResource(config, read), rejectsInspection(/Native Preview 用プロジェクト/));
+    assert.deepEqual(requests, [projectPath]);
   }
 });
 
@@ -153,9 +120,9 @@ test("常設とテンプレートの独立した二つの root、単一の既定
     { branches: [{ ...template, name: standing.name }, { ...standing, name: template.name }] },
     { branches, pagination: { next: "next-page" } }, { branches, pagination: { cursor: "next-page" } },
   ]) {
-    const { readers, requests } = scenario({ [branchesPath]: result });
-    await assert.rejects(inspectDetachedNativeResource(config, readers), rejectsInspection(/常設ブランチと PR 用テンプレート/));
-    assert.equal(requests.at(-1), `Neon ${branchesPath}`);
+    const { read, requests } = scenario({ [branchesPath]: result });
+    await assert.rejects(inspectNativePreviewNeonResource(config, read), rejectsInspection(/常設ブランチと PR 用テンプレート/));
+    assert.equal(requests.at(-1), branchesPath);
   }
 });
 
@@ -166,8 +133,8 @@ test("不明な root、常設の子、孫ブランチ、重複 ID と名前を�
     [legacy, { ...legacy, id: "br-grandchild", name: "mille-pr-9", parent_id: legacy.id }],
     [legacy, { ...legacy, name: "mille-pr-9" }], [legacy, { ...legacy, id: "br-duplicate-name" }],
   ]) {
-    const { readers } = scenario({ [branchesPath]: { branches: [...branches, ...additional] } });
-    await assert.rejects(inspectDetachedNativeResource(config, readers), rejectsInspection(/常設ブランチと PR 用テンプレート/));
+    const { read } = scenario({ [branchesPath]: { branches: [...branches, ...additional] } });
+    await assert.rejects(inspectNativePreviewNeonResource(config, read), rejectsInspection(/常設ブランチと PR 用テンプレート/));
   }
 });
 
@@ -187,11 +154,11 @@ test("二つの root の独立した直接接続先と指定された常設エ�
     { endpoints, pagination: { next: "next-page" } },
     ...unsafe.map(change => ({ endpoints: [{ ...templateEndpoint, ...change }, standingEndpoint] })),
   ]) {
-    const { readers, requests } = scenario({
+    const { read, requests } = scenario({
       [branchesPath]: { branches: [...branches, legacy] }, [endpointsPath]: response,
     });
-    await assert.rejects(inspectDetachedNativeResource(config, readers), rejectsInspection(/read-write/));
-    assert.equal(requests.at(-1), `Neon ${endpointsPath}`);
+    await assert.rejects(inspectNativePreviewNeonResource(config, read), rejectsInspection(/read-write/));
+    assert.equal(requests.at(-1), endpointsPath);
   }
 });
 
@@ -205,23 +172,23 @@ test("PR 用テンプレートの標準 DB と所有ロールの一覧を確認�
     { [rolesPath]: { roles: [{ ...role, name: "other" }] } },
     { [rolesPath]: { roles: [role, { ...role, name: "other" }] } },
   ]) {
-    const { readers } = scenario(overrides);
-    await assert.rejects(inspectDetachedNativeResource(config, readers), rejectsInspection(/標準 DB と所有ロール/));
+    const { read } = scenario(overrides);
+    await assert.rejects(inspectNativePreviewNeonResource(config, read), rejectsInspection(/標準 DB と所有ロール/));
   }
 });
 
 test("無効な設定は通信前に拒否し、プロバイダーの応答やエラーの詳細を伏せる", async () => {
   const invalid = scenario();
-  await assert.rejects(inspectDetachedNativeResource({ ...config, storeId: "other?decrypt=true" }, invalid.readers),
+  await assert.rejects(inspectNativePreviewNeonResource({ ...config, neonProjectId: "other?secret=value" }, invalid.read),
     rejectsInspection(/照合設定/));
-  await assert.rejects(inspectDetachedNativeResource({ ...config, templateBranchId: standing.id }, invalid.readers),
+  await assert.rejects(inspectNativePreviewNeonResource({ ...config, templateBranchId: standing.id }, invalid.read),
     rejectsInspection(/照合設定/));
   assert.deepEqual(invalid.requests, []);
 
-  for (const path of [storePath, projectPath, rolesPath]) {
+  for (const path of [projectPath, rolesPath]) {
     for (const response of [new Error(rawSecret), { error: rawSecret }]) {
-      const { readers } = scenario({ [path]: response });
-      await assert.rejects(inspectDetachedNativeResource(config, readers), rejectsInspection(/確認できません/));
+      const { read } = scenario({ [path]: response });
+      await assert.rejects(inspectNativePreviewNeonResource(config, read), rejectsInspection(/確認できません/));
     }
   }
 });

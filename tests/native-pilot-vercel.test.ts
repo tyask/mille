@@ -3,8 +3,7 @@ import test from "node:test";
 import { NativePilotVercel } from "../scripts/preview/native-pilot-vercel";
 
 const config = {
-  token: "fixture-management-token", teamId: "team_Mille", projectId: "prj_Mille", storeId: "store_Mille",
-  neonProjectId: "mille-fixture-project", integrationId: "icfg_Mille", productId: "iap_Mille",
+  token: "fixture-management-token", teamId: "team_Mille", projectId: "prj_Mille",
 };
 const repoId = 1436928292;
 const target = { pr: 17, ref: "codex/native-preview-pilot-a", sha: "a".repeat(40) };
@@ -21,21 +20,8 @@ const project = {
   link: { type: "github", repoId, productionBranch: "main" }, framework: "nextjs", nodeVersion: "24.x",
   autoExposeSystemEnvs: true, ssoProtection: { deploymentType: "all_except_custom_domains" },
 };
-const connection = {
-  projectId: config.projectId, environments: ["preview"], envVarPrefix: "MILLE_NATIVE_PREVIEW_", environmentVariables: [variable],
-  deployments: { actions: [{ slug: "branch", environments: ["preview"] }] },
-};
-const store = {
-  id: config.storeId, name: "mille-preview", ownerId: config.teamId, externalResourceId: config.neonProjectId,
-  type: "integration", status: "available", totalConnectedProjects: 1, billingPlan: { id: "free_v3" },
-  product: { id: config.productId, slug: "neon", integrationConfigurationId: config.integrationId }, projectsMetadata: [connection],
-};
 const nativeEnv = {
-  key: variable, target: ["preview"], configurationId: config.integrationId,
-  contentHint: {
-    type: "integration-store-secret", integrationConfigurationId: config.integrationId,
-    integrationProductId: config.productId, storeId: config.storeId,
-  },
+  key: variable, target: ["preview"], contentHint: { type: "integration-store-secret" },
   value: secret,
 };
 const source = { type: "github", repoId, ref: target.ref, sha: target.sha };
@@ -54,7 +40,7 @@ type ListEntry = { uid: string; projectId: string; meta?: object; gitSource?: ob
 type Input = Record<string, unknown>;
 
 function scenario(options: {
-  project?: Input; store?: Input; envs?: readonly unknown[]; deployment?: Input | null;
+  project?: Input; envs?: readonly unknown[]; envPagination?: Input; deployment?: Input | null;
   details?: (requestNumber: number) => Input; inventory?: (cursor: string | null) => { deployments: ListEntry[]; pagination: { count: number; next: number | null } };
   outputs?: unknown; aliases?: unknown[]; directAlias?: Input; deletePersists?: boolean; aliasPersists?: boolean; rejectPost?: boolean;
 } = {}) {
@@ -74,10 +60,9 @@ function scenario(options: {
     requests.push(`${method} ${url.pathname}`);
     switch (url.pathname) {
       case `/v9/projects/${config.projectId}`: return Response.json({ ...project, ...options.project });
-      case `/v1/storage/stores/${config.storeId}`: return Response.json({ store: { ...store, ...options.store } });
       case `/v10/projects/${config.projectId}/env`:
         assert.equal(url.searchParams.get("decrypt"), "false");
-        return Response.json({ envs: options.envs ?? [nativeEnv] });
+        return Response.json({ envs: options.envs ?? [nativeEnv], pagination: options.envPagination });
       case "/v6/deployments": {
         assert.equal(url.searchParams.get("projectId"), config.projectId);
         assert.equal(url.searchParams.get("limit"), "100");
@@ -114,31 +99,34 @@ function scenario(options: {
 
 const current = async () => {};
 
-test("指定ストアの Preview 専用変数と分離した常設変数を復号なしで検証する", async () => {
+test("プロジェクトと Preview 専用変数を既存資格情報で復号なしに照合する", async () => {
   const standing = { key: "DATABASE_URL", target: ["preview"], gitBranch: "mille-standing-preview", value: secret };
   const { client, requests } = scenario({ envs: [standing, nativeEnv, { key: "AUTH_SECRET", target: ["production"] }] });
   await client.preflight();
-  assert.equal(requests.length, 3);
-  assert.ok(requests.every(request => request.startsWith("GET ")));
-  await scenario({ store: { projectsMetadata: [{ ...connection, envVarPrefix: "MILLE_NATIVE_PREVIEW" }] } }).client.preflight();
+  assert.deepEqual(requests, [`GET /v9/projects/${config.projectId}`, `GET /v10/projects/${config.projectId}/env`]);
 });
 
-test("誤った連携、追加のスコープ、共有設定、追加接続、保護の解除を拒否する", async () => {
+test("不完全な連携変数、共有スコープ、誤ったプロジェクトと保護の解除を拒否する", async () => {
   for (const options of [
-    { store: { externalResourceId: "other-project" } },
-    { store: { projectsMetadata: [connection, connection] } },
-    { store: { projectsMetadata: [{ ...connection, environments: ["production", "preview"] }] } },
-    { store: { projectsMetadata: [{ ...connection, envVarPrefix: "" }] } },
-    { store: { projectsMetadata: [{ ...connection, environmentVariables: [variable, "MILLE_NATIVE_PREVIEW_NEON_AUTH_BASE_URL"] }] } },
-    { store: { projectsMetadata: [{ ...connection, deployments: { actions: [] } }] } },
+    { envs: [] },
+    { envs: [nativeEnv, nativeEnv] },
+    { envs: [nativeEnv, { ...nativeEnv, key: "MILLE_NATIVE_PREVIEW_NEON_AUTH_BASE_URL" }] },
+    { envs: [nativeEnv, { ...nativeEnv, key: "MILLE_NATIVE_PREVIEW_NEON_AUTH_BASE_URL", target: ["production"] }] },
+    { envs: [{ ...nativeEnv, gitBranch: "mille-standing-preview" }] },
+    { envs: [{ ...nativeEnv, customEnvironmentIds: ["env_Other"] }] },
+    { envPagination: { count: 2, next: null } },
+    { envPagination: { count: 1, next: 123 } },
     { envs: [{ key: variable, target: ["preview"] }] },
     { envs: [nativeEnv, { key: "DATABASE_URL", target: ["preview"], gitBranch: target.ref }] },
     { envs: [{ ...nativeEnv, target: ["production", "preview"] }] },
+    { envs: [nativeEnv, { ...nativeEnv, target: ["production"] }] },
     { project: { env: [{ key: "DATABASE_URL", target: ["preview"] }] } },
     { project: { connectBuildsEnabled: true } },
     { project: { integrations: [{ id: "other" }] } },
     { project: { ssoProtection: null } },
     { project: { protectionBypass: { [secret]: true } } },
+    { project: { id: "prj_Other" } },
+    { project: { accountId: "team_Other" } },
     { project: { link: { ...project.link, repoId: 1 } } },
     { project: { buildCommand: "npm run build" } },
   ]) {

@@ -28,9 +28,6 @@ const env = {
   MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: vercelProjectId,
   MILLE_PR_PREVIEW_NEON_PROJECT_ID: neonProjectId,
   MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: template.id,
-  MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: "store_Fixture",
-  MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: "icfg_Fixture",
-  MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: "iap_Fixture",
   MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID: "org-fixture-123",
   MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID: standing.id,
   MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID: standingEndpoint.id,
@@ -38,7 +35,6 @@ const env = {
 const vercelOrigin = "https://api.vercel.com";
 const neonOrigin = "https://console.neon.tech";
 const vercelProjectPath = `/v9/projects/${vercelProjectId}`;
-const storePath = `/v1/storage/stores/${env.MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID}`;
 const environmentPath = `/v10/projects/${vercelProjectId}/env?decrypt=false`;
 const deploymentsPath = `/v6/deployments?projectId=${vercelProjectId}&limit=100`;
 const aliasAPath = "/v4/aliases/mille-git-codex-native-preview-pilot-a-fumin1.vercel.app";
@@ -66,13 +62,6 @@ function scenario(overrides: Record<string, Response> = {}) {
     [deploymentsPath]: Response.json({ deployments: [], pagination: { count: 0, next: null } }),
     [aliasAPath]: new Response(null, { status: 404 }),
     [aliasBPath]: new Response(null, { status: 404 }),
-    [storePath]: Response.json({ store: {
-      id: env.MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID, ownerId: teamId, name: "mille-preview", type: "integration",
-      status: "available", externalResourceId: neonProjectId, projectsMetadata: [], totalConnectedProjects: 0,
-      product: { id: env.MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID, slug: "neon",
-        integrationConfigurationId: env.MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID },
-      billingPlan: { id: "free_v3" },
-    } }),
     [neonProjectPath]: Response.json({ project: { id: neonProjectId, org_id: env.MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID,
       name: "mille-preview", region_id: region, creation_source: "vercel_marketplace" } }),
     [branchesPath]: Response.json({ branches: [template, standing], pagination: { next: null } }),
@@ -117,7 +106,7 @@ function assertSafeOutput(checks: Awaited<ReturnType<typeof diagnoseNativePrevie
   return output;
 }
 
-test("復旧済みの構成を両プロバイダーの固定 GET だけで診断する", async () => {
+test("既存の資格情報と両プロバイダーの固定 GET で復旧済み構成を診断する", async () => {
   const fixture = scenario();
   const checks = await diagnoseNativePreview(env, fixture.request);
   assert.ok(checks.length > 0 && checks.every(check => check.ok));
@@ -141,13 +130,35 @@ test("Vercel の HTTP 拒否と応答形式の不一致を区別し、秘密値�
   assertSafeOutput(malformedChecks);
 });
 
-test("Vercel プロジェクトを読み取れても不適合な保護設定を診断する", async () => {
-  const fixture = scenario({ [vercelProjectPath]: Response.json({
-    ...vercelProject, protectionBypass: { [providerSecret]: {} },
-  }) });
-  const checks = await diagnoseNativePreview(env, fixture.request);
-  assert.ok(checks.some(check => check.name === "Vercel プロジェクト" && !check.ok && check.status === 200));
-  assertSafeOutput(checks);
+test("Vercel プロジェクトの対象違いと不適合な保護・Preview 環境を診断する", async () => {
+  for (const change of [
+    { id: "prj_Other" },
+    { accountId: "team_Other" },
+    { link: { ...vercelProject.link, repoId: 1 } },
+    { protectionBypass: { [providerSecret]: {} } },
+    { env: [{ key: "MILLE_NATIVE_PREVIEW_DATABASE_URL", target: ["preview"], value: providerSecret }] },
+    { env: [{ key: "MILLE_NATIVE_PREVIEW_DATABASE_URL", target: ["production"], value: providerSecret }] },
+  ]) {
+    const fixture = scenario({ [vercelProjectPath]: Response.json({ ...vercelProject, ...change }) });
+    const checks = await diagnoseNativePreview(env, fixture.request);
+    assert.ok(checks.some(check => check.name === "Vercel プロジェクト" && !check.ok && check.status === 200));
+    assertSafeOutput(checks);
+  }
+});
+
+test("全 Preview に適用される環境変数、Native 専用変数の残存、不完全な一覧を診断する", async () => {
+  for (const response of [
+    { envs: [{ key: "PREVIEW_ONLY", target: ["preview"], value: providerSecret }] },
+    { envs: [{ key: "MILLE_NATIVE_PREVIEW_DATABASE_URL", target: ["production"], value: providerSecret }] },
+    { envs: [{ key: "MILLE_NATIVE_PREVIEW_DATABASE_URL", target: ["preview"], gitBranch: "mille-standing-preview" }] },
+    { envs: [], pagination: { count: 1 } },
+  ]) {
+    const fixture = scenario({ [environmentPath]: Response.json(response) });
+    const checks = await diagnoseNativePreview(env, fixture.request);
+    assert.deepEqual(checks.filter(check => !check.ok),
+      [{ name: "Vercel 環境変数メタデータ", ok: false, status: 200 }]);
+    assertSafeOutput(checks);
+  }
 });
 
 test("Neon の一覧取得に成功してもブランチ別エンドポイントの HTTP 拒否を診断する", async () => {
@@ -189,7 +200,7 @@ test("Neon の DB 一覧に失敗した場合は未照合のロールを成功�
 test("無効な対象や不足する資格情報は通信前に拒否する", async () => {
   const overrides = [
     { MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: `prj_Fixture?secret=${providerSecret}` },
-    { MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: "//example.invalid" },
+    { MILLE_PR_PREVIEW_NEON_PROJECT_ID: "//example.invalid" },
     { VERCEL_TOKEN: undefined },
     { NEON_API_KEY: undefined },
   ];

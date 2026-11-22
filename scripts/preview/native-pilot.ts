@@ -7,9 +7,6 @@ import type { NeonPreview } from "./neon";
 import { resolveNativePreviewIdentity, samePreviewTarget, type PreviewTarget } from "./target";
 
 const settings = z.object({
-  MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: z.string().regex(/^store_[A-Za-z0-9]+$/),
-  MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: z.string().regex(/^icfg_[A-Za-z0-9]+$/),
-  MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: z.string().regex(/^iap_[A-Za-z0-9]+$/),
   MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID: z.string().regex(/^br-[a-z0-9-]+$/),
   MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID: z.string().regex(/^ep-[a-z0-9-]+$/),
 });
@@ -123,18 +120,13 @@ export async function executeNativePilot(input: PilotOperation): Promise<"prepar
 }
 
 export function nativePilotProviders(environment: NodeJS.ProcessEnv, input: {
-  token: string; teamId: string; projectId: string; neonProjectId: string;
+  token: string; teamId: string; projectId: string;
 }) {
   const parsed = settings.safeParse(environment);
   if (!parsed.success) throw new Error("Native Preview の試験設定が不足しています。");
   const env = parsed.data;
   return {
-    vercel: new NativePilotVercel({
-      ...input,
-      storeId: env.MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID,
-      integrationId: env.MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID,
-      productId: env.MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID,
-    }),
+    vercel: new NativePilotVercel(input),
     standingBranchId: env.MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID,
     standingEndpointId: env.MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID,
   };
