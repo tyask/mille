@@ -14,9 +14,10 @@ process.env.PLAYWRIGHT_BROWSERS_PATH ??= resolve(rootDirectory, "../.cache/ms-pl
 
 const executeFile = promisify(execFile);
 type Source = { sha: string; branch: string; clean: boolean };
+type FormalPreview = { origin: string; sha: string; token: string };
 type InterceptionFailure = {
-  operation: "parse-request" | "foreign-origin" | "continue-request";
-  reason: "foreign-origin" | "invalid-interception-id" | "target-closed" | "other";
+  operation: "parse-request" | "foreign-origin" | "blocked-method" | "blocked-target" | "continue-request" | "continue-response";
+  reason: "foreign-origin" | "blocked-method" | "blocked-target" | "invalid-interception-id" | "target-closed" | "other";
 };
 type CheckCase = {
   name: string; userKey: string; mobile: boolean; status: "not-run" | "running" | "passed" | "failed";
@@ -25,6 +26,8 @@ type CheckCase = {
   interceptionFailures?: InterceptionFailure[];
   canceledInterceptions?: number;
 };
+
+const formalDocumentPolicy = "worker-src 'none'; frame-src 'none'; object-src 'none'; connect-src 'self'; form-action 'self'";
 export type BrowserProof = {
   protocol: "mille-browser/v1"; success: boolean; startedAt: string; finishedAt: string; durationMs: number;
   source: { before: Source | null; after: Source | null; unchanged: boolean };
@@ -44,8 +47,14 @@ export function previewOrigin(value: string): string {
 }
 
 /** The protection capability must never follow a redirect to another origin. */
-export function scopedProtectionHeaders(requestUrl: string, origin: string, secret?: string): Record<string, string> {
-  return secret && new URL(requestUrl).origin === origin ? { "x-vercel-protection-bypass": secret } : {};
+export function scopedProtectionHeaders(requestUrl: string, origin: string, secret?: string,
+  header: "x-vercel-protection-bypass" | "x-vercel-trusted-oidc-idp-token" = "x-vercel-protection-bypass"): Record<string, string> {
+  return secret && new URL(requestUrl).origin === origin ? { [header]: secret } : {};
+}
+
+export function allowsFormalPreviewRequest(method: string, pathname: string): boolean {
+  return ["GET", "HEAD", "OPTIONS"].includes(method)
+    || (method === "POST" && ["/api/auth/callback/test-login", "/api/auth/signout"].includes(pathname));
 }
 
 export function sourceUnchanged(before: Source | null, after: Source | null): boolean {
@@ -74,6 +83,14 @@ async function readIdentity(page: Page, path = "/api/me") {
   }, path);
 }
 
+async function verifyRuntime(page: Page, expectedSha: string) {
+  const runtime = await page.evaluate(async () => {
+    const response = await fetch("/api/runtime", { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(15_000) });
+    return { status: response.status, body: await response.json() };
+  });
+  requireCondition(runtime.status === 200 && runtime.body.app === "mille" && runtime.body.sha === expectedSha);
+}
+
 async function workspaceRequest<T>(page: Page, path: string, method = "GET", body?: unknown) {
   const response = await page.evaluate(async ({ target, verb, payload }) => {
     const result = await fetch(target, {
@@ -99,13 +116,13 @@ async function selectedWorkspace(page: Page, name: string) {
   await page.waitForFunction(expected => document.querySelector('[data-testid="workspace-selected-name"]')?.textContent?.trim() === expected, name);
 }
 
-export async function verifyBrowser(args: readonly string[] = []): Promise<BrowserProof> {
+export async function verifyBrowser(args: readonly string[] = [], formal?: FormalPreview): Promise<BrowserProof> {
   const directory = resolve(rootDirectory, ".mille/cloud"), proofPath = resolve(directory, "verification.json");
   const started = Date.now();
   const proof: BrowserProof = {
     protocol: "mille-browser/v1", success: false, startedAt: new Date(started).toISOString(), finishedAt: "", durationMs: 0,
     source: { before: null, after: null, unchanged: false },
-    target: { kind: process.env.MILLE_QA_BASE_URL ? "preview" : "local", origin: null, expectedSha: null, runtimeSha: null },
+    target: { kind: formal || process.env.MILLE_QA_BASE_URL ? "preview" : "local", origin: null, expectedSha: null, runtimeSha: null },
     environment: { platform: process.platform, node: process.version, chromium: null },
     cases: [false, true].flatMap(mobile => TEST_USERS.map(user => ({
       name: `${mobile ? "mobile" : "desktop"}-${user.key}`, userKey: user.key, mobile,
@@ -133,8 +150,13 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
     requireCondition(!args.length || (args.length === 2 && args[0] === "--port"));
     requireCondition(process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0" && !process.env.DEBUG && !process.env.PWDEBUG);
     stage = "source-before"; proof.source.before = await source();
-    proof.target.expectedSha = proof.source.before.sha;
-    if (process.env.MILLE_QA_BASE_URL) {
+    const expectedSha = formal?.sha ?? proof.source.before.sha;
+    requireCondition(/^[a-f0-9]{40}$/.test(expectedSha));
+    proof.target.expectedSha = expectedSha;
+    if (formal) {
+      requireCondition(!args.length && proof.source.before.clean && formal.token.length > 0);
+      proof.target.origin = previewOrigin(formal.origin);
+    } else if (process.env.MILLE_QA_BASE_URL) {
       requireCondition(!args.length);
       proof.target.origin = previewOrigin(process.env.MILLE_QA_BASE_URL);
     } else {
@@ -153,7 +175,8 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
     }
     requireCondition(!interrupted);
     const origin = proof.target.origin;
-    const protection = proof.target.kind === "preview" ? process.env.VERCEL_AUTOMATION_BYPASS_SECRET : undefined;
+    const protection = proof.target.kind === "preview" ? formal?.token ?? process.env.VERCEL_AUTOMATION_BYPASS_SECRET : undefined;
+    const protectionHeader = formal ? "x-vercel-trusted-oidc-idp-token" : "x-vercel-protection-bypass";
     stage = "launch";
     const { chromium } = await import("playwright");
     browser = await chromium.launch({ headless: true, env: isolatedEnvironment(process.env) });
@@ -183,49 +206,104 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
           });
         });
         let requestBoundaryFailed = false;
+        const recordBoundaryFailure = (failure: InterceptionFailure) => {
+          requestBoundaryFailed = true;
+          if ((item.interceptionFailures?.length ?? 0) < 20) (item.interceptionFailures ??= []).push(failure);
+        };
+        if (formal) {
+          // Context routing sees the first popup request, before a page event can observe it.
+          await context.route("**/*", async route => {
+            const request = route.request();
+            let allowed = false;
+            try {
+              const url = new URL(request.url());
+              allowed = request.frame().page() === page && url.origin === origin
+                && allowsFormalPreviewRequest(request.method(), url.pathname);
+            } catch { /* A popup's initial navigation may not have an inspectable frame. */ }
+            if (allowed) {
+              await route.fallback();
+              return;
+            }
+            recordBoundaryFailure({ operation: "blocked-target", reason: "blocked-target" });
+            await route.abort("blockedbyclient");
+          });
+          await context.routeWebSocket("**/*", async route => {
+            recordBoundaryFailure({ operation: "blocked-target", reason: "blocked-target" });
+            await route.close({ code: 1008 });
+          });
+        }
         // CDP observes every redirect hop; context-wide headers would leak to other origins.
         const interception = await context.newCDPSession(page);
         interception.on("Fetch.requestPaused", async event => {
           let operation: InterceptionFailure["operation"] = "parse-request";
           try {
-            if (new URL(event.request.url).origin !== origin) {
-              requestBoundaryFailed = true;
+            const url = new URL(event.request.url);
+            if (url.origin !== origin) {
               operation = "foreign-origin";
-              (item.interceptionFailures ??= []).push({ operation, reason: "foreign-origin" });
+              recordBoundaryFailure({ operation, reason: "foreign-origin" });
               await interception.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" });
+            } else if (formal && !allowsFormalPreviewRequest(event.request.method, url.pathname)) {
+              operation = "blocked-method";
+              recordBoundaryFailure({ operation, reason: "blocked-method" });
+              await interception.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" });
+            } else if (formal && (event.responseStatusCode !== undefined || event.responseErrorReason !== undefined)) {
+              operation = "continue-response";
+              const headers = (event.responseHeaders ?? []).filter(({ name }) =>
+                !["content-encoding", "content-length", "transfer-encoding", "location"].includes(name.toLowerCase()));
+              headers.push({ name: "Content-Security-Policy", value: formalDocumentPolicy });
+              if (event.responseStatusCode === 200) {
+                // Workers can start on another CDP target. Apply a second policy before the document runs.
+                const content = await interception.send("Fetch.getResponseBody", { requestId: event.requestId });
+                await interception.send("Fetch.fulfillRequest", {
+                  requestId: event.requestId, responseCode: 200, responseHeaders: headers,
+                  body: content.base64Encoded ? content.body : Buffer.from(content.body, "utf8").toString("base64"),
+                });
+              } else {
+                const code = event.responseStatusCode ?? 0;
+                const locations = event.responseHeaders?.filter(({ name }) => name.toLowerCase() === "location") ?? [];
+                const location = locations.length === 1 && locations[0].value.trim() ? new URL(locations[0].value, url) : null;
+                if ([301, 302, 303, 307, 308].includes(code) && location?.origin === origin && !location.username && !location.password) {
+                  headers.push({ name: "Location", value: location.href });
+                  await interception.send("Fetch.fulfillRequest", {
+                    requestId: event.requestId, responseCode: code, responseHeaders: headers, body: "",
+                  });
+                } else {
+                  recordBoundaryFailure({ operation, reason: "blocked-target" });
+                  await interception.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" });
+                }
+              }
             } else {
               operation = "continue-request";
-              const headers = Object.entries(event.request.headers).filter(([name]) => name.toLowerCase() !== "x-vercel-protection-bypass");
-              headers.push(...Object.entries(scopedProtectionHeaders(event.request.url, origin, protection)));
+              const headers = Object.entries(event.request.headers).filter(([name]) =>
+                !["x-vercel-protection-bypass", "x-vercel-trusted-oidc-idp-token"].includes(name.toLowerCase()));
+              headers.push(...Object.entries(scopedProtectionHeaders(event.request.url, origin, protection, protectionHeader)));
               await interception.send("Fetch.continueRequest", { requestId: event.requestId, headers: headers.map(([name, value]) => ({ name, value: String(value) })) });
             }
           } catch (error) {
             const message = error instanceof Error ? error.message : "";
             const reason: InterceptionFailure["reason"] = /Invalid InterceptionId|Invalid interception id/i.test(message) ? "invalid-interception-id"
               : /Target closed|Session closed|Target page, context or browser has been closed/i.test(message) ? "target-closed" : "other";
-            if (operation === "continue-request" && reason === "invalid-interception-id") {
+            if ((operation === "continue-request" || operation === "continue-response") && reason === "invalid-interception-id") {
               // Navigation canceled this already verified same-origin request before CDP resumed it.
               // A stale interception ID cannot forward headers; foreign requests still fail above.
               item.canceledInterceptions = (item.canceledInterceptions ?? 0) + 1;
               return;
             }
-            requestBoundaryFailed = true;
             // Retain only bounded enums: protocol errors may otherwise include capability URLs.
-            if ((item.interceptionFailures?.length ?? 0) < 20) (item.interceptionFailures ??= []).push({ operation, reason });
+            recordBoundaryFailure({ operation, reason });
             try { await interception.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "Failed" }); } catch { /* Context may already be closed. */ }
           }
         });
-        await interception.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+        await interception.send("Fetch.enable", { patterns: [
+          { urlPattern: "*", requestStage: "Request" },
+          ...(formal ? [{ urlPattern: "*", resourceType: "Document" as const, requestStage: "Response" as const }] : []),
+        ] });
         stage = "navigation";
         const response = await page.goto(origin, { waitUntil: "networkidle", timeout: 60_000 });
         requireCondition(response?.status() === 200 && new URL(page.url()).origin === origin);
         stage = "runtime";
-        const runtime = await page.evaluate(async () => {
-          const response = await fetch("/api/runtime", { cache: "no-store", redirect: "error", signal: AbortSignal.timeout(15_000) });
-          return { status: response.status, body: await response.json() };
-        });
-        requireCondition(runtime.status === 200 && runtime.body.app === "mille" && runtime.body.sha === proof.target.expectedSha);
-        proof.target.runtimeSha = runtime.body.sha; item.checks.push("runtime-sha");
+        await verifyRuntime(page, expectedSha);
+        proof.target.runtimeSha = expectedSha; item.checks.push("runtime-sha");
         const anonymous = await readIdentity(page);
         requireCondition(anonymous.status === 401); item.checks.push("anonymous-api-denied");
         requireCondition((await workspaceRequest(page, "/api/workspaces")).status === 401);
@@ -264,8 +342,10 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
           await page.getByTestId("workspace-create-open").waitFor();
           item.checks.push("mobile-menu-resize-restores-main");
         }
-        const filename = `${item.name}-home.png`;
-        await page.screenshot({ path: resolve(directory, filename), fullPage: true }); item.screenshots.push(filename);
+        if (!formal) {
+          const filename = `${item.name}-home.png`;
+          await page.screenshot({ path: resolve(directory, filename), fullPage: true }); item.screenshots.push(filename);
+        }
         requireCondition(!requestBoundaryFailed && !interrupted);
         loggedIn.push({ page, context, item, user, started: caseStarted, boundaryFailed: () => requestBoundaryFailed });
       }
@@ -294,115 +374,117 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         && !memberState.body.workspaces.some(workspace => workspace.id === ownerPersonal.id));
       for (const entry of loggedIn) entry.item.checks.push("personal-workspace-isolation");
 
-      stage = "workspace-create";
-      const workspaceName = `QA ${mobile ? "mobile" : "desktop"} ${Date.now()}`;
-      await owner.page.getByRole("button", { name: "新しく作成", exact: true }).click();
-      await owner.page.getByTestId("workspace-create-dialog").getByLabel("ワークスペース名", { exact: true }).fill(workspaceName);
-      await owner.page.getByTestId("workspace-create-dialog").getByRole("radio", { name: /共有用/ }).check();
-      const created = await workspaceMutation<Workspace>(owner.page, "/api/workspaces", "POST", () => owner.page.getByTestId("workspace-create-submit").click());
-      disposableWorkspaces.set(created.id, owner.page); proof.resources.workspaces = disposableWorkspaces.size;
-      requireCondition(created.name === workspaceName && created.type === "SHARED");
-      await selectedWorkspace(owner.page, workspaceName);
-      owner.item.checks.push("shared-workspace-create-ui");
+      if (!formal) {
+        stage = "workspace-create";
+        const workspaceName = `QA ${mobile ? "mobile" : "desktop"} ${Date.now()}`;
+        await owner.page.getByRole("button", { name: "新しく作成", exact: true }).click();
+        await owner.page.getByTestId("workspace-create-dialog").getByLabel("ワークスペース名", { exact: true }).fill(workspaceName);
+        await owner.page.getByTestId("workspace-create-dialog").getByRole("radio", { name: /共有用/ }).check();
+        const created = await workspaceMutation<Workspace>(owner.page, "/api/workspaces", "POST", () => owner.page.getByTestId("workspace-create-submit").click());
+        disposableWorkspaces.set(created.id, owner.page); proof.resources.workspaces = disposableWorkspaces.size;
+        requireCondition(created.name === workspaceName && created.type === "SHARED");
+        await selectedWorkspace(owner.page, workspaceName);
+        owner.item.checks.push("shared-workspace-create-ui");
 
-      stage = "workspace-switch-persistence";
-      await owner.page.locator(`[data-testid="workspace-card"][data-workspace-id="${ownerPersonal.id}"]`).click();
-      await selectedWorkspace(owner.page, ownerPersonal.name);
-      await owner.page.locator(`[data-testid="workspace-card"][data-workspace-id="${created.id}"]`).click();
-      await selectedWorkspace(owner.page, workspaceName);
-      await owner.page.reload({ waitUntil: "networkidle" });
-      await selectedWorkspace(owner.page, workspaceName);
-      owner.item.checks.push("workspace-switch-ui", "workspace-selection-after-reload");
+        stage = "workspace-switch-persistence";
+        await owner.page.locator(`[data-testid="workspace-card"][data-workspace-id="${ownerPersonal.id}"]`).click();
+        await selectedWorkspace(owner.page, ownerPersonal.name);
+        await owner.page.locator(`[data-testid="workspace-card"][data-workspace-id="${created.id}"]`).click();
+        await selectedWorkspace(owner.page, workspaceName);
+        await owner.page.reload({ waitUntil: "networkidle" });
+        await selectedWorkspace(owner.page, workspaceName);
+        owner.item.checks.push("workspace-switch-ui", "workspace-selection-after-reload");
 
-      stage = "workspace-rename-open";
-      const renamed = `${workspaceName} 変更`;
-      await owner.page.getByRole("button", { name: "名前を変更", exact: true }).click();
-      stage = "workspace-rename-fill";
-      await owner.page.getByTestId("workspace-rename-dialog").getByLabel("ワークスペース名", { exact: true }).fill(renamed);
-      stage = "workspace-rename-save";
-      await workspaceMutation<Workspace>(owner.page, `/api/workspaces/${created.id}`, "PATCH", () => owner.page.getByTestId("workspace-rename-dialog").getByRole("button", { name: "変更を保存", exact: true }).click());
-      stage = "workspace-rename-result";
-      await selectedWorkspace(owner.page, renamed);
-      owner.item.checks.push("workspace-rename-ui");
+        stage = "workspace-rename-open";
+        const renamed = `${workspaceName} 変更`;
+        await owner.page.getByRole("button", { name: "名前を変更", exact: true }).click();
+        stage = "workspace-rename-fill";
+        await owner.page.getByTestId("workspace-rename-dialog").getByLabel("ワークスペース名", { exact: true }).fill(renamed);
+        stage = "workspace-rename-save";
+        await workspaceMutation<Workspace>(owner.page, `/api/workspaces/${created.id}`, "PATCH", () => owner.page.getByTestId("workspace-rename-dialog").getByRole("button", { name: "変更を保存", exact: true }).click());
+        stage = "workspace-rename-result";
+        await selectedWorkspace(owner.page, renamed);
+        owner.item.checks.push("workspace-rename-ui");
 
-      stage = "workspace-invite";
-      await owner.page.getByRole("button", { name: "メンバーを招待", exact: true }).click();
-      await owner.page.getByTestId("workspace-invite-dialog").getByLabel("相手のメールアドレス", { exact: true }).fill(member.user.email);
-      const invitation = await workspaceMutation<IssuedInvitation>(owner.page, `/api/workspaces/${created.id}/invitations`, "POST", () => owner.page.getByTestId("workspace-invite-dialog").getByRole("button", { name: "招待リンクを発行", exact: true }).click());
-      requireCondition(/^[a-f0-9]{64}$/.test(invitation.token) && invitation.invitation.email === member.user.email);
-      owner.item.checks.push("workspace-invite-ui");
-      // The capability is used in memory only, and no screenshot is taken on these screens.
-      currentCase = member.item;
-      if (mobile) {
-        stage = "workspace-incoming-invitation";
-        await member.page.reload({ waitUntil: "networkidle" });
-        const incoming = member.page.getByRole("region", { name: "届いている招待", exact: true }).getByRole("article").filter({ hasText: renamed });
-        await incoming.getByRole("heading", { name: `「${renamed}」への招待`, exact: true }).waitFor();
-        stage = "workspace-incoming-join";
-        await workspaceMutation(member.page, `/api/invitations/${invitation.invitation.id}/join`, "POST", () => incoming.getByRole("button", { name: "参加する", exact: true }).click());
-        await selectedWorkspace(member.page, renamed);
-        member.item.checks.push("incoming-invitation-join-ui");
-      } else {
-        stage = "workspace-invitation-login";
-        await member.page.getByRole("button", { name: "ログアウト", exact: true }).click();
-        await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).waitFor();
-        requireCondition((await readIdentity(member.page)).status === 401);
-        await member.page.goto(`${origin}/invite/${invitation.token}`, { waitUntil: "networkidle" });
-        await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).click();
-        await member.page.getByTestId("workspace-join-submit").waitFor();
-        requireCondition(new URL(member.page.url()).pathname === `/invite/${invitation.token}`
-          && (await readIdentity(member.page)).body.user?.id === member.user.id);
-        member.item.checks.push("invitation-login-return");
-        stage = "workspace-join";
-        await workspaceMutation(member.page, `/api/invitations/${invitation.token}/accept`, "POST", () => member.page.getByTestId("workspace-join-submit").click());
-        await member.page.getByRole("link", { name: "ワークスペースを開く", exact: true }).click();
-        await selectedWorkspace(member.page, renamed);
-        member.item.checks.push("invitation-link-join-ui");
-      }
-      await owner.page.reload({ waitUntil: "networkidle" });
-      await selectedWorkspace(owner.page, renamed);
-      const shared = await workspaceRequest<WorkspaceState>(owner.page, "/api/workspaces");
-      const sharedWorkspace = shared.body.workspaces.find(workspace => workspace.id === created.id);
-      requireCondition(shared.status === 200 && sharedWorkspace?.members.length === 2
-        && sharedWorkspace.members.some(value => value.userId === owner.user.id)
-        && sharedWorkspace.members.some(value => value.userId === member.user.id));
-      requireCondition((await owner.page.getByTestId("workspace-member-count").textContent())?.trim() === "2");
-      await owner.page.getByText(member.user.email, { exact: true }).waitFor();
-      owner.item.checks.push("shared-members-after-join"); member.item.checks.push("shared-members-after-join");
+        stage = "workspace-invite";
+        await owner.page.getByRole("button", { name: "メンバーを招待", exact: true }).click();
+        await owner.page.getByTestId("workspace-invite-dialog").getByLabel("相手のメールアドレス", { exact: true }).fill(member.user.email);
+        const invitation = await workspaceMutation<IssuedInvitation>(owner.page, `/api/workspaces/${created.id}/invitations`, "POST", () => owner.page.getByTestId("workspace-invite-dialog").getByRole("button", { name: "招待リンクを発行", exact: true }).click());
+        requireCondition(/^[a-f0-9]{64}$/.test(invitation.token) && invitation.invitation.email === member.user.email);
+        owner.item.checks.push("workspace-invite-ui");
+        // The capability is used in memory only, and no screenshot is taken on these screens.
+        currentCase = member.item;
+        if (mobile) {
+          stage = "workspace-incoming-invitation";
+          await member.page.reload({ waitUntil: "networkidle" });
+          const incoming = member.page.getByRole("region", { name: "届いている招待", exact: true }).getByRole("article").filter({ hasText: renamed });
+          await incoming.getByRole("heading", { name: `「${renamed}」への招待`, exact: true }).waitFor();
+          stage = "workspace-incoming-join";
+          await workspaceMutation(member.page, `/api/invitations/${invitation.invitation.id}/join`, "POST", () => incoming.getByRole("button", { name: "参加する", exact: true }).click());
+          await selectedWorkspace(member.page, renamed);
+          member.item.checks.push("incoming-invitation-join-ui");
+        } else {
+          stage = "workspace-invitation-login";
+          await member.page.getByRole("button", { name: "ログアウト", exact: true }).click();
+          await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).waitFor();
+          requireCondition((await readIdentity(member.page)).status === 401);
+          await member.page.goto(`${origin}/invite/${invitation.token}`, { waitUntil: "networkidle" });
+          await member.page.getByRole("button", { name: `${member.user.name}でログイン`, exact: true }).click();
+          await member.page.getByTestId("workspace-join-submit").waitFor();
+          requireCondition(new URL(member.page.url()).pathname === `/invite/${invitation.token}`
+            && (await readIdentity(member.page)).body.user?.id === member.user.id);
+          member.item.checks.push("invitation-login-return");
+          stage = "workspace-join";
+          await workspaceMutation(member.page, `/api/invitations/${invitation.token}/accept`, "POST", () => member.page.getByTestId("workspace-join-submit").click());
+          await member.page.getByRole("link", { name: "ワークスペースを開く", exact: true }).click();
+          await selectedWorkspace(member.page, renamed);
+          member.item.checks.push("invitation-link-join-ui");
+        }
+        await owner.page.reload({ waitUntil: "networkidle" });
+        await selectedWorkspace(owner.page, renamed);
+        const shared = await workspaceRequest<WorkspaceState>(owner.page, "/api/workspaces");
+        const sharedWorkspace = shared.body.workspaces.find(workspace => workspace.id === created.id);
+        requireCondition(shared.status === 200 && sharedWorkspace?.members.length === 2
+          && sharedWorkspace.members.some(value => value.userId === owner.user.id)
+          && sharedWorkspace.members.some(value => value.userId === member.user.id));
+        requireCondition((await owner.page.getByTestId("workspace-member-count").textContent())?.trim() === "2");
+        await owner.page.getByText(member.user.email, { exact: true }).waitFor();
+        owner.item.checks.push("shared-members-after-join"); member.item.checks.push("shared-members-after-join");
 
-      stage = "workspace-api-isolation";
-      const forbidden = await workspaceRequest(member.page, `/api/workspaces/${ownerPersonal.id}`, "PATCH", { name: "不正な変更" });
-      requireCondition(forbidden.status === 403 || forbidden.status === 404);
-      const unchangedOwner = await workspaceRequest<WorkspaceState>(owner.page, "/api/workspaces");
-      requireCondition(unchangedOwner.body.workspaces.find(workspace => workspace.id === ownerPersonal.id)?.name === ownerPersonal.name);
-      member.item.checks.push("non-member-workspace-write-denied");
+        stage = "workspace-api-isolation";
+        const forbidden = await workspaceRequest(member.page, `/api/workspaces/${ownerPersonal.id}`, "PATCH", { name: "不正な変更" });
+        requireCondition(forbidden.status === 403 || forbidden.status === 404);
+        const unchangedOwner = await workspaceRequest<WorkspaceState>(owner.page, "/api/workspaces");
+        requireCondition(unchangedOwner.body.workspaces.find(workspace => workspace.id === ownerPersonal.id)?.name === ownerPersonal.name);
+        member.item.checks.push("non-member-workspace-write-denied");
 
-      stage = "workspace-member-rename";
-      const memberRenamed = `${workspaceName} 共有`;
-      await member.page.getByRole("button", { name: "名前を変更", exact: true }).click();
-      await member.page.getByTestId("workspace-rename-dialog").getByLabel("ワークスペース名", { exact: true }).fill(memberRenamed);
-      await workspaceMutation(member.page, `/api/workspaces/${created.id}`, "PATCH", () => member.page.getByTestId("workspace-rename-dialog").getByRole("button", { name: "変更を保存", exact: true }).click());
-      await selectedWorkspace(member.page, memberRenamed);
-      await owner.page.reload({ waitUntil: "networkidle" });
-      await selectedWorkspace(owner.page, memberRenamed);
-      member.item.checks.push("member-rename-ui"); owner.item.checks.push("member-update-visible");
+        stage = "workspace-member-rename";
+        const memberRenamed = `${workspaceName} 共有`;
+        await member.page.getByRole("button", { name: "名前を変更", exact: true }).click();
+        await member.page.getByTestId("workspace-rename-dialog").getByLabel("ワークスペース名", { exact: true }).fill(memberRenamed);
+        await workspaceMutation(member.page, `/api/workspaces/${created.id}`, "PATCH", () => member.page.getByTestId("workspace-rename-dialog").getByRole("button", { name: "変更を保存", exact: true }).click());
+        await selectedWorkspace(member.page, memberRenamed);
+        await owner.page.reload({ waitUntil: "networkidle" });
+        await selectedWorkspace(owner.page, memberRenamed);
+        member.item.checks.push("member-rename-ui"); owner.item.checks.push("member-update-visible");
 
-      stage = "workspace-delete";
-      await member.page.getByRole("button", { name: "削除する", exact: true }).click();
-      await member.page.locator("#ws-delete-confirmation").fill(memberRenamed);
-      await workspaceMutation(member.page, `/api/workspaces/${created.id}`, "DELETE", () => member.page.getByTestId("workspace-delete-submit").click());
-      disposableWorkspaces.delete(created.id); proof.resources.workspaces = disposableWorkspaces.size;
-      await owner.page.reload({ waitUntil: "networkidle" });
-      for (const entry of loggedIn) {
-        const state = await workspaceRequest<WorkspaceState>(entry.page, "/api/workspaces");
-        requireCondition(state.status === 200 && !state.body.workspaces.some(workspace => workspace.id === created.id));
-        const fallback = state.body.workspaces[0];
-        requireCondition(fallback);
-        await selectedWorkspace(entry.page, fallback.name);
-        requireCondition(await entry.page.getByTestId("workspace-selected-name").getAttribute("data-workspace-id") === fallback.id);
-        entry.item.checks.push("workspace-delete-ui-and-fallback");
-        const filename = `${entry.item.name}-workspaces.png`;
-        await entry.page.screenshot({ path: resolve(directory, filename), fullPage: true }); entry.item.screenshots.push(filename);
+        stage = "workspace-delete";
+        await member.page.getByRole("button", { name: "削除する", exact: true }).click();
+        await member.page.locator("#ws-delete-confirmation").fill(memberRenamed);
+        await workspaceMutation(member.page, `/api/workspaces/${created.id}`, "DELETE", () => member.page.getByTestId("workspace-delete-submit").click());
+        disposableWorkspaces.delete(created.id); proof.resources.workspaces = disposableWorkspaces.size;
+        await owner.page.reload({ waitUntil: "networkidle" });
+        for (const entry of loggedIn) {
+          const state = await workspaceRequest<WorkspaceState>(entry.page, "/api/workspaces");
+          requireCondition(state.status === 200 && !state.body.workspaces.some(workspace => workspace.id === created.id));
+          const fallback = state.body.workspaces[0];
+          requireCondition(fallback);
+          await selectedWorkspace(entry.page, fallback.name);
+          requireCondition(await entry.page.getByTestId("workspace-selected-name").getAttribute("data-workspace-id") === fallback.id);
+          entry.item.checks.push("workspace-delete-ui-and-fallback");
+          const filename = `${entry.item.name}-workspaces.png`;
+          await entry.page.screenshot({ path: resolve(directory, filename), fullPage: true }); entry.item.screenshots.push(filename);
+        }
       }
       for (const entry of loggedIn) {
         currentCase = entry.item; stage = "history-setup";
@@ -443,6 +525,11 @@ export async function verifyBrowser(args: readonly string[] = []): Promise<Brows
         const other = loggedIn.find(value => value !== entry && value.item.status === "running");
         stage = "logout-other-context-identity";
         if (other) requireCondition((await readIdentity(other.page)).body.user?.id === other.user.id);
+        if (formal) {
+          stage = "runtime-after";
+          await verifyRuntime(entry.page, expectedSha);
+          entry.item.checks.push("runtime-after");
+        }
         stage = "logout-request-origin-boundary";
         requireCondition(!entry.boundaryFailed());
         stage = "logout-interruption";

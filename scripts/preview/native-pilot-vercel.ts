@@ -376,6 +376,17 @@ export class NativePilotVercel {
     return (await this.listOwned(target)).deployments;
   }
 
+  async readReadyApplication(target: NativePilotTarget): Promise<ApplicationDeployment & { readyAt: number }> {
+    await this.preflight();
+    const candidates = (await this.list(target)).filter((item): item is ApplicationDeployment =>
+      item.phase === "application" && item.sha === target.sha && item.readyState === "READY");
+    const application = candidates[0];
+    if (candidates.length !== 1 || application.readyAt === undefined || !await this.readBuildEndpoint(application)) {
+      throw new Error("Vercel の現 HEAD の Native Preview アプリとビルド照合記録を確認できません。");
+    }
+    return { ...application, readyAt: application.readyAt };
+  }
+
   async provision(target: NativePilotTarget, generation: string, verifyCurrent: VerifyCurrent): Promise<ProvisionDeployment> {
     target = parse(targetSchema, target);
     generation = parse(generationId, generation);

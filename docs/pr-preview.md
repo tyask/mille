@@ -86,6 +86,25 @@ Native の Git デプロイは Cake と同じく、プロジェクトの Preview
 
 切替を戻した後の接続設定は [旧構成での Actions 診断](#旧構成での-actions-診断) で確認します。Native 接続情報を使うアプリの動作、PR 更新後のデータ保持、クローズとマージによる作成済み資源の削除は、実資源を使う試験で確認します。
 
+## 正式 Preview の状態確認と再検証
+
+信頼済み `main` の **Mille PR Preview** を手動実行します。`status` には開いている PR の番号、現在の完全 HEAD SHA、取得し直した `main` の完全 SHA を指定します。管理 API を読み取り、PR の所有・HEAD、固有 URL の READY アプリ、専用 Neon ブランチと endpoint、世代を照合します。旧管理方式の世代は、PR に所有情報を持つ専用 Neon ブランチの ID です。
+
+```sh
+gh workflow run pr-preview.yml --repo tyask/mille --ref main \
+  -f operation=status -f pr="<PR番号>" -f sha="<PRの完全HEAD>" -f controlSha="<mainの完全SHA>"
+```
+
+同じ PR・HEAD・main SHA と、`status` で確認したデプロイ ID を `verify` に指定します。現在の HEAD と専用資源が変わった場合は、新しい対象を `status` で確認します。
+
+```sh
+gh workflow run pr-preview.yml --repo tyask/mille --ref main \
+  -f operation=verify -f pr="<PR番号>" -f sha="<PRの完全HEAD>" -f controlSha="<mainの完全SHA>" \
+  -f deploymentId="<statusで確認したdpl_ID>"
+```
+
+ブラウザは、同じ Vercel プロジェクトの短期 Development OIDC を照合済みの固有 origin にだけ送信します。PC・スマホ × 架空 A/B で、実行中のアプリ SHA、ログイン、本人表示、個人ワークスペースの分離、ログアウト後の拒否を確認します。ブラウザから送る操作は読み取りとテスト認証に限定します。新しい専用 DB を初めて開くと、アプリの既存の初期化処理で架空ユーザーの個人ワークスペースが作成される場合があります。検証の開始前と終了後に PR・デプロイ・DB を照合し、成功した実行の Summary と証跡に識別子とケース結果を保存します。結果を PR に転記する直前にも、現在の HEAD が証跡と一致することを確認します。 [Cake の正式ブラウザ検証](https://github.com/tyask/Cake/blob/5975e5f20d9eb755d991b8725840feab0b778d65/docs/development-workflow.md#L507-L555)
+
 ## URL と Ready 条件
 
 最終 HEAD の独立レビューと [Cloud での最終検証](development.md#最終検証初回-preview)が完了したら、GitHub 上で PR を Ready for review に切り替えます。GitHub CI と正式 Preview の作成は並行で進め、状況と結果を PR に記録します。
