@@ -597,8 +597,7 @@ export class NeonPreview {
         await nativeSqlHttp.run(observation, () => preparePreviewDatabase({ pr, ...connection, initialize: true }));
       } catch {
         const message = "Neon Native Preview の DB 照合・migration・seed を確認できません。";
-        const { status } = observation;
-        if (status !== undefined && (status < 200 || status >= 300)) throw new NativePilotHttpError(message, status);
+        if (observation.status !== undefined) throw new NativePilotHttpError(message, observation.status);
         throw new Error(message);
       }
     });

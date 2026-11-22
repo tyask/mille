@@ -41,7 +41,7 @@ function scenario(t: TestContext, options: {
   templateSqlFailureAt?: string;
   templateSqlTransportFailureAt?: string;
   initializeFails?: boolean;
-  ownershipCheckFails?: "transport" | "marker";
+  ownershipCheckFails?: "transport" | "response" | "marker";
   endpointStays?: boolean;
 } = {}) {
   let branches = options.branches ?? [template, standing, candidate, peer];
@@ -75,6 +75,7 @@ function scenario(t: TestContext, options: {
       const query: string = payload.query;
       if (query.startsWith("SELECT project")) {
         if (options.ownershipCheckFails === "transport") throw new Error(secret);
+        if (options.ownershipCheckFails === "response") return new Response(secret);
         events.push("marker");
         return Response.json({ fields: ["project", "environment", "environment_id"].map(name => ({ name, dataTypeID: 25 })),
           rows: [["tyask/mille", "preview", options.ownershipCheckFails === "marker" ? "mille-pr-9" : "mille-pr-8"]] });
@@ -335,7 +336,8 @@ test("Native 診断は分離照合と初期化の失敗を区別する", async t
   for (const [options, status, events] of [
     [{ initializeFails: true }, 400, ["current"]],
     [{ ownershipCheckFails: "transport" }, undefined, ["current", "migration"]],
-    [{ ownershipCheckFails: "marker" }, undefined, ["current", "migration", "marker"]],
+    [{ ownershipCheckFails: "response" }, 200, ["current", "migration"]],
+    [{ ownershipCheckFails: "marker" }, 200, ["current", "migration", "marker"]],
   ] as const) {
     const initialization = scenario(t, options);
     await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], initialization.verifyCurrent),

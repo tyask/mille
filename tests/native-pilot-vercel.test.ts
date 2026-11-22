@@ -233,6 +233,16 @@ test("一覧を全ページ調べ、同じ ref の別 Deployment と不完全な
   assert.equal((await previous.client.find(target, false))?.sha, previousSha);
 });
 
+test("一覧にあるデプロイと静的ビルドの読み戻しに失敗した場合は HTTP 404 を維持する", async () => {
+  const { client, requests } = scenario({ readbackResponse: new Response(secret, { status: 404 }) });
+  await assert.rejects(client.find(target), /HTTP 404/);
+  const { client: verified } = scenario();
+  const current = await verified.find(target);
+  assert.ok(current);
+  await assert.rejects(client.confirmStatic(current), /HTTP 404/);
+  assert.ok(requests.every(request => request.startsWith("GET ")));
+});
+
 test("固定 ref の生成エイリアスだけを正確な割り当てと照合する", async () => {
   const { client, requests } = scenario({ deployment: { alias: [aliasHost] }, aliases: [{ alias: aliasHost }], directAlias: attachedAlias });
   const found = await client.find(target);
