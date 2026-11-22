@@ -103,7 +103,7 @@ gh workflow run pr-preview.yml --repo tyask/mille --ref main \
   -f deploymentId="<statusで確認したdpl_ID>"
 ```
 
-ブラウザは、同じ Vercel プロジェクトの短期 Development OIDC を照合済みの固有 origin にだけ送信します。PC・スマホ × 架空 A/B で、実行中のアプリ SHA、ログイン、本人表示、個人ワークスペースの分離、ログアウト後の拒否を確認します。ブラウザから送る操作は読み取りとテスト認証に限定します。新しい専用 DB を初めて開くと、アプリの既存の初期化処理で架空ユーザーの個人ワークスペースが作成される場合があります。検証の開始前と終了後に PR・デプロイ・DB を照合し、成功した実行の Summary と証跡に識別子とケース結果を保存します。結果を PR に転記する直前にも、現在の HEAD が証跡と一致することを確認します。 [Cake の正式ブラウザ検証](https://github.com/tyask/Cake/blob/5975e5f20d9eb755d991b8725840feab0b778d65/docs/development-workflow.md#L507-L555)
+ブラウザは、同じ Vercel プロジェクトの短期 Development OIDC を照合済みの固有 origin にだけ送信します。PC・スマホ × 架空 A/B で、実行中のアプリ SHA、ログイン、本人表示、個人ワークスペースの分離、ログアウト後の拒否を確認します。ブラウザから送る操作は読み取りとテスト認証に限定します。Vercel Toolbar の既知のスクリプトはダウンロード前に遮断し、ケース内に固定の確認結果を記録します。別 origin への通信が観測された場合は、そのスクリプトを除き検証が失敗します。新しい専用 DB を初めて開くと、アプリの既存の初期化処理で架空ユーザーの個人ワークスペースが作成される場合があります。検証の開始前と終了後に PR・デプロイ・DB を照合し、成功した実行の Summary と証跡に識別子とケース結果を保存します。結果を PR に転記する直前にも、現在の HEAD が証跡と一致することを確認します。 [Cake の正式ブラウザ検証](https://github.com/tyask/Cake/blob/5975e5f20d9eb755d991b8725840feab0b778d65/docs/development-workflow.md#L507-L555)
 
 ## URL と Ready 条件
 

@@ -57,6 +57,11 @@ export function allowsFormalPreviewRequest(method: string, pathname: string): bo
     || (method === "POST" && ["/api/auth/callback/test-login", "/api/auth/signout"].includes(pathname));
 }
 
+export function isVercelToolbarRequest(method: string, resourceType: string, url: string): boolean {
+  return method === "GET" && resourceType.toLowerCase() === "script"
+    && url === "https://vercel.live/_next-live/feedback/feedback.js";
+}
+
 export function sourceUnchanged(before: Source | null, after: Source | null): boolean {
   return Boolean(before && after && before.sha === after.sha && before.branch === after.branch && before.clean && after.clean);
 }
@@ -210,16 +215,25 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
           requestBoundaryFailed = true;
           if ((item.interceptionFailures?.length ?? 0) < 20) (item.interceptionFailures ??= []).push(failure);
         };
+        const recordToolbarBlocked = () => {
+          if (!item.checks.includes("vercel-toolbar-blocked")) item.checks.push("vercel-toolbar-blocked");
+        };
         if (formal) {
           // Context routing sees the first popup request, before a page event can observe it.
           await context.route("**/*", async route => {
             const request = route.request();
-            let allowed = false;
+            let allowed = false, toolbar = false;
             try {
               const url = new URL(request.url());
-              allowed = request.frame().page() === page && url.origin === origin
-                && allowsFormalPreviewRequest(request.method(), url.pathname);
+              const frame = request.frame();
+              toolbar = frame === page.mainFrame() && isVercelToolbarRequest(request.method(), request.resourceType(), request.url());
+              allowed = frame.page() === page && url.origin === origin && allowsFormalPreviewRequest(request.method(), url.pathname);
             } catch { /* A popup's initial navigation may not have an inspectable frame. */ }
+            if (toolbar) {
+              await route.abort("blockedbyclient");
+              recordToolbarBlocked();
+              return;
+            }
             if (allowed) {
               await route.fallback();
               return;
@@ -234,11 +248,16 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         }
         // CDP observes every redirect hop; context-wide headers would leak to other origins.
         const interception = await context.newCDPSession(page);
+        const mainFrameId = formal ? (await interception.send("Page.getFrameTree")).frameTree.frame.id : undefined;
         interception.on("Fetch.requestPaused", async event => {
           let operation: InterceptionFailure["operation"] = "parse-request";
           try {
             const url = new URL(event.request.url);
-            if (url.origin !== origin) {
+            if (formal && event.frameId === mainFrameId && event.request.urlFragment === undefined
+              && isVercelToolbarRequest(event.request.method, event.resourceType, event.request.url)) {
+              await interception.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" });
+              recordToolbarBlocked();
+            } else if (url.origin !== origin) {
               operation = "foreign-origin";
               recordBoundaryFailure({ operation, reason: "foreign-origin" });
               await interception.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { allowsFormalPreviewRequest, scopedProtectionHeaders, type BrowserProof } from "../scripts/cloud/verify";
+import { allowsFormalPreviewRequest, isVercelToolbarRequest, scopedProtectionHeaders, type BrowserProof } from "../scripts/cloud/verify";
 import type { PreviewStatus } from "../scripts/preview/status";
 import { readDevelopmentOidc, verifyCurrentPreview } from "../scripts/preview/verify";
 
@@ -73,6 +73,20 @@ test("正式 Preview の通信は同一 origin の OIDC と読み取り・テス
     assert.equal(allowsFormalPreviewRequest("POST", path), false);
   }
   assert.equal(allowsFormalPreviewRequest("DELETE", "/api/workspaces/id"), false);
+});
+
+test("既知の Vercel Toolbar スクリプトの GET だけを検証対象外の遮断として識別する", () => {
+  const url = "https://vercel.live/_next-live/feedback/feedback.js";
+  assert.equal(isVercelToolbarRequest("GET", "script", url), true);
+  assert.equal(isVercelToolbarRequest("GET", "Script", url), true);
+  assert.equal(isVercelToolbarRequest("POST", "script", url), false);
+  assert.equal(isVercelToolbarRequest("GET", "document", url), false);
+  for (const invalid of [
+    `${url}?extra=1`, `${url}#extra`, url.replace("https://", "https://user@"),
+    url.replace("vercel.live", "another.vercel.live"), url.replace("feedback.js", "another.js"),
+  ]) {
+    assert.equal(isVercelToolbarRequest("GET", "script", invalid), false);
+  }
 });
 
 test("既存 Vercel 資格情報で GET した短期 OIDC のチーム・プロジェクト・環境・期限を検証する", async () => {
