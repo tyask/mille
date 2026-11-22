@@ -2,9 +2,9 @@ import { appendFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { nativeVercelProject, nativeVercelDeploymentInventory, nativeVercelEnvironmentInventory,
-  hasDetachedPreviewEnvironments } from "./native-pilot-vercel";
-import { inspectDetachedNativeResource, NativeResourceInspectionError } from "./native-resource";
+import { detachedNativeVercelProject, detachedNativeVercelEnvironmentInventory,
+  nativeVercelDeploymentInventory } from "./native-pilot-vercel";
+import { inspectNativePreviewNeonResource, NativeResourceInspectionError } from "./native-resource";
 import { neonPreviewBranchDetails, neonPreviewBranchEndpoints, neonPreviewBranchInventory,
   neonPreviewConnectionQuery, neonPreviewConnectionUri, matchesNeonPreviewConnection } from "./neon";
 
@@ -13,9 +13,6 @@ const environment = z.object({
   NEON_API_KEY: z.string().min(1),
   MILLE_PR_PREVIEW_VERCEL_TEAM_ID: z.string().regex(/^team_[A-Za-z0-9]+$/),
   MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: z.string().regex(/^prj_[A-Za-z0-9]+$/),
-  MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: z.string().regex(/^store_[A-Za-z0-9]+$/),
-  MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: z.string().regex(/^icfg_[A-Za-z0-9]+$/),
-  MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: z.string().regex(/^iap_[A-Za-z0-9]+$/),
   MILLE_PR_PREVIEW_NEON_PROJECT_ID: z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/),
   MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID: z.string().regex(/^org-[a-z0-9][a-z0-9-]{0,55}$/),
   MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: z.string().regex(/^br-[a-z0-9][a-z0-9-]{0,56}$/),
@@ -25,7 +22,6 @@ const environment = z.object({
 
 const resourceChecks = {
   configuration: "診断の入力設定",
-  store: "Vercel ストア",
   project: "Neon プロジェクト",
   branch: "Neon ブランチ一覧と既定ブランチ",
   endpoint: "Neon エンドポイント一覧",
@@ -69,10 +65,6 @@ export async function diagnoseNativePreview(
   if (!parsed.success) return [{ name: resourceChecks.configuration, ok: false }];
   const env = parsed.data;
   const config = {
-    teamId: env.MILLE_PR_PREVIEW_VERCEL_TEAM_ID,
-    storeId: env.MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID,
-    integrationId: env.MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID,
-    productId: env.MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID,
     neonProjectId: env.MILLE_PR_PREVIEW_NEON_PROJECT_ID,
     neonOrganizationId: env.MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID,
     templateBranchId: env.MILLE_PR_PREVIEW_NEON_TEMPLATE_ID,
@@ -83,9 +75,10 @@ export async function diagnoseNativePreview(
     return [{ name: resourceChecks.configuration, ok: false }];
   }
 
+  const teamId = env.MILLE_PR_PREVIEW_VERCEL_TEAM_ID;
   const vercelUrl = (path: string) => {
     const url = new URL(`https://api.vercel.com${path}`);
-    url.searchParams.set("teamId", config.teamId);
+    url.searchParams.set("teamId", teamId);
     return url;
   };
   const neonUrl = (path: string) => new URL(`https://console.neon.tech/api/v2${path}`);
@@ -93,7 +86,6 @@ export async function diagnoseNativePreview(
   const neonProject = `/projects/${config.neonProjectId}`;
   const template = `${neonProject}/branches/${config.templateBranchId}`;
   const routes = new Map<string, keyof typeof resourceChecks>([
-    [`/v1/storage/stores/${config.storeId}`, "store"],
     [neonProject, "project"],
     [`${neonProject}/branches?limit=100`, "branch"],
     [`${neonProject}/endpoints`, "endpoint"],
@@ -105,9 +97,7 @@ export async function diagnoseNativePreview(
     if (!stage) throw new NativeResourceInspectionError("configuration");
     const check = { name: resourceChecks[stage], ok: false };
     checks.set(stage, check);
-    const store = stage === "store";
-    const url = store ? vercelUrl(path) : neonUrl(path);
-    const result = await readMetadata(check, url, store ? env.VERCEL_TOKEN : env.NEON_API_KEY, request);
+    const result = await readMetadata(check, neonUrl(path), env.NEON_API_KEY, request);
     if (stage === "branch" && !neonPreviewBranchInventory.safeParse(result).success) {
       throw new NativeResourceInspectionError(stage);
     }
@@ -116,7 +106,7 @@ export async function diagnoseNativePreview(
   }
   const neonChecks: Promise<Check>[] = [];
   try {
-    const verified = await inspectDetachedNativeResource(config, { vercel: inspectResource, neon: inspectResource });
+    const verified = await inspectNativePreviewNeonResource(config, inspectResource);
     if (verified.templateIsDefault) throw new NativeResourceInspectionError("branch");
     const roots = [
       { label: "テンプレート", name: "mille-pr-template", id: verified.branchId, isDefault: false,
@@ -159,11 +149,9 @@ export async function diagnoseNativePreview(
     probe(name, vercelUrl(path), env.VERCEL_TOKEN, request, schema, status);
   const supplementalChecks = await Promise.all([
     ...neonChecks,
-    probeVercel("Vercel プロジェクト", `/v9/projects/${projectId}`, nativeVercelProject.refine(project =>
-      project.id === projectId && project.accountId === config.teamId && hasDetachedPreviewEnvironments(project.env ?? []))),
+    probeVercel("Vercel プロジェクト", `/v9/projects/${projectId}`, detachedNativeVercelProject(teamId, projectId)),
     probeVercel("Vercel 環境変数メタデータ", `/v10/projects/${projectId}/env?decrypt=false`,
-      nativeVercelEnvironmentInventory.refine(({ envs, pagination }) => hasDetachedPreviewEnvironments(envs)
-        && (pagination?.count === undefined || pagination.count === envs.length))),
+      detachedNativeVercelEnvironmentInventory),
     probeVercel("Vercel デプロイ一覧の先頭ページ", `/v6/deployments?projectId=${projectId}&limit=100`,
       nativeVercelDeploymentInventory.refine(({ deployments, pagination }) => pagination.count === deployments.length
         && deployments.every(deployment => deployment.projectId === projectId)

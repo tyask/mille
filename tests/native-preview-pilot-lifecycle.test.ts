@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { executeNativePilot } from "../scripts/preview/native-pilot";
+import { executeNativePilot, nativePilotProviders } from "../scripts/preview/native-pilot";
 import { milleRepositoryId } from "../scripts/preview/native-identity";
 import { assertNativePilotFirstCreation } from "../scripts/preview/native-pilot-history";
 import type { NativePilotDeployment } from "../scripts/preview/native-pilot-vercel";
@@ -28,6 +28,16 @@ const cleanup = { operation: "cleanup", number: pr, sha: head, closedAt } as con
 const repository = { id: milleRepositoryId, full_name: "tyask/mille" };
 const gitPolicy = Buffer.from(JSON.stringify({ git: { deploymentEnabled: { "**": false, main: true } } }));
 const configSha = createHash("sha1").update(`blob ${gitPolicy.length}\0`).update(gitPolicy).digest("hex");
+
+test("Native pilot configures the Vercel provider with the existing project credentials", () => {
+  const providers = nativePilotProviders({
+    NODE_ENV: "test",
+    MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID: "br-standing",
+    MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID: "ep-standing",
+  }, { token: "vercel-test-token", teamId: "team_Fixture", projectId: "prj_Fixture" });
+  assert.equal(providers.standingBranchId, "br-standing");
+  assert.equal(providers.standingEndpointId, "ep-standing");
+});
 
 function fixture(target: PreviewTarget, options: {
   markerMode?: string;
@@ -123,6 +133,14 @@ test("Native pilot makes no provider change for unsafe source or shared Git ref"
   reused.refs.set(peer, ref);
   await assert.rejects(executeNativePilot(reused.input), /Git ブランチ/);
   assert.deepEqual(reused.events, []);
+});
+
+test("Native pilot stops before creating, initializing or deleting resources when project binding fails", async () => {
+  for (const { input, events } of [fixture(deploy), fixture(cleanup, { existing: deployment, child: database })]) {
+    input.vercel.preflight = async () => { throw new Error("project binding"); };
+    await assert.rejects(executeNativePilot(input), /project binding/);
+    assert.deepEqual(events, ["neon preflight"]);
+  }
 });
 
 test("Native pilot rejects unreconciled branches and mismatched published endpoint digests", async () => {

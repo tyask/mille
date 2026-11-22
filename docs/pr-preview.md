@@ -33,45 +33,45 @@ GitHub Actions の `Mille PR Preview` で **Run workflow** を開き、ブラン
 
 Vercel Marketplace の既存 Free リソース `mille-preview` を、常設 Preview と PR 専用 Preview で共用します。常設 Preview は現在の `main` ブランチの endpoint を使い、PR 専用 Preview は空の `mille-pr-template` を分岐元にします。Vercel 連携の Preview 分岐は、プロジェクトの現在の既定ブランチを使用します。 [Neon の Preview 分岐仕様](https://neon.com/docs/guides/vercel-managed-integration#enable-automated-preview-branching-recommended) · [Cake の共通設定](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/preview.config.json)
 
-Vercel に接続する前に、信頼済みの `main` の checkout で `npm run preview:verify-native-resource` を実行します。対象を読み取れる既存の `VERCEL_TOKEN` と `NEON_API_KEY` をプロセス環境に渡します。資格情報の値はコマンド引数、ログ、検証記録に含めません。次の環境変数には管理画面で照合した識別子を設定します。
+接続前に、Vercel の設定画面で既存ストアが対象の Neon プロジェクト `mille-preview` に対応し、プランは Free、接続先は 0 件であることを確認します。対象を読み取れる既存の `VERCEL_TOKEN` と `NEON_API_KEY` をプロセス環境に渡し、信頼済みの `main` の checkout で `npm run preview:verify-native-resource` を実行します。資格情報の値はコマンド引数、ログ、検証記録に含めません。次の環境変数には管理画面で照合した識別子を設定します。
 
 | 環境変数 | 対象 |
 | --- | --- |
 | `MILLE_PR_PREVIEW_VERCEL_TEAM_ID` | Vercel の `fumin1` スコープの ID |
-| `MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID` | `mille-preview` の Marketplace ストア ID |
-| `MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID` | Marketplace のインストール（構成）ID |
-| `MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID` | Neon の Marketplace 製品 ID |
+| `MILLE_PR_PREVIEW_VERCEL_PROJECT_ID` | Vercel の `mille` プロジェクト ID |
 | `MILLE_PR_PREVIEW_NEON_PROJECT_ID` | `mille-preview` の Neon プロジェクト ID |
 | `MILLE_PR_PREVIEW_NEON_TEMPLATE_ID` | `mille-pr-template` のブランチ ID |
 | `MILLE_NATIVE_PREVIEW_NEON_ORGANIZATION_ID` | `mille-preview` が所属する Neon 組織 ID |
 | `MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID` | 常設用 `main` のブランチ ID |
 | `MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID` | 常設 Preview の既存 endpoint ID |
 
-コマンドは両プロバイダーの管理 API を読み取り、Free プランでアプリへの接続が 0 件のストアを、同じ Neon プロジェクト ID と照合します。Neon では、分岐元候補と常設の独立したブランチと endpoint を照合し、現在の既定ブランチを表示します。分岐元候補の標準 DB とロールも確認します。現行の PR 用子ブランチがある場合は、分岐元候補の子として照合します。
+コマンドは既存資格情報を使い、Cake と同様に Vercel のチーム・プロジェクトと GitHub リポジトリの対応、Neon のプロジェクトと分岐元候補を照合します。 [Cake の照合処理](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/preview/preview-provider.ts#L41-L49)
+
+試験用ブランチに継承される Preview 変数がないこと、分岐元候補と常設のブランチ・endpoint が独立していること、分岐元候補の標準 DB とロールを確認します。現在の既定ブランチを表示します。現行の PR 用子ブランチがある場合は、分岐元候補の子として照合します。
 
 分岐元候補の空の状態は、照合した `mille-pr-template` に対する読み取り専用 SQL で確認します。常設 Preview の既存接続変数が常設用 Git ブランチに限定され、現在の常設 endpoint を指すことも確認します。
 
 ### 旧構成での Actions 診断
 
-Vercel の試験接続が解除され、Neon の既定が常設用 `main` の状態で、Actions の **Mille Native Preview Diagnosis** を信頼済みの `main` から手動実行します。上記の照合済み識別子のうち、`store`、`integration`、`product` に Vercel のストア・構成・製品 ID を、`neon_organization`、`standing_branch`、`standing_endpoint` に Neon の組織・常設ブランチ・常設 endpoint の ID を指定します。 [診断ワークフロー](../.github/workflows/native-preview-diagnosis.yml)
+Vercel の設定画面で試験接続の解除を確認し、Neon の既定が常設用 `main` の状態で、Actions の **Mille Native Preview Diagnosis** を信頼済みの `main` から手動実行します。上記の照合済み識別子のうち、`neon_organization`、`standing_branch`、`standing_endpoint` に Neon の組織・常設ブランチ・常設 endpoint の ID を指定します。 [診断ワークフロー](../.github/workflows/native-preview-diagnosis.yml)
 
-診断は管理ジョブと同じ GitHub Environment `mille-pr-preview` の資格情報を使い、Vercel と Neon の管理 API を GET で照合します。診断ステップのログから確認項目と、取得できた場合の HTTP 状態を記録します。
+診断は GitHub Environment `mille-pr-preview` の既存 `VERCEL_TOKEN` と `NEON_API_KEY` を使います。Vercel の対象プロジェクト、環境変数メタデータ、デプロイ一覧の先頭ページ、試験エイリアスと、Neon のプロジェクト、ブランチ、endpoint、テンプレート接続先を読み取ります。診断ステップのログから確認項目と、取得できた場合の HTTP 状態を記録します。
 Neon の接続情報は取得したプロセス内で接続先を照合します。テンプレートの空状態は、前段で記載した読み取り専用 SQL の手順で確認します。
 試験エイリアスの HTTP 404 は復旧時の期待応答です。エイリアスへのアクセス権を判定する際は、他の Vercel 照合結果も確認します。
 
 ## Neon Native の接続と切替計画
 
-現行の管理ジョブは、`mille-pr-template` が既定のときは動作を停止します。Native 用の管理処理を用意し、現行 PR 用資源の状態と復旧手順を照合し、プロバイダー設定変更の別承認を得てから、空の `mille-pr-template` を既定に変更します。既存 Vercel プロジェクトの組み込み Preview に限定して接続し、Native 専用の接頭辞を使います。常設用の接続情報は従来の endpoint に固定し、常設 URL と本番設定を照合します。 [Neon の既定ブランチ切替](https://neon.com/docs/manage/branches#set-a-branch-as-default)
+現行の管理ジョブは、`mille-pr-template` が既定のときは動作を停止します。Native 用の管理処理を用意し、現行 PR 用資源の状態と復旧手順を照合し、プロバイダー設定変更の別承認を得てから、空の `mille-pr-template` を既定に変更します。常設用の接続情報は従来の endpoint に固定し、常設 URL と本番設定を照合します。 [Neon の既定ブランチ切替](https://neon.com/docs/manage/branches#set-a-branch-as-default)
 
 既定ブランチを変更する直前までは、現行の管理ジョブと手動の `deploy`・`cleanup` を使います。変更後は現行の PR Preview 処理を休止し、試験用 PR で Native 経路を確認します。管理ジョブで準備用デプロイのビルド定義と成果物を照合し、静的ページだけが公開されることを確かめてから、専用 DB の準備に進みます。PR・現在 HEAD・Deployment・Neon branch・endpoint・世代を照合し、同じ PR の更新でデータが維持され、別の PR と分離されることを確認します。マージとクローズ後は専用資源の不在を確認します。検証が失敗した場合は Native 専用の接続設定を戻し、`main` を既定に戻してから、現行の管理ジョブを再開します。 [Cake のデプロイ手順](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/preview/preview-service.ts#L50-L97)
 
 ### Native の試験用 DB と削除
 
-1. 切替に必要な処理を `main` に入れ、現行方式の PR 資源の削除と管理ジョブの終了を確認します。既存の停止設定で旧ジョブを休止し、別承認を得た切替で空の `mille-pr-template` を既定にし、Vercel の Preview にだけ既存ストアを接続します。Native 専用の接頭辞は `MILLE_NATIVE_PREVIEW_` です。常設 Preview の Git ブランチ向け接続設定は既存 endpoint を使います。
+1. 切替に必要な処理を `main` に入れ、現行方式の PR 資源の削除と管理ジョブの終了を確認します。既存の停止設定で旧ジョブを休止し、別承認を得た切替で空の `mille-pr-template` を既定にします。Vercel で既存ストアを `mille` に接続し、**Environments** と **Create database branch for deployment** はどちらも **Preview** だけを選びます。**Custom Prefix** を `MILLE_NATIVE_PREVIEW` にし、**Sensitive** をオンにします。Vercel の設定画面で接続先が `mille` の 1 件であること、接続と自動分岐がともに Preview 限定であること、生成された変数名が `MILLE_NATIVE_PREVIEW_DATABASE_URL` であることを確認します。常設 Preview の Git ブランチ向け接続設定は既存 endpoint を使います。
 2. 信頼済み `main` を起点に `codex/native-preview-pilot-a` と `codex/native-preview-pilot-b` で試験用 draft PR を2件用意します。各 PR の差分は `docs` ディレクトリへの通常ファイル `native-preview-pilot.md` の追加だけにします。管理ジョブは実際に渡す Git ツリーと信頼済み `main` のモードと blob を照合し、Vercel に管理トークンを渡さずに静的ビルドを要求します。
-3. 上記のストアと常設の識別子を GitHub Environment `mille-pr-preview` の variables に設定します。既存の管理資格情報を使い、Repository variables に `MILLE_PR_PREVIEW_MODE=native-pilot` と `MILLE_NATIVE_PREVIEW_PILOTS` を設定します。対象番号は2件を半角カンマで指定します。設定を照合した後に `MILLE_PR_PREVIEW_ENABLED=true` とします。まだ実行していない試験 PR で文書だけを一度更新すると、現行の PR 更新イベントから試験ジョブを起動できます。管理ジョブは選んだ2件を直列に実行します。手動の `deploy` でも現在の PR 番号と完全 SHA を指定できます。
-4. 結果は管理ジョブの Summary で確認します。静的成果物、ブランチ・endpoint、既定・常設・観測済みの相手 PR とロールのパスワードが異なることを照合できた場合だけ、当該試験 DB に main の migration と架空ユーザー A/B を入れます。一般 PR のアプリはこのモードで公開されません。実際に Vercel から渡る資格情報を使った分離と、一般 PR のアプリ公開・更新は Native 実環境で引き続き検証します。 [Neon のロール仕様](https://neon.com/docs/guides/protected-branches#new-passwords-generated-for-postgres-roles-on-child-branches)
-5. 試験 PR をクローズし、同じ管理ジョブで所有が合うブランチ・endpoint・静的デプロイの不在を確認します。作成結果が不明な場合、管理ジョブは過去の試行を照合して停止します。削除が途中で止まり、再実行でブランチを特定できない場合は、保持された Vercel の記録と先行ジョブの削除照合ログの ID で各資源の状態を確認します。試験ジョブを停止して実行中の処理の終了を確認し、Native 接続と既定ブランチを元に戻してから、試験モードを解除します。
+3. GitHub Environment `mille-pr-preview` の variables に `MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID` と `MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID` を設定します。既存の管理資格情報を使い、Repository variables に `MILLE_PR_PREVIEW_MODE=native-pilot` と `MILLE_NATIVE_PREVIEW_PILOTS` を設定します。対象番号は2件を半角カンマで指定します。設定を照合した後に `MILLE_PR_PREVIEW_ENABLED=true` とします。まだ実行していない試験 PR で文書だけを一度更新すると、現行の PR 更新イベントから試験ジョブを起動できます。管理ジョブは選んだ2件を直列に実行します。手動の `deploy` でも現在の PR 番号と完全 SHA を指定できます。
+4. 結果は管理ジョブの Summary で確認します。静的成果物を照合し、準備用ビルドに注入された DB の接続先が専用ブランチの endpoint と一致することを確認します。Neon の管理 API で専用の接続先とロールのパスワードを既定・常設・確認済みの相手 PR と比較し、分離を照合できた場合だけ当該試験 DB に `main` の migration と架空ユーザー A/B を入れます。一般 PR のアプリへの資格情報の注入、接続の分離、更新時のデータ保持は Native 実環境で引き続き検証します。 [Neon のロール仕様](https://neon.com/docs/guides/protected-branches#new-passwords-generated-for-postgres-roles-on-child-branches)
+5. 試験 PR をクローズし、同じ管理ジョブで所有が合うブランチ・endpoint・静的デプロイの不在を確認します。作成結果が不明な場合、管理ジョブは過去の試行を照合して停止します。削除が途中で止まり、再実行でブランチを特定できない場合は、保持された Vercel の記録と先行ジョブの削除照合ログの ID で各資源の状態を確認します。試験ジョブを停止して実行中の処理の終了を確認します。Vercel で試験接続を解除して接続先が 0 件であることを確認し、Neon の既定ブランチを常設用 `main` に戻してから試験モードを解除します。
 
 ## URL と Ready 条件
 

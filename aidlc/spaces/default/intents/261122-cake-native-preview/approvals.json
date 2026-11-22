@@ -1,0 +1,19 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "recordedAt": "2026-11-22T03:54:08Z",
+  "planApproval": {
+    "sequence": 1,
+    "reply": "承認します",
+    "scope": "チャットで提示した Marketplace API 照合を外して Cake の方式に揃える変更計画"
+  },
+  "issueApproval": {
+    "sequence": 2,
+    "reply": "承認します",
+    "scope": "計画追記後に GitHub から再取得し、URL と全文をチャットに提示した Issue #32 の本文"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "sha256": "05de36d8648b6e85ee051303274cc5ee0de3319ab9afd8ed6f25f753b8d30f0f"
+  }
+}

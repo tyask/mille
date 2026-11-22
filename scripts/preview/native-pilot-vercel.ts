@@ -6,6 +6,7 @@ const projectName = "mille";
 const repository = "tyask/mille";
 const protocol = "mille-native-preview-pilot/v1";
 const prefix = "MILLE_NATIVE_PREVIEW_";
+const nativeDatabaseUrl = `${prefix}DATABASE_URL`;
 const endpointHeader = "x-mille-native-endpoint-sha256";
 const nativeVariables = new Set([
   "DATABASE_URL", "DATABASE_URL_UNPOOLED", "NEON_PROJECT_ID", "PGHOST", "PGHOST_UNPOOLED",
@@ -23,28 +24,19 @@ const ref = z.enum(["codex/native-preview-pilot-a", "codex/native-preview-pilot-
 const pr = z.int().positive().max(2147483647);
 const time = z.int().positive();
 const repositoryId = z.union([z.literal(milleRepositoryId), z.literal(String(milleRepositoryId))]);
-const previewOnly = z.tuple([z.literal("preview")]);
 const readyState = z.enum(["QUEUED", "INITIALIZING", "ANALYZING", "BUILDING", "DEPLOYING", "READY", "ERROR", "CANCELED", "BLOCKED"]);
 const terminal = new Set<string>(["READY", "ERROR", "CANCELED", "BLOCKED"]);
 const targetSchema = z.object({ pr, ref, sha });
 const configSchema = z.object({
   token: z.string().min(1), teamId, projectId,
-  storeId: z.string().regex(/^store_[A-Za-z0-9]+$/),
-  integrationId: z.string().regex(/^icfg_[A-Za-z0-9]+$/),
-  productId: z.string().regex(/^iap_[A-Za-z0-9]+$/),
-  neonProjectId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/),
 });
 
 const environment = z.object({
   key: z.string().min(1),
   target: z.array(z.enum(["production", "preview", "development"])).min(1),
   gitBranch: z.string().min(1).nullish(),
-  configurationId: z.string().nullish(),
   customEnvironmentIds: z.array(z.string()).nullish(),
-  contentHint: z.object({
-    type: z.string(), integrationConfigurationId: z.string().optional(),
-    integrationProductId: z.string().optional(), storeId: z.string().optional(),
-  }).nullish(),
+  contentHint: z.object({ type: z.string() }).nullish(),
 });
 const project = z.object({
   id: projectId, name: z.literal(projectName), accountId: teamId,
@@ -59,18 +51,6 @@ const project = z.object({
   connectBuildsEnabled: z.literal(false).optional(), connectConfigurationId: z.null().optional(),
   connectConfigurations: z.tuple([]).nullish(), passiveConnectConfigurationId: z.null().optional(),
 });
-const store = z.object({ store: z.object({
-  id: z.string(), name: z.literal("mille-preview"), ownerId: teamId, externalResourceId: z.string(),
-  type: z.literal("integration"), status: z.literal("available"), totalConnectedProjects: z.literal(1),
-  billingPlan: z.object({ id: z.literal("free_v3") }),
-  product: z.object({ id: z.string(), slug: z.literal("neon"), integrationConfigurationId: z.string() }),
-  projectsMetadata: z.tuple([z.object({
-    projectId, environments: previewOnly, envVarPrefix: z.enum(["MILLE_NATIVE_PREVIEW", prefix]),
-    environmentVariables: z.array(z.string()).min(1),
-    deployments: z.object({ actions: z.tuple([z.object({ slug: z.string().min(1), environments: previewOnly })]) }),
-  })]),
-}) });
-
 const pagination = z.object({ count: z.int().nonnegative(), next: time.nullable() });
 const completePagination = z.object({ next: z.null().optional(), count: z.int().nonnegative().optional() }).optional();
 const environmentInventory = z.object({ envs: z.array(environment), pagination: completePagination });
@@ -118,8 +98,7 @@ const aliasList = z.object({
 });
 
 export type NativePilotTarget = { pr: number; ref: string; sha: string };
-export { project as nativeVercelProject, inventory as nativeVercelDeploymentInventory,
-  environmentInventory as nativeVercelEnvironmentInventory };
+export { inventory as nativeVercelDeploymentInventory };
 export type NativePilotDeployment = NativePilotTarget & {
   id: string; generation: string; requestedAt: number; createdAt: number; readyAt?: number;
   endpointDigest?: string; url: string; readyState: z.infer<typeof readyState>;
@@ -148,8 +127,32 @@ function isTrustedPreviewBranch(branch: string | null | undefined): boolean {
   return typeof branch === "string" && /^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(branch) && !/^codex\//i.test(branch);
 }
 
-export function hasDetachedPreviewEnvironments(envs: readonly z.infer<typeof environment>[]): boolean {
+function hasDetachedPreviewEnvironments(envs: readonly z.infer<typeof environment>[]): boolean {
   return envs.every(env => !env.target.includes("preview") || isTrustedPreviewBranch(env.gitBranch));
+}
+
+export function detachedNativeVercelProject(team: string, id: string) {
+  return project.refine(value => value.id === id && value.accountId === team
+    && hasDetachedPreviewEnvironments(value.env ?? []));
+}
+
+const completeEnvironmentInventory = environmentInventory.refine(({ envs, pagination: page }) =>
+  page?.count === undefined || page.count === envs.length);
+
+export const detachedNativeVercelEnvironmentInventory = completeEnvironmentInventory.refine(({ envs }) =>
+  hasDetachedPreviewEnvironments(envs));
+
+function nativeEnvironmentKeys(envs: readonly z.infer<typeof environment>[]): Set<string> | null {
+  const keys = new Set<string>();
+  for (const env of envs) {
+    const native = nativeVariables.has(env.key);
+    const preview = env.target.includes("preview");
+    if (!native && (!preview || isTrustedPreviewBranch(env.gitBranch))) continue;
+    if (!native || !preview || env.target.length !== 1 || env.gitBranch != null || env.customEnvironmentIds?.length
+      || keys.has(env.key) || env.contentHint?.type !== "integration-store-secret") return null;
+    keys.add(env.key);
+  }
+  return keys;
 }
 
 export class NativePilotVercel {
@@ -188,37 +191,11 @@ export class NativePilotVercel {
     if (verifiedProject.id !== config.projectId || verifiedProject.accountId !== config.teamId) {
       throw new Error("Vercel プロジェクトの所有を確認できません。");
     }
-    const [{ store: attached }, listed] = await Promise.all([
-      this.api(`/v1/storage/stores/${config.storeId}`).then(value => parse(store, value)),
-      this.api(`/v10/projects/${config.projectId}/env?decrypt=false`).then(value => parse(environmentInventory, value)),
-    ]);
-    const [binding] = attached.projectsMetadata;
-    const keys = new Set(binding.environmentVariables);
-    if (attached.id !== config.storeId || attached.ownerId !== config.teamId || attached.externalResourceId !== config.neonProjectId
-      || attached.product.id !== config.productId || attached.product.integrationConfigurationId !== config.integrationId
-      || binding.projectId !== config.projectId || keys.size !== binding.environmentVariables.length
-      || !keys.has(`${prefix}DATABASE_URL`) || [...keys].some(key => !nativeVariables.has(key))) {
-      throw new Error("Vercel の Native 試験用ストア接続を確認できません。");
-    }
-    const inventoryComplete = listed.pagination?.count === undefined || listed.pagination.count === listed.envs.length;
-    if (!inventoryComplete || ![listed.envs, verifiedProject.env ?? []].every(envs => this.allowedEnvironments(envs, keys))) {
+    const listed = parse(completeEnvironmentInventory, await this.api(`/v10/projects/${config.projectId}/env?decrypt=false`));
+    if (!nativeEnvironmentKeys(listed.envs)?.has(nativeDatabaseUrl)
+      || nativeEnvironmentKeys(verifiedProject.env ?? []) === null) {
       throw new Error("Vercel の Native 試験に継承される環境変数を確認できません。");
     }
-  }
-
-  private allowedEnvironments(envs: z.infer<typeof environment>[], storeKeys: ReadonlySet<string>): boolean {
-    const seen = new Set<string>();
-    return envs.every(env => {
-      if (!env.target.includes("preview")) return true;
-      if (isTrustedPreviewBranch(env.gitBranch)) return true;
-      const hint = env.contentHint;
-      if (env.gitBranch != null || env.customEnvironmentIds?.length || env.target.length !== 1 || seen.has(env.key)
-        || !storeKeys.has(env.key) || hint?.type !== "integration-store-secret" || hint.storeId !== this.config.storeId
-        || hint.integrationConfigurationId !== this.config.integrationId || hint.integrationProductId !== this.config.productId
-        || (env.configurationId != null && env.configurationId !== this.config.integrationId)) return false;
-      seen.add(env.key);
-      return true;
-    });
   }
 
   private alias(host: string) {

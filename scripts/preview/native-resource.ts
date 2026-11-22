@@ -5,38 +5,16 @@ const templateName = "mille-pr-template";
 const standingName = "main";
 const legacyBranchName = /^mille-pr-[1-9][0-9]*$/;
 const region = "aws-ap-southeast-1";
-const vercelId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/);
 const neonId = z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/);
 const branchId = neonId.refine(id => /^br-[a-z0-9]/.test(id));
 const endpointId = neonId.refine(id => /^ep-[a-z0-9]/.test(id) && !id.endsWith("-pooler"));
 const configuration = z.object({
-  teamId: z.string().regex(/^team_[A-Za-z0-9]+$/),
-  storeId: vercelId,
-  integrationId: vercelId,
-  productId: vercelId,
   neonProjectId: neonId,
   neonOrganizationId: neonId.refine(id => /^org-[a-z0-9]/.test(id)),
   templateBranchId: branchId,
   standingBranchId: branchId,
   standingEndpointId: endpointId,
 });
-
-const storeDetails = z.object({ store: z.object({
-  id: vercelId,
-  ownerId: vercelId,
-  type: z.literal("integration"),
-  status: z.literal("available"),
-  name: z.literal(resourceName),
-  externalResourceId: neonId,
-  projectsMetadata: z.tuple([]),
-  totalConnectedProjects: z.literal(0),
-  product: z.object({
-    id: vercelId,
-    slug: z.literal("neon"),
-    integrationConfigurationId: vercelId,
-  }),
-  billingPlan: z.object({ id: z.literal("free_v3") }),
-}) });
 
 const projectDetails = z.object({ project: z.object({
   id: neonId,
@@ -92,7 +70,6 @@ type Read = (path: string) => Promise<unknown>;
 
 const messages = {
   configuration: "Native Preview 専用リソースの照合設定が無効です。",
-  store: "Vercel の未接続 Native Preview リソースと Free プランを確認できません。",
   project: "Neon の Native Preview 用プロジェクトを確認できません。",
   branch: "Neon の常設ブランチと PR 用テンプレートの分離を確認できません。",
   endpoint: "Neon の直接接続用 read-write エンドポイントを確認できません。",
@@ -129,28 +106,21 @@ function verifiedRootEndpoint(endpoints: readonly z.infer<typeof endpointMetadat
   return endpoint;
 }
 
-export async function inspectDetachedNativeResource(
-  config: z.input<typeof configuration>, readers: { vercel: Read; neon: Read },
+export async function inspectNativePreviewNeonResource(
+  config: z.input<typeof configuration>, read: Read,
 ) {
   const parsed = configuration.safeParse(config);
   if (!parsed.success) throw new NativeResourceInspectionError("configuration");
-  const { teamId, storeId, integrationId, productId, neonProjectId, neonOrganizationId,
-    templateBranchId, standingBranchId, standingEndpointId } = parsed.data;
+  const { neonProjectId, neonOrganizationId, templateBranchId, standingBranchId, standingEndpointId } = parsed.data;
   if (templateBranchId === standingBranchId) throw new NativeResourceInspectionError("configuration");
 
-  const { store } = await readMetadata(readers.vercel, `/v1/storage/stores/${storeId}`, storeDetails, "store");
-  if (store.id !== storeId || store.ownerId !== teamId || store.externalResourceId !== neonProjectId
-    || store.product.id !== productId || store.product.integrationConfigurationId !== integrationId) {
-    throw new NativeResourceInspectionError("store");
-  }
-
   const projectPath = `/projects/${neonProjectId}`;
-  const { project } = await readMetadata(readers.neon, projectPath, projectDetails, "project");
+  const { project } = await readMetadata(read, projectPath, projectDetails, "project");
   if (project.id !== neonProjectId || project.org_id !== neonOrganizationId) {
     throw new NativeResourceInspectionError("project");
   }
 
-  const { branches } = await readMetadata(readers.neon, `${projectPath}/branches?limit=100`, branchInventory, "branch");
+  const { branches } = await readMetadata(read, `${projectPath}/branches?limit=100`, branchInventory, "branch");
   const branchesById = new Map(branches.map(branch => [branch.id, branch]));
   const template = branchesById.get(templateBranchId);
   const standing = branchesById.get(standingBranchId);
@@ -166,7 +136,7 @@ export async function inspectDetachedNativeResource(
     throw new NativeResourceInspectionError("branch");
   }
 
-  const { endpoints } = await readMetadata(readers.neon, `${projectPath}/endpoints`, endpointInventory, "endpoint");
+  const { endpoints } = await readMetadata(read, `${projectPath}/endpoints`, endpointInventory, "endpoint");
   if (new Set(endpoints.map(endpoint => endpoint.id)).size !== endpoints.length
     || new Set(endpoints.map(endpoint => endpoint.host)).size !== endpoints.length
     || endpoints.some(endpoint => endpoint.project_id !== neonProjectId || !branchesById.has(endpoint.branch_id))) {
@@ -177,12 +147,12 @@ export async function inspectDetachedNativeResource(
   if (standingEndpoint.id !== standingEndpointId) throw new NativeResourceInspectionError("endpoint");
 
   const branchPath = `${projectPath}/branches/${template.id}`;
-  const { databases: [database] } = await readMetadata(readers.neon, `${branchPath}/databases`, databases, "database");
+  const { databases: [database] } = await readMetadata(read, `${branchPath}/databases`, databases, "database");
   if (database.branch_id !== template.id) throw new NativeResourceInspectionError("database");
-  const { roles: [role] } = await readMetadata(readers.neon, `${branchPath}/roles`, roles, "role");
+  const { roles: [role] } = await readMetadata(read, `${branchPath}/roles`, roles, "role");
   if (role.branch_id !== template.id) throw new NativeResourceInspectionError("role");
 
-  return { teamId, storeId, integrationId, productId, neonProjectId, neonOrganizationId, region: project.region_id,
+  return { neonProjectId, neonOrganizationId, region: project.region_id,
     branchId: template.id, endpointId: templateEndpoint.id, host: templateEndpoint.host, database: database.name, role: role.name,
     currentDefaultBranchId: template.default ? template.id : standing.id, templateIsDefault: template.default,
     standingBranchId: standing.id, standingEndpointId: standingEndpoint.id, standingHost: standingEndpoint.host };
