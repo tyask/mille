@@ -150,7 +150,7 @@ test("確認済みの Git ソースと準備用環境変数だけで Preview を
   assert.equal(verified, 2);
   assert.equal(writes.length, 1);
   const { meta, env, ...body } = writes[0];
-  assert.deepEqual(body, { project: config.projectId, name: "mille", gitSource: source, public: false, build: { env } });
+  assert.deepEqual(body, { project: config.projectId, name: "mille", gitSource: source, build: { env } });
   assert.deepEqual(env, {
     AUTH_MODE: "test", MILLE_NATIVE_PREVIEW_PHASE: "provision", MILLE_NATIVE_PREVIEW_PR: "17",
     MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: target.ref, MILLE_NATIVE_PREVIEW_SOURCE_SHA: target.sha,
@@ -193,6 +193,8 @@ test("事前照合と作成要求・応答の失敗を固定工程と HTTP 状�
     { options: { readbackResponse: new Response(secret, { status: 404 }) }, stage: "vercel-create-response", status: " (HTTP 404)" },
     { options: { readbackResponse: Response.json({ id: secret }) }, stage: "vercel-create-response", status: " (HTTP 200)" },
     { options: { details: () => ({ ownerId: "team_Other" }) }, stage: "vercel-create-response", status: " (HTTP 200)" },
+    { options: { details: () => ({ public: true }) }, stage: "vercel-create-response", status: " (HTTP 200)" },
+    { options: { details: () => ({ public: undefined }) }, stage: "vercel-create-response", status: " (HTTP 200)" },
   ];
   for (const { options, stage, status } of cases) {
     const failed = scenario({ deployment: null, ...options });
@@ -204,6 +206,36 @@ test("事前照合と作成要求・応答の失敗を固定工程と HTTP 状�
       assert.doesNotMatch(error.message, new RegExp(secret));
       return true;
     });
+    assert.deepEqual(failed.requests.filter(request => request.startsWith("POST ")), ["POST /v13/deployments"]);
+  }
+});
+
+test("作成拒否の診断を固定ラベルに限定し、失敗した POST を自動再送しない", async t => {
+  const log = t.mock.method(console, "log", () => {});
+  const error = (code: string, message = secret) => Response.json({
+    error: { code, message, url: `https://${secret}.example`, value: config.token },
+  }, { status: 400 });
+  const cases = [
+    { response: error("missing_files"), label: "デプロイに必要なファイルが不足" },
+    { response: error("no_files"), label: "デプロイ対象のファイルが空" },
+    { response: error("env_too_many_keys"), label: "環境変数の件数上限を超過" },
+    { response: error("bad_request", `Invalid request: additional property public (${secret})`) },
+    { response: error(secret) },
+    { response: new Response(secret, { status: 400 }) },
+  ];
+  for (const { response, label } of cases) {
+    log.mock.resetCalls();
+    const failed = scenario({ deployment: null, postResponse: response });
+    await assert.rejects(failed.client.provision(target, generation, current), error => {
+      assert.ok(error instanceof NativePilotStageError);
+      assert.equal(error.stage, "vercel-create-request");
+      assert.equal(error.message, "Vercel API POST が失敗しました (HTTP 400)。");
+      assert.equal(formatNativePilotFailure(error), "Native Preview 診断 Vercel のデプロイ作成要求 (HTTP 400)");
+      return true;
+    });
+    const expected = [["Native Preview 診断 Vercel のデプロイ作成要求を開始しました。"]];
+    if (label) expected.push([`Native Preview 診断 Vercel のデプロイ作成要求（${label}） (HTTP 400)。`]);
+    assert.deepEqual(log.mock.calls.map(call => call.arguments), expected);
     assert.deepEqual(failed.requests.filter(request => request.startsWith("POST ")), ["POST /v13/deployments"]);
   }
 });

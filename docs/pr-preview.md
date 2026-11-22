@@ -79,6 +79,8 @@ Neon の接続情報は取得したプロセス内で接続先を照合します
 
 次の実行を判断する前に、同じ PR の過去のジョブと各 HEAD、Vercel のデプロイとエイリアス、Neon のブランチと endpoint を照合します。作成要求の応答が不明な場合も、作成済みの可能性を考慮します。先行する `deploy` が実行され、対応するデプロイを確認できない場合は初回作成履歴の確認で停止します。既存資源の所有を照合した結果をもとに、復旧手順を判断します。
 
+Native の Git デプロイは Cake と同じく、プロジェクトの Preview 保護で開始し、作成結果の非公開設定と所有情報を照合してから先に進みます。Vercel が作成要求を HTTP 400 で拒否し、既知の入力エラーを返した場合は固定の理由が管理ログに追加されます。 [Cake の作成処理](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/preview/preview-service.ts#L50-L69) · [Vercel のエラー仕様](https://vercel.com/docs/rest-api/errors#deployment-errors)
+
 切替を戻した後の接続設定は [旧構成での Actions 診断](#旧構成での-actions-診断) で確認します。Native 接続情報を使うアプリの動作、PR 更新後のデータ保持、クローズとマージによる作成済み資源の削除は、実資源を使う試験で確認します。
 
 ## URL と Ready 条件
