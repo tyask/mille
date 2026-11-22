@@ -1,9 +1,11 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { setTimeout as delay } from "node:timers/promises";
-import { neon } from "@neondatabase/serverless";
+import { neon, neonConfig } from "@neondatabase/serverless";
 import { z } from "zod";
 import type { MigrationSource } from "../db/sql";
 import { preparePreviewDatabase, previewDatabaseEnvironmentId } from "./database";
 import { isNativePreviewTaskBranch } from "./native-identity";
+import { NativePilotHttpError, NativePilotStageError, nativePilotStage } from "./native-pilot-diagnostics";
 
 const api = "https://console.neon.tech/api/v2";
 const projectName = "mille-preview";
@@ -11,6 +13,24 @@ const templateName = "mille-pr-template";
 const templateDatabase = "neondb";
 const templateRole = "neondb_owner";
 const repository = "tyask/mille";
+
+const nativeSqlHttp = new AsyncLocalStorage<{ status?: number }>();
+const observingFetches = new WeakSet<typeof fetch>();
+
+function observeNativeSqlHttp(): void {
+  const configuredFetch = neonConfig.fetchFunction as typeof fetch | undefined;
+  if (configuredFetch && observingFetches.has(configuredFetch)) return;
+  const observingFetch: typeof fetch = async (...args) => {
+    const observation = nativeSqlHttp.getStore();
+    if (observation) observation.status = undefined;
+    const response = await (configuredFetch ?? globalThis.fetch)(...args);
+    if (observation) observation.status = response.status;
+    return response;
+  };
+  observingFetches.add(observingFetch);
+  neonConfig.fetchFunction = observingFetch;
+}
+
 // Neon provides cloud_admin-owned monitoring objects in its system databases.
 const templateInspection = `
   SELECT pg_catalog.current_database() AS database, current_user AS role,
@@ -149,7 +169,7 @@ function nativePassword(connection: string): string {
 }
 
 export class NeonPreviewError extends Error {
-  constructor(message: string, readonly diagnostic: string) {
+  constructor(message: string, readonly diagnostic: string, readonly httpStatus?: number) {
     super(message);
   }
 }
@@ -159,6 +179,7 @@ class NeonRequestError extends NeonPreviewError {
     super(
       status ? `Neon API が HTTP ${status} を返しました。` : "Neon API に接続できませんでした。",
       `${request}.${status ? `http_${status}` : "network"}`,
+      status || undefined,
     );
   }
 }
@@ -222,7 +243,7 @@ export class NeonPreview {
           const field = schemaPath
             .filter((key): key is string => typeof key === "string" && diagnosticSchemaProperties.has(key))
             .join(".") || "response";
-          throw new NeonPreviewError("Neon API の応答形式が一致しません。", `${request}.schema.${field}`);
+          throw new NeonPreviewError("Neon API の応答形式が一致しません。", `${request}.schema.${field}`, response.status);
         }
         return result.data;
       }
@@ -288,6 +309,16 @@ export class NeonPreview {
   }
 
   async #assertEmptyTemplate(nativeRoot?: NativeNeonBranch): Promise<void> {
+    if (!nativeRoot) {
+      const { connectionString } = await this.#templateConnection();
+      await this.#inspectTemplateDatabases(connectionString);
+      return;
+    }
+    const { connectionString } = await nativePilotStage("neon-template-metadata", () => this.#templateConnection(nativeRoot));
+    await nativePilotStage("neon-template-sql", () => this.#inspectTemplateDatabases(connectionString, true));
+  }
+
+  async #templateConnection(nativeRoot?: NativeNeonBranch) {
     const { parentBranchId } = this.#config;
     const [parent, resources] = await Promise.all([
       this.#request(`/branches/${parentBranchId}`, branchDetails),
@@ -303,18 +334,29 @@ export class NeonPreview {
       || resources.roles[0].name !== templateRole || resources.roles[0].protected) {
       throw new Error("Neon テンプレートの DB またはロールの一覧が一致しません。");
     }
-    const { connectionString } = await this.#connection(parentBranchId, templateDatabase, templateRole, nativeRoot);
+    return this.#connection(parentBranchId, templateDatabase, templateRole, nativeRoot);
+  }
+
+  async #inspectTemplateDatabases(connectionString: string, captureHttpStatus = false): Promise<void> {
+    if (captureHttpStatus) observeNativeSqlHttp();
     for (const name of [templateDatabase, "postgres", "template1"]) {
       const url = new URL(connectionString);
       url.pathname = `/${name}`;
-      try {
+      // The SDK's error does not expose a status. Observe each response without reading its body.
+      const observation: { status?: number } | undefined = captureHttpStatus ? {} : undefined;
+      const read = async () => {
         const query = neon(url.href);
         const [rows] = await query.transaction([query.query(templateInspection)], { readOnly: true });
         if (rows.length !== 1 || rows[0].database !== name || rows[0].role !== templateRole || rows[0].empty !== true) {
           throw new Error("Neon テンプレートの内容が一致しません。");
         }
+      };
+      try {
+        await (observation ? nativeSqlHttp.run(observation, read) : read());
       } catch {
-        throw new Error("Neon テンプレートが空であることを確認できません。");
+        const message = "Neon テンプレートが空であることを確認できません。";
+        if (observation?.status !== undefined) throw new NativePilotHttpError(message, observation.status);
+        throw new Error(message);
       }
     }
   }
@@ -526,30 +568,39 @@ export class NeonPreview {
       throw new Error("Neon Native Preview の標準 DB とロールが一致しません。");
     }
 
-    const [template, standing, ...peers] = await Promise.all([
-      this.#nativeRoot(this.#config.parentBranchId, templateName, true), this.#nativeRoot(standingBranchId, "main", false),
-      ...peerNames.map(peer => this.#verifiedNativeBranch(inventory, peer)),
-    ]);
-    const otherBranches = [template, standing, ...peers].filter(other => other !== null);
-    const endpoints = new Set([child, ...otherBranches].map(item => item.endpointId));
-    if (otherBranches.length !== peerNames.length + 2 || endpoints.size !== otherBranches.length + 1) {
-      throw new Error("Neon Native Preview の比較対象を確認できません。");
-    }
-    const connection = await this.#connection(child.id, templateDatabase, templateRole, child);
-    const password = nativePassword(connection.connectionString);
-    for (const other of otherBranches) {
-      const otherConnection = await this.#connection(other.id, templateDatabase, templateRole, other);
-      if (nativePassword(otherConnection.connectionString) === password) {
-        throw new Error("Neon Native Preview のロール資格情報が共有されています。");
+    const connection = await nativePilotStage("neon-isolation", async () => {
+      const [template, standing, ...peers] = await Promise.all([
+        this.#nativeRoot(this.#config.parentBranchId, templateName, true), this.#nativeRoot(standingBranchId, "main", false),
+        ...peerNames.map(peer => this.#verifiedNativeBranch(inventory, peer)),
+      ]);
+      const otherBranches = [template, standing, ...peers].filter(other => other !== null);
+      const endpoints = new Set([child, ...otherBranches].map(item => item.endpointId));
+      if (otherBranches.length !== peerNames.length + 2 || endpoints.size !== otherBranches.length + 1) {
+        throw new Error("Neon Native Preview の比較対象を確認できません。");
       }
-    }
+      const childConnection = await this.#connection(child.id, templateDatabase, templateRole, child);
+      const password = nativePassword(childConnection.connectionString);
+      for (const other of otherBranches) {
+        const otherConnection = await this.#connection(other.id, templateDatabase, templateRole, other);
+        if (nativePassword(otherConnection.connectionString) === password) {
+          throw new NativePilotStageError("neon-shared-credentials", new Error("Neon Native Preview のロール資格情報が共有されています。"));
+        }
+      }
+      return childConnection;
+    });
 
-    await verifyCurrent();
-    try {
-      await preparePreviewDatabase({ pr, ...connection, initialize: true });
-    } catch {
-      throw new Error("Neon Native Preview の DB 照合・migration・seed を確認できません。");
-    }
+    await nativePilotStage("github-target", verifyCurrent);
+    await nativePilotStage("neon-initialize", async () => {
+      observeNativeSqlHttp();
+      const observation: { status?: number } = {};
+      try {
+        await nativeSqlHttp.run(observation, () => preparePreviewDatabase({ pr, ...connection, initialize: true }));
+      } catch {
+        const message = "Neon Native Preview の DB 照合・migration・seed を確認できません。";
+        if (observation.status !== undefined) throw new NativePilotHttpError(message, observation.status);
+        throw new Error(message);
+      }
+    });
   }
 
   async #requireNativeAbsent<T>(path: string, schema: z.ZodType<T>): Promise<void> {

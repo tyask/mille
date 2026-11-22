@@ -1,0 +1,19 @@
+{
+  "id": "261122-native-preview-completion",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": ["AC-03"],
+  "phase": "試験ジョブが停止した工程の診断",
+  "branch": "codex/issue-32-native-pilot-diagnostics",
+  "baseSha": "11a85226c3d04a9fca23650f51b953a8aa036063",
+  "state": "frozen",
+  "approvedIssueSha256": "f42ae356f224c13bbc80cdb712d50f4673ed4daf8799e903ab344b8755e354bf",
+  "implementationPlanSha256": "e74b184a2d3e6117a6779fa8fb86770646e719d63acf107c918400dd6d5c0fdd",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-22T05:06:24Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "GitHub、Vercel、Neon と従来方式の関連テスト91件",
+    "固定された診断出力、取得した HTTP 状態、秘密値の非出力、単発の作成要求、共有検出後の DB 初期化前停止を確認",
+    "承認済み本文と計画の SHA-256、git diff --check"
+  ]
+}

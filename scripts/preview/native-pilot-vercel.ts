@@ -1,6 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { milleRepositoryId } from "./native-identity";
+import { nativePilotStage, NativePilotHttpError } from "./native-pilot-diagnostics";
 
 const projectName = "mille";
 const repository = "tyask/mille";
@@ -105,11 +106,26 @@ export type NativePilotDeployment = NativePilotTarget & {
 };
 type VerifyCurrent = () => Promise<void>;
 type Config = z.infer<typeof configSchema>;
+type Method = "GET" | "POST" | "DELETE";
 
-function parse<T>(schema: z.ZodType<T>, value: unknown): T {
+function parse<T>(schema: z.ZodType<T>, value: unknown, status?: number): T {
   const parsed = schema.safeParse(value);
-  if (!parsed.success) throw new Error("Vercel の Native 試験用構成または応答を確認できません。");
+  if (!parsed.success) {
+    const message = "Vercel の Native 試験用構成または応答を確認できません。";
+    throw status === undefined ? new Error(message) : new NativePilotHttpError(message, status);
+  }
   return parsed.data;
+}
+
+function verifyStatus(response: Response, method: Method): void {
+  if (!response.ok) {
+    throw new NativePilotHttpError(`Vercel API ${method} が失敗しました (HTTP ${response.status})。`, response.status);
+  }
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  try { return await response.json(); }
+  catch { throw new NativePilotHttpError("Vercel API の応答形式を確認できません。", response.status); }
 }
 
 function sameDeployment(a: NativePilotDeployment, b: NativePilotDeployment): boolean {
@@ -162,12 +178,11 @@ export class NativePilotVercel {
     this.config = parse(configSchema, config);
   }
 
-  private async api(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown, allowMissing = false) {
+  private async send(path: string, method: Method, body?: unknown): Promise<Response> {
     const url = new URL(path, "https://api.vercel.com");
     url.searchParams.set("teamId", this.config.teamId);
-    let response: Response;
     try {
-      response = await this.request(url, {
+      return await this.request(url, {
         method, redirect: "error", signal: AbortSignal.timeout(30_000),
         headers: {
           Authorization: `Bearer ${this.config.token}`, Accept: "application/json",
@@ -178,70 +193,86 @@ export class NativePilotVercel {
     } catch {
       throw new Error(`Vercel API ${method} の応答を確認できません。`);
     }
-    if (response.status === 404 && allowMissing) return null;
-    if (!response.ok) throw new Error(`Vercel API ${method} が失敗しました (HTTP ${response.status})。`);
-    if (method === "DELETE") return null;
-    try { return await response.json() as unknown; }
-    catch { throw new Error("Vercel API の応答形式を確認できません。"); }
+  }
+
+  private async read<T>(path: string, schema: z.ZodType<T>): Promise<T> {
+    const response = await this.send(path, "GET");
+    verifyStatus(response, "GET");
+    return parse(schema, await readJson(response), response.status);
   }
 
   async preflight(): Promise<void> {
     const config = this.config;
-    const verifiedProject = parse(project, await this.api(`/v9/projects/${config.projectId}`));
+    const verifiedProject = await this.read(`/v9/projects/${config.projectId}`, project);
     if (verifiedProject.id !== config.projectId || verifiedProject.accountId !== config.teamId) {
       throw new Error("Vercel プロジェクトの所有を確認できません。");
     }
-    const listed = parse(completeEnvironmentInventory, await this.api(`/v10/projects/${config.projectId}/env?decrypt=false`));
+    const listed = await this.read(`/v10/projects/${config.projectId}/env?decrypt=false`, completeEnvironmentInventory);
     if (!nativeEnvironmentKeys(listed.envs)?.has(nativeDatabaseUrl)
       || nativeEnvironmentKeys(verifiedProject.env ?? []) === null) {
       throw new Error("Vercel の Native 試験に継承される環境変数を確認できません。");
     }
   }
 
-  private alias(host: string) {
-    return this.api(`/v4/aliases/${host}`, "GET", undefined, true);
+  private async alias(host: string) {
+    const response = await this.send(`/v4/aliases/${host}`, "GET");
+    if (response.status === 404) return { status: response.status, value: null };
+    verifyStatus(response, "GET");
+    return { status: response.status, value: await readJson(response) };
   }
 
   private async assertAliasUnassigned(branch: z.infer<typeof ref>): Promise<void> {
-    if (await this.alias(branchAlias(branch)) !== null) throw new Error("Native 試験用のブランチ URL は既に割り当てられています。");
+    if ((await this.alias(branchAlias(branch))).value !== null) {
+      throw new Error("Native 試験用のブランチ URL は既に割り当てられています。");
+    }
   }
 
   private async verifyDeploymentAlias(id: string, branch: z.infer<typeof ref>, detailAliases: readonly string[]): Promise<void> {
     const host = branchAlias(branch);
     const [list, direct] = await Promise.all([
-      this.api(`/v2/deployments/${id}/aliases`).then(value => parse(aliasList, value)),
+      this.read(`/v2/deployments/${id}/aliases`, aliasList),
       this.alias(host),
     ]);
     const names = [...detailAliases, ...list.aliases.map(alias => alias.alias)];
     if (names.some(alias => alias !== host) || (list.pagination?.count !== undefined && list.pagination.count !== list.aliases.length)) {
       throw new Error("Native 試験用 Deployment に想定外のエイリアスがあります。");
     }
-    if (direct === null && names.length === 0) return;
-    const aliased = parse(aliasDetails, direct);
+    if (direct.value === null && names.length === 0) return;
+    const aliased = parse(aliasDetails, direct.value, direct.status);
     if (aliased.alias !== host || aliased.projectId !== this.config.projectId || aliased.deploymentId !== id) {
-      throw new Error("Native 試験用のブランチ URL の割り当てを確認できません。");
+      throw new NativePilotHttpError("Native 試験用のブランチ URL の割り当てを確認できません。", direct.status);
     }
   }
 
-  private async deployment(id: string, target: NativePilotTarget, exactSha: boolean): Promise<NativePilotDeployment | null> {
+  private async deployment(
+    id: string, target: NativePilotTarget, exactSha: boolean, { allowMissing = false } = {},
+  ): Promise<NativePilotDeployment | null> {
     id = parse(deploymentId, id);
-    const value = await this.api(`/v13/deployments/${id}?withGitRepoInfo=true`, "GET", undefined, true);
-    if (value === null) return null;
-    const item = parse(detailSchema, value);
+    const response = await this.send(`/v13/deployments/${id}?withGitRepoInfo=true`, "GET");
+    if (allowMissing && response.status === 404) return null;
+    verifyStatus(response, "GET");
+    const value = await readJson(response);
+    if (allowMissing && value === null) return null;
+    const item = parse(detailSchema, value, response.status);
     const { meta, gitSource } = item;
     if (item.id !== id || item.projectId !== this.config.projectId || item.ownerId !== this.config.teamId
       || meta.milleNativePilotPr !== String(target.pr) || meta.milleNativePilotRef !== target.ref || gitSource.ref !== target.ref
       || gitSource.sha !== meta.milleNativePilotSha || (exactSha && gitSource.sha !== target.sha)
       || meta.milleNativePilotRequestedAt > item.createdAt
       || (item.ready != null && item.ready < item.createdAt) || (item.readyState === "READY" && item.ready == null)) {
-      throw new Error("Vercel の Native 試験用 Deployment の所有または Git ソースが一致しません。");
+      throw new NativePilotHttpError("Vercel の Native 試験用 Deployment の所有または Git ソースが一致しません。", response.status);
     }
-    if (item.deletedAt != null || item.softDeletedByRetention === true) return null;
+    if (item.deletedAt != null || item.softDeletedByRetention === true) {
+      if (allowMissing) return null;
+      throw new NativePilotHttpError("対象の Vercel Deployment は削除済みです。", response.status);
+    }
     await this.verifyDeploymentAlias(id, gitSource.ref, item.alias ?? []);
     const endpointDigests = (item.routes ?? []).flatMap(route => Object.entries(route.headers ?? {}))
       .filter(([name]) => name.toLowerCase() === endpointHeader).map(([, value]) => value);
-    if (endpointDigests.length > 1) throw new Error("複数の Native エンドポイント確認ヘッダーがあります。");
-    const endpointDigest = parse(sha256.optional(), endpointDigests[0]);
+    if (endpointDigests.length > 1) {
+      throw new NativePilotHttpError("複数の Native エンドポイント確認ヘッダーがあります。", response.status);
+    }
+    const endpointDigest = parse(sha256.optional(), endpointDigests[0], response.status);
     return {
       id, pr: target.pr, ref: target.ref, sha: gitSource.sha, generation: meta.milleNativePilotGeneration,
       requestedAt: meta.milleNativePilotRequestedAt, createdAt: item.createdAt, url: `https://${item.url}`, readyState: item.readyState,
@@ -257,7 +288,7 @@ export class NativePilotVercel {
     let until: number | null = null;
     for (let page = 0; page < 100; page++) {
       const suffix: string = until === null ? "" : `&until=${until}`;
-      const result = parse(inventory, await this.api(`/v6/deployments?projectId=${this.config.projectId}&limit=100${suffix}`));
+      const result = await this.read(`/v6/deployments?projectId=${this.config.projectId}&limit=100${suffix}`, inventory);
       if (result.pagination.count !== result.deployments.length) break;
       for (const item of result.deployments) {
         if (item.projectId !== this.config.projectId || seen.has(item.uid)) {
@@ -287,9 +318,11 @@ export class NativePilotVercel {
   async provision(target: NativePilotTarget, generation: string, verifyCurrent: VerifyCurrent): Promise<NativePilotDeployment> {
     target = parse(targetSchema, target);
     generation = parse(generationId, generation);
-    await this.preflight();
-    if (await this.find(target)) throw new Error("Vercel の Native 試験用 Deployment は作成済みです。");
-    await verifyCurrent();
+    await nativePilotStage("vercel-preflight", () => this.preflight());
+    await nativePilotStage("vercel-inventory", async () => {
+      if (await this.find(target)) throw new Error("Vercel の Native 試験用 Deployment は作成済みです。");
+    });
+    await nativePilotStage("github-target", verifyCurrent);
     const requestedAt = Date.now();
     const env = {
       AUTH_MODE: "test",
@@ -300,7 +333,7 @@ export class NativePilotVercel {
       MILLE_NATIVE_PREVIEW_GENERATION: generation,
       MILLE_NATIVE_PREVIEW_ATTEST_ENDPOINT: "1",
     };
-    const { id } = parse(z.object({ id: deploymentId }), await this.api("/v13/deployments?forceNew=1", "POST", {
+    const body = {
       name: projectName, project: this.config.projectId, public: false,
       gitSource: { type: "github", repoId: milleRepositoryId, ref: target.ref, sha: target.sha },
       env, build: { env },
@@ -309,13 +342,24 @@ export class NativePilotVercel {
         milleNativePilotPr: String(target.pr), milleNativePilotRef: target.ref, milleNativePilotSha: target.sha,
         milleNativePilotGeneration: generation, milleNativePilotRequestedAt: String(requestedAt),
       },
-    }));
-    await verifyCurrent();
-    const result = await this.deployment(id, target, true);
-    if (!result || result.generation !== generation || result.requestedAt !== requestedAt) {
-      throw new Error("作成した Vercel Deployment の世代または作成要求時刻を確認できません。");
-    }
-    return result;
+    };
+    const response = await nativePilotStage("vercel-create-request", async () => {
+      console.log("Native Preview 診断 Vercel のデプロイ作成要求を開始しました。");
+      const result = await this.send("/v13/deployments?forceNew=1", "POST", body);
+      verifyStatus(result, "POST");
+      return result;
+    });
+    const { id } = await nativePilotStage("vercel-create-response", async () =>
+      parse(z.object({ id: deploymentId }), await readJson(response), response.status));
+    console.log(`Native Preview 診断 Vercel のデプロイ作成応答を受領しました (HTTP ${response.status})。`);
+    await nativePilotStage("github-target", verifyCurrent);
+    return nativePilotStage("vercel-create-response", async () => {
+      const result = await this.deployment(id, target, true);
+      if (!result || result.generation !== generation || result.requestedAt !== requestedAt) {
+        throw new Error("作成した Vercel Deployment の世代または作成要求時刻を確認できません。");
+      }
+      return result;
+    });
   }
 
   async confirmStatic(deployment: NativePilotDeployment, verifyCurrent?: VerifyCurrent): Promise<NativePilotDeployment> {
@@ -326,7 +370,7 @@ export class NativePilotVercel {
       const current = await this.deployment(deployment.id, target, true);
       if (!current || !sameDeployment(deployment, current)) throw new Error("準備用 Deployment の所有が変わりました。");
       if (current.readyState === "READY") {
-        const output = parse(builds, await this.api(`/v11/deployments/${current.id}/builds`));
+        const output = await this.read(`/v11/deployments/${current.id}/builds`, builds);
         if (!current.endpointDigest || output.builds.some(build => build.deploymentId !== current.id)
           || output.builds.flatMap(build => build.output).length !== 1
           || (output.pagination?.count !== undefined && output.pagination.count !== output.builds.length)) {
@@ -344,7 +388,7 @@ export class NativePilotVercel {
   async remove(deployment: NativePilotDeployment, verifyCurrent: VerifyCurrent): Promise<void> {
     const target = parse(targetSchema, deployment);
     await verifyCurrent();
-    const current = await this.deployment(deployment.id, target, true);
+    const current = await this.deployment(deployment.id, target, true, { allowMissing: true });
     if (!current) {
       await this.assertAliasUnassigned(target.ref);
       return;
@@ -353,8 +397,11 @@ export class NativePilotVercel {
       throw new Error("Vercel の削除対象またはビルド終了を確認できません。");
     }
     await verifyCurrent();
-    await this.api(`/v13/deployments/${current.id}`, "DELETE", undefined, true);
-    if (await this.deployment(current.id, target, true)) throw new Error("Vercel Deployment の削除を確認できません。");
+    const response = await this.send(`/v13/deployments/${current.id}`, "DELETE");
+    if (response.status !== 404) verifyStatus(response, "DELETE");
+    if (await this.deployment(current.id, target, true, { allowMissing: true })) {
+      throw new Error("Vercel Deployment の削除を確認できません。");
+    }
     await this.assertAliasUnassigned(target.ref);
     await verifyCurrent();
   }

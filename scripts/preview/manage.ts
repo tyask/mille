@@ -1,9 +1,10 @@
 import { appendFile } from "node:fs/promises";
 import { z } from "zod";
 import { previewMigrationSources } from "./database";
-import { previewContext } from "./github";
+import { previewContext, previewGitHubHttpStatus } from "./github";
 import { assertPreviewGitDeploymentPolicy } from "./git-policy";
 import { executeNativePilot, nativePilotProviders } from "./native-pilot";
+import { formatNativePilotFailure, NativePilotStageError, nativePilotStage, type NativePilotStage } from "./native-pilot-diagnostics";
 import { assertNativePilotFirstCreation } from "./native-pilot-history";
 import { nativePilotPrs } from "./native-pilot-selection";
 import { NeonPreview, NeonPreviewError } from "./neon";
@@ -25,8 +26,11 @@ const configuration = z.object({
 let stage = "実行元と PR の照合";
 async function main() {
   const target = previewTargetSchema.parse(JSON.parse(process.env.MILLE_PR_PREVIEW_TARGET ?? ""));
-  const context = await previewContext();
-  const targets = await context.targets();
+  const mode = process.env.MILLE_PR_PREVIEW_MODE;
+  const check = <T>(step: NativePilotStage, run: () => T | Promise<T>) =>
+    mode === "native-pilot" ? nativePilotStage(step, run) : run();
+  const context = await check("github-target", previewContext);
+  const targets = await check("github-target", context.targets);
   if (!targets.some((value) => samePreviewTarget(value, target))) {
     console.log("PR イベントが変更されたため処理を終了しました。");
     return;
@@ -37,15 +41,15 @@ async function main() {
       throw new Error("PR の SHA または状態が変わりました。");
     }
   };
-  await verifyCurrent();
-  const pilots = nativePilotPrs(process.env.MILLE_PR_PREVIEW_MODE, process.env.MILLE_NATIVE_PREVIEW_PILOTS);
+  await check("github-target", verifyCurrent);
+  const pilots = await check("configuration", () => nativePilotPrs(mode, process.env.MILLE_NATIVE_PREVIEW_PILOTS));
   if (pilots && !pilots.includes(target.number)) return;
   if (target.operation === "deploy") {
     stage = "通常の Git デプロイを制限する設定の照合";
-    await assertPreviewGitDeploymentPolicy(context.controlSha, target.sha, context.read);
+    await check("github-deployment-policy", () => assertPreviewGitDeploymentPolicy(context.controlSha, target.sha, context.read));
   }
   stage = "管理ジョブの設定の検証";
-  const config = configuration.parse(process.env);
+  const config = await check("configuration", () => configuration.parse(process.env));
   const neon = new NeonPreview({
     apiKey: config.NEON_API_KEY,
     projectId: config.MILLE_PR_PREVIEW_NEON_PROJECT_ID,
@@ -57,11 +61,11 @@ async function main() {
   const summary = process.env.GITHUB_STEP_SUMMARY;
   if (pilots) {
     stage = "Native Preview の試験用リソース照合・準備・整理";
-    const providers = nativePilotProviders(process.env, {
+    const providers = await nativePilotStage("configuration", () => nativePilotProviders(process.env, {
       token: config.VERCEL_TOKEN,
       teamId: config.MILLE_PR_PREVIEW_VERCEL_TEAM_ID,
       projectId: config.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID,
-    });
+    }));
     const outcome = await executeNativePilot({
       target, pilotPrs: pilots, controlSha: context.controlSha, read: context.read, neon, ...providers,
       verifyFirstCreation: (pr, createdAt) => assertNativePilotFirstCreation(pr, createdAt, process.env, context.read),
@@ -110,6 +114,12 @@ async function main() {
 
 main().catch((error: unknown) => {
   console.error(`Mille PR Preview は「${stage}」で停止しました。資格情報やプロバイダーの応答本文は出力しません。`);
-  if (error instanceof NeonPreviewError) console.error(`Neon 診断 ${error.diagnostic}`);
+  if (error instanceof NativePilotStageError) {
+    const cause = error.cause;
+    const status = cause instanceof NeonPreviewError ? cause.httpStatus : previewGitHubHttpStatus(cause);
+    console.error(formatNativePilotFailure(error, status));
+  } else if (error instanceof NeonPreviewError) {
+    console.error(`Neon 診断 ${error.diagnostic}`);
+  }
   process.exitCode = 1;
 });

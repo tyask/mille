@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { NeonPreview, type NativeNeonBranch } from "../scripts/preview/neon";
+import { neonConfig } from "@neondatabase/serverless";
+import { NativePilotHttpError, NativePilotStageError, formatNativePilotFailure } from "../scripts/preview/native-pilot-diagnostics";
+import { NeonPreview, NeonPreviewError, type NativeNeonBranch } from "../scripts/preview/neon";
 
 const config = { apiKey: "fixture-api-token", projectId: "fixture-preview-project", parentBranchId: "br-template",
   database: "mille_pr", role: "mille_pr_owner", maxPrBranches: 2 };
@@ -15,6 +17,7 @@ const candidate = { ...template, id: "br-native-a", name: `preview/${ref}`, pare
 const peer = { ...candidate, id: "br-native-b", name: `preview/${peerRef}` };
 const db = "neondb";
 const role = "neondb_owner";
+const secret = "fixture-private-provider-error";
 
 function endpoint(branch: typeof template) {
   const id = branch.id.replace(/^br-/, "ep-");
@@ -34,6 +37,11 @@ function scenario(t: TestContext, options: {
   passwords?: Record<string, string>;
   childOwner?: string;
   nonemptyTemplate?: string;
+  templateMetadataStatus?: number;
+  templateSqlFailureAt?: string;
+  templateSqlTransportFailureAt?: string;
+  initializeFails?: boolean;
+  ownershipCheckFails?: "transport" | "response" | "marker";
   endpointStays?: boolean;
 } = {}) {
   let branches = options.branches ?? [template, standing, candidate, peer];
@@ -53,6 +61,8 @@ function scenario(t: TestContext, options: {
         assert.equal(headers.get("Neon-Batch-Read-Only"), "true");
         assert.match(payload.queries[0].query, /pg_largeobject_metadata/);
         inspected.push(database);
+        if (options.templateSqlFailureAt === database) return Response.json({ message: secret }, { status: 400 });
+        if (options.templateSqlTransportFailureAt === database) throw new Error(secret);
         return Response.json({ results: [{
           fields: [{ name: "database", dataTypeID: 25 }, { name: "role", dataTypeID: 25 }, { name: "empty", dataTypeID: 16 }],
           rows: [[database, role, options.nonemptyTemplate === database ? "f" : "t"]],
@@ -61,11 +71,14 @@ function scenario(t: TestContext, options: {
       assert.equal(connection.hostname, expected.host);
       assert.equal(connection.pathname, `/${db}`);
       assert.equal(connection.username, role);
+      if (options.initializeFails) return Response.json({ message: secret }, { status: 400 });
       const query: string = payload.query;
       if (query.startsWith("SELECT project")) {
+        if (options.ownershipCheckFails === "transport") throw new Error(secret);
+        if (options.ownershipCheckFails === "response") return new Response(secret);
         events.push("marker");
         return Response.json({ fields: ["project", "environment", "environment_id"].map(name => ({ name, dataTypeID: 25 })),
-          rows: [["tyask/mille", "preview", "mille-pr-8"]] });
+          rows: [["tyask/mille", "preview", options.ownershipCheckFails === "marker" ? "mille-pr-9" : "mille-pr-8"]] });
       }
       assert.match(query, /mille-pr-8/);
       events.push(query.includes("mille_seed") ? "seed" : "migration");
@@ -112,7 +125,12 @@ function scenario(t: TestContext, options: {
       if (resource === "databases") {
         return Response.json({ databases: [{ branch_id: id, name: db, owner_name: id === candidate.id ? options.childOwner ?? role : role }] });
       }
-      if (resource === "roles") return Response.json({ roles: [{ branch_id: id, name: role, protected: false }] });
+      if (resource === "roles") {
+        if (id === template.id && options.templateMetadataStatus !== undefined) {
+          return Response.json({ message: secret }, { status: options.templateMetadataStatus });
+        }
+        return Response.json({ roles: [{ branch_id: id, name: role, protected: false }] });
+      }
       return Response.json({ branch });
     }
     if (kind === "endpoints") {
@@ -122,6 +140,21 @@ function scenario(t: TestContext, options: {
     assert.fail(`Unknown Neon fixture operation ${path}`);
   });
   return { events, passwordReads, inspected, verifyCurrent };
+}
+
+function failureIn(stage: NativePilotStageError["stage"], httpStatus?: number) {
+  return (error: unknown) => {
+    assert.ok(error instanceof NativePilotStageError);
+    assert.equal(error.stage, stage);
+    const status = error.cause instanceof NativePilotHttpError ? error.cause.status
+      : error.cause instanceof NeonPreviewError ? error.cause.httpStatus : undefined;
+    assert.equal(status, httpStatus);
+    const diagnostic = formatNativePilotFailure(error, status);
+    const loggedStatus = /\(HTTP ([0-9]{3})\)$/.exec(diagnostic)?.[1];
+    assert.equal(loggedStatus, httpStatus === undefined ? undefined : String(httpStatus));
+    assert.doesNotMatch(`${diagnostic}\n${error.message}`, /fixture-|postgresql:\/\//);
+    return true;
+  };
 }
 
 test("Native 試験は既定テンプレートの空状態と既存の常設接続先を照合する", async t => {
@@ -151,6 +184,68 @@ test("常設・既定・テンプレートの空状態が違う場合は Native 
   const fixture = scenario(t);
   await assert.rejects(service.nativePreflight(standing.id, "ep-replaced"), /常設接続先/);
   assert.deepEqual(fixture.passwordReads, []);
+});
+
+test("Native 診断はテンプレートのメタデータと読み取り SQL の失敗を区別する", async t => {
+  const service = new NeonPreview(config);
+  for (const status of [403, 200]) {
+    const fixture = scenario(t, { templateMetadataStatus: status });
+    await assert.rejects(service.nativePreflight(standing.id, endpoint(standing).id, [ref, peerRef]),
+      failureIn("neon-template-metadata", status));
+    assert.deepEqual(fixture.passwordReads, []);
+    assert.deepEqual(fixture.inspected, []);
+    assert.deepEqual(fixture.events, []);
+    t.mock.restoreAll();
+  }
+  for (const [options, status] of [
+    [{ templateSqlFailureAt: "postgres" }, 400],
+    [{ nonemptyTemplate: "postgres" }, 200],
+    [{ templateSqlTransportFailureAt: "postgres" }, undefined],
+  ] as const) {
+    const fixture = scenario(t, options);
+    await assert.rejects(service.nativePreflight(standing.id, endpoint(standing).id, [ref, peerRef]),
+      failureIn("neon-template-sql", status));
+    assert.deepEqual(fixture.passwordReads, [template.id]);
+    assert.deepEqual(fixture.inspected, [db, "postgres"]);
+    assert.deepEqual(fixture.events, []);
+    t.mock.restoreAll();
+  }
+});
+
+test("Native SQL の診断は設定済みの fetch を使い、並行する問い合わせの HTTP 状態を混同しない", async t => {
+  const fixture = scenario(t);
+  const originalFetch: unknown = neonConfig.fetchFunction;
+  t.after(() => { neonConfig.fetchFunction = originalFetch; });
+  const firstStarted = Promise.withResolvers<void>();
+  const releaseFirst = Promise.withResolvers<void>();
+  let sqlRequests = 0;
+  const configuredFetch: typeof fetch = async (input, init) => {
+    assert.equal(new URL(String(input)).pathname, "/sql");
+    assert.equal(new Headers(init?.headers).get("Neon-Batch-Read-Only"), "true");
+    if (++sqlRequests === 1) {
+      firstStarted.resolve();
+      await releaseFirst.promise;
+      throw new Error(secret);
+    }
+    return Response.json({ message: secret }, { status: 429 });
+  };
+  neonConfig.fetchFunction = configuredFetch;
+
+  const service = new NeonPreview(config);
+  const first = assert.rejects(service.nativePreflight(standing.id, endpoint(standing).id, [ref, peerRef]),
+    failureIn("neon-template-sql"));
+  await firstStarted.promise;
+  try {
+    await assert.rejects(service.nativePreflight(standing.id, endpoint(standing).id, [ref, peerRef]),
+      failureIn("neon-template-sql", 429));
+  } finally {
+    releaseFirst.resolve();
+    await first;
+  }
+
+  assert.equal(sqlRequests, 2);
+  assert.deepEqual(fixture.inspected, []);
+  assert.deepEqual(fixture.events, []);
 });
 
 test("Native の子は正確な Git ブランチ名、作成時刻と直接接続先で識別する", async t => {
@@ -212,7 +307,7 @@ test("共有資格情報、欠けた比較対象、別ロール、古い PR で�
   for (const sharedWith of [template, standing, peer]) {
     const fixture = scenario(t, { passwords: { [candidate.id]: "fixture%2Dshared", [sharedWith.id]: "fixture-shared" } });
     await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], fixture.verifyCurrent),
-      { message: "Neon Native Preview のロール資格情報が共有されています。" });
+      failureIn("neon-shared-credentials"));
     assert.deepEqual(fixture.events, []);
     t.mock.restoreAll();
   }
@@ -228,6 +323,29 @@ test("共有資格情報、欠けた比較対象、別ロール、古い PR で�
     throw new Error("stale PR");
   }), /stale PR/);
   assert.deepEqual(fixture.events, []);
+});
+
+test("Native 診断は分離照合と初期化の失敗を区別する", async t => {
+  const service = new NeonPreview(config);
+  const missing = scenario(t, { branches: [template, standing, candidate] });
+  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], missing.verifyCurrent),
+    failureIn("neon-isolation"));
+  assert.deepEqual(missing.events, []);
+  t.mock.restoreAll();
+
+  for (const [options, status, events] of [
+    [{ initializeFails: true }, 400, ["current"]],
+    [{ ownershipCheckFails: "transport" }, undefined, ["current", "migration"]],
+    [{ ownershipCheckFails: "response" }, 200, ["current", "migration"]],
+    [{ ownershipCheckFails: "marker" }, 200, ["current", "migration", "marker"]],
+  ] as const) {
+    const initialization = scenario(t, options);
+    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], initialization.verifyCurrent),
+      failureIn("neon-initialize", status));
+    assert.deepEqual(initialization.passwordReads, [candidate.id, template.id, standing.id, peer.id]);
+    assert.deepEqual(initialization.events, events);
+    t.mock.restoreAll();
+  }
 });
 
 test("Native 子だけを削除し、ブランチと endpoint の不在を再実行でも確認する", async t => {
