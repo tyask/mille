@@ -61,7 +61,7 @@ test("Native pilot configures the Vercel provider with the existing project cred
 function fixture(target: PreviewTarget, options: {
   markerMode?: string;
   existing?: NativePilotDeployment;
-  applications?: typeof application[];
+  applications?: Extract<NativePilotDeployment, { phase: "application" }>[];
   child?: typeof database;
   buildEndpointId?: string;
   peerExists?: boolean;
@@ -144,6 +144,13 @@ function fixture(target: PreviewTarget, options: {
         events.push("application ready");
         return { ...current, endpointId: current.database.endpointId };
       },
+      async waitForTerminal(deploy, verify) {
+        await verify();
+        events.push("settled");
+        const settled = { ...deploy, readyState: "READY" as const, readyAt: deployment.readyAt };
+        records = records.map(item => item.id === settled.id ? settled : item);
+        return settled;
+      },
       async remove(current, verify) {
         await verify();
         events.push(`remove ${current.id}`);
@@ -159,7 +166,7 @@ function fixture(target: PreviewTarget, options: {
       async prepareNativeBranch(_ref, exact, start, number, generation, _standing, peers, verify, end) {
         await verify();
         assert.deepEqual(exact, database);
-        assert.equal(start, deployment.requestedAt);
+        assert.equal(start, options.existing || created ? deployment.requestedAt : undefined);
         assert.equal(end, deployment.readyAt);
         assert.equal(number, pr);
         assert.equal(generation, deployment.generation);
@@ -169,7 +176,7 @@ function fixture(target: PreviewTarget, options: {
       async removeNativeBranch(_ref, exact, start, verify, end) {
         await verify();
         assert.deepEqual(exact, database);
-        assert.equal(start, deployment.requestedAt);
+        assert.equal(start, options.existing ? deployment.requestedAt : undefined);
         assert.equal(end, deployment.readyAt);
         events.push("remove branch");
       },
@@ -231,14 +238,9 @@ test("Native pilot keeps evidence until the exact branch is deleted and refuses 
   const valid = fixture(cleanup, { existing: deployment, child: database });
   assert.equal(await executeNativePilot(valid.input), "removed");
   assert.deepEqual(valid.events.slice(-3), ["static", "remove branch", "remove dpl_Fixture"]);
-  for (const existing of [
-    { ...deployment, readyState: "BUILDING" as const },
-    { ...deployment, readyAt: undefined },
-  ]) {
-    const unsafe = fixture(cleanup, { existing, child: database });
-    await assert.rejects(executeNativePilot(unsafe.input), /終了|準備完了時刻/);
-    assert.ok(!unsafe.events.some(event => event.startsWith("remove")));
-  }
+  const unsafe = fixture(cleanup, { existing: { ...deployment, readyAt: undefined }, child: database });
+  await assert.rejects(executeNativePilot(unsafe.input), /準備完了時刻/);
+  assert.ok(!unsafe.events.some(event => event.startsWith("remove")));
   const mismatch = fixture(cleanup, { existing: deployment, child: database, buildEndpointId: "ep-other" });
   await assert.rejects(executeNativePilot(mismatch.input), /接続先が一致/);
   assert.ok(!mismatch.events.some(event => event.startsWith("remove")));
@@ -262,6 +264,11 @@ test("Native pilot reuses the first branch and generation across HEADs", async (
   assert.deepEqual(await executeNativePilot(repeat.input), ready);
   assert.deepEqual(repeat.events.slice(-2), ["static", "application ready"]);
   assert.ok(!repeat.events.includes("prepare"));
+
+  const expired = fixture(deploy, { applications: [previous], child: database });
+  assert.deepEqual(await executeNativePilot(expired.input), ready);
+  assert.deepEqual(expired.events.slice(-4), ["application ready", "prepare", "application", "application ready"]);
+  assert.ok(!expired.events.includes("provision"));
 });
 
 test("Native pilot rejects a different existing application binding before DB or Vercel writes", async () => {
@@ -281,9 +288,25 @@ test("Native pilot retains an owned app anchor until branch and other deployment
   assert.equal(await executeNativePilot(interrupted.input), "removed");
   assert.deepEqual(interrupted.events.slice(-2), ["branch absent", "remove dpl_App"]);
 
-  const unsafe = fixture(cleanup, { applications: [application], child: database });
-  await assert.rejects(executeNativePilot(unsafe.input), /初回分岐の所有/);
+  const expired = fixture(cleanup, { applications: [application], child: database });
+  assert.equal(await executeNativePilot(expired.input), "removed");
+  assert.deepEqual(expired.events.slice(-3), ["application ready", "remove branch", "remove dpl_App"]);
+
+  const unsafe = fixture(cleanup, { applications: [{ ...application, readyState: "ERROR" }], child: database });
+  await assert.rejects(executeNativePilot(unsafe.input), /ブランチの所有/);
   assert.ok(!unsafe.events.some(event => event.startsWith("remove")));
+});
+
+test("Native cleanup waits for the running app to settle before any deletion", async () => {
+  const building = { ...application, readyState: "BUILDING" as const, readyAt: undefined };
+  const closing = fixture(cleanup, { existing: deployment, applications: [building], child: database });
+  assert.equal(await executeNativePilot(closing.input), "removed");
+  assert.deepEqual(closing.events.slice(-5), ["settled", "static", "remove branch", "remove dpl_Fixture", "remove dpl_App"]);
+
+  const unfinished = fixture(cleanup, { existing: deployment, applications: [building], child: database });
+  unfinished.input.vercel.waitForTerminal = async () => { throw new Error("ビルドの終了待ち"); };
+  await assert.rejects(executeNativePilot(unfinished.input), /終了待ち/);
+  assert.ok(!unfinished.events.some(event => event.startsWith("remove")));
 });
 
 test("Native pilot does not create an app after an unknown previous attempt for the same HEAD", async () => {

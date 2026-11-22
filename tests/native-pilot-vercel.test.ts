@@ -443,6 +443,36 @@ test("終了した同じ Deployment の削除を再照合し、既に削除済�
     if (++verified === 2) throw new Error("PR 再オープン");
   }), /PR 再オープン/);
   assert.ok(stopped.requests.every(request => !request.startsWith("DELETE")));
+  for (const directAlias of [undefined, attachedAlias]) {
+    const reopened = scenario({ directAlias });
+    await assert.rejects(reopened.client.remove(found, async () => {
+      const checked = reopened.requests.filter(request => request === `GET /v4/aliases/${aliasHost}`);
+      if (checked.length >= 2) throw new Error("PR 再オープン");
+    }), /PR 再オープン/);
+    assert.ok(reopened.requests.every(request => !request.startsWith("DELETE")));
+  }
+});
+
+test("所有する Deployment の終了を待ち、終了状態をビルド記録なしで確認する", async () => {
+  for (const readyState of ["READY", "ERROR", "CANCELED", "BLOCKED"]) {
+    const fixture = scenario({ details: reads => reads < 3
+      ? { readyState: "BUILDING", ready: null }
+      : { readyState, ready: readyState === "READY" ? deployment.ready : null }, events: () => assert.fail("ビルド記録の取得は不要です。") });
+    const [pending] = await fixture.client.list(target);
+    let verified = 0;
+    const finished = await fixture.client.waitForTerminal(pending, async () => { verified++; });
+    assert.equal(finished.id, pending.id);
+    assert.equal(finished.readyState, readyState);
+    assert.equal(fixture.waits(), 1);
+    assert.equal(verified, 3);
+    assert.ok(fixture.requests.every(request => request.startsWith("GET ")));
+  }
+  const changed = scenario({ details: reads => ({
+    readyState: "BUILDING", ready: null, url: reads === 1 ? deployment.url : "different-pilot.vercel.app",
+  }) });
+  const [pending] = await changed.client.list(target);
+  await assert.rejects(changed.client.waitForTerminal(pending, current), /所有が変わりました/);
+  assert.equal(changed.waits(), 0);
 });
 
 test("異なる SHA のアプリと静的な準備を同一世代として一覧に含める", async () => {
@@ -480,8 +510,12 @@ test("照合済みの静的ビルドを使い、同じ世代と DB に SHA ご�
   assert.deepEqual(updated.database, database);
   assert.equal(writes.length, 2);
   const { env, meta, ...body } = writes[1];
+  const { AUTH_SECRET: sessionSecret, ...applicationEnvironment } = env as Input;
+  assert.match(String(sessionSecret), /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(sessionSecret, (writes[0].env as Input).AUTH_SECRET);
+  assert.ok(!Object.values(meta as Input).includes(sessionSecret));
   assert.deepEqual(body, { project: config.projectId, name: "mille", gitSource: { ...source, sha: updatedTarget.sha }, build: { env } });
-  assert.deepEqual(env, {
+  assert.deepEqual(applicationEnvironment, {
     AUTH_MODE: "test", MILLE_NATIVE_PREVIEW_PHASE: "application", MILLE_NATIVE_PREVIEW_PR: "17",
     MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: target.ref, MILLE_NATIVE_PREVIEW_SOURCE_SHA: updatedTarget.sha,
     MILLE_NATIVE_PREVIEW_GENERATION: generation, MILLE_NATIVE_PREVIEW_NEON_BRANCH_ID: database.branchId,
@@ -510,6 +544,31 @@ test("アプリの新規作成前に準備の世代、接続先、重複と従�
   await assert.rejects(unknown.client.deployApplication(target, generation, database, current), /HTTP 500/);
   await assert.rejects(unknown.client.deployApplication(target, generation, database, current), /作成済み/);
   assert.equal(unknown.writes.length, 1);
+});
+
+test("静的な準備が期限切れのときは同じ DB の READY アプリを再照合して新しい SHA を作成する", async () => {
+  const appAlias = { ...attachedAlias, deploymentId: applicationId };
+  const fixture = scenario({ deployments: [application], directAlias: appAlias, events: () => [applicationEvent()] });
+  const updated = await fixture.client.deployApplication(updatedTarget, generation, database, current);
+  assert.equal(updated.sha, updatedTarget.sha);
+  assert.equal(updated.generation, generation);
+  assert.deepEqual(updated.database, database);
+  assert.equal(fixture.writes.length, 1);
+  assert.ok(fixture.requests.includes(`GET /v3/deployments/${applicationId}/events`));
+
+  for (const events of [[], [evidenceEvent], [applicationEvent(application, "ep-other")]]) {
+    const missing = scenario({ deployments: [application], directAlias: appAlias, events: () => events });
+    await assert.rejects(missing.client.deployApplication(updatedTarget, generation, database, current), (error: Error) => {
+      assert.ok(error instanceof NativePilotStageError);
+      assert.equal(error.stage, "vercel-application");
+      return true;
+    });
+    assert.equal(missing.writes.length, 0);
+  }
+  const changed = scenario({ deployments: [application], directAlias: appAlias, events: () => [applicationEvent()],
+    details: reads => reads > 2 ? { ready: application.ready + 1 } : {} });
+  await assert.rejects(changed.client.deployApplication(updatedTarget, generation, database, current), /所有が変わりました/);
+  assert.equal(changed.writes.length, 0);
 });
 
 test("READY のアプリに対応するビルド照合記録と DB メタデータを確認する", async () => {

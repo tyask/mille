@@ -33,6 +33,7 @@ export function nativePreviewApplication(environment: Environment) {
   const endpointId = environment.MILLE_NATIVE_PREVIEW_NEON_ENDPOINT_ID ?? "";
   const providerPr = environment.VERCEL_GIT_PULL_REQUEST_ID;
   if (environment.MILLE_NATIVE_PREVIEW_PHASE !== "application" || environment.AUTH_MODE !== "test"
+    || !/^[A-Za-z0-9_-]{43}$/.test(environment.AUTH_SECRET ?? "")
     || (environment.MILLE_DB_MODE !== undefined && environment.MILLE_DB_MODE !== "hosted")
     || environment.MILLE_MEMORY_DATABASE_URL !== undefined || environment.MILLE_MEMORY_DATABASE_TOKEN !== undefined
     || environment.VERCEL !== "1" || environment.VERCEL_ENV !== "preview"

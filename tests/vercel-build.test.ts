@@ -27,6 +27,7 @@ const applicationRef = "codex/native-preview-pilot-a";
 const applicationSha = "a".repeat(40);
 const application = {
   ...production, VERCEL_ENV: "preview", VERCEL_TARGET_ENV: "preview", AUTH_MODE: "test",
+  AUTH_SECRET: "a".repeat(43),
   VERCEL_GIT_REPO_OWNER: "tyask", VERCEL_GIT_REPO_SLUG: "mille", VERCEL_GIT_COMMIT_REF: applicationRef,
   VERCEL_GIT_COMMIT_SHA: applicationSha, VERCEL_GIT_PULL_REQUEST_ID: "41",
   MILLE_NATIVE_PREVIEW_PHASE: "application", MILLE_NATIVE_PREVIEW_PR: "41",
@@ -177,6 +178,7 @@ test("a Native application verifies the existing marker before building and reco
 
   for (const override of [
     { VERCEL_BUILD_IMAGE: undefined }, { VERCEL_TARGET_ENV: "production" }, { MILLE_NATIVE_PREVIEW_PHASE: undefined },
+    { AUTH_SECRET: undefined },
     { MILLE_NATIVE_PREVIEW_DATABASE_URL: application.MILLE_NATIVE_PREVIEW_DATABASE_URL.replace(applicationEndpoint, "ep-standing") },
   ]) {
     await assert.rejects(runVercelBuild({ ...application, ...override }, steps), /Native Preview/);

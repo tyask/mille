@@ -14,7 +14,7 @@ const settings = z.object({
 
 type PilotIdentity = Awaited<ReturnType<typeof resolveNativePreviewIdentity>>;
 type PilotVercel = Pick<NativePilotVercel, "preflight" | "list" | "provision" | "confirmStatic"
-  | "deployApplication" | "confirmApplication" | "remove">;
+  | "deployApplication" | "confirmApplication" | "waitForTerminal" | "remove">;
 type PilotNeon = Pick<NeonPreview, "nativePreflight" | "findNativeBranch" | "prepareNativeBranch"
   | "removeNativeBranch" | "confirmNativeBranchAbsent">;
 type Application = Extract<NativePilotDeployment, { phase: "application" }>;
@@ -64,24 +64,30 @@ function separateDeployments(deployments: NativePilotDeployment[]) {
   };
 }
 
-async function confirmProvision(vercel: PilotVercel, provision: Provision, verifyCurrent: VerifyCurrent) {
-  return nativePilotStage("vercel-static", async () => {
-    const ready = await vercel.confirmStatic(provision, verifyCurrent);
-    if (ready.readyAt === undefined) throw new Error("Native Preview の準備用デプロイの準備完了時刻がありません。");
-    return { ...ready, readyAt: ready.readyAt };
-  });
+function branchEvidence({ provision, applications }: ReturnType<typeof separateDeployments>) {
+  return provision ?? applications.find(item => item.readyState === "READY");
+}
+
+async function confirmBranchEvidence(vercel: PilotVercel, record: NativePilotDeployment, verifyCurrent: VerifyCurrent) {
+  const ready = record.phase === "provision"
+    ? await nativePilotStage("vercel-static", () => vercel.confirmStatic(record, verifyCurrent))
+    : await nativePilotStage("vercel-application", () => vercel.confirmApplication(record, verifyCurrent));
+  if (ready.readyAt === undefined) throw new Error("Native Preview のデプロイの準備完了時刻がありません。");
+  return { ...ready, notBefore: record.phase === "provision" ? ready.requestedAt : undefined, readyAt: ready.readyAt };
 }
 
 async function cleanupPilot(
   input: PilotOperation, identity: PilotIdentity, deployments: NativePilotDeployment[], verifyCurrent: VerifyCurrent,
 ) {
   const { neon, vercel } = input;
-  const { provision, applications } = separateDeployments(deployments);
-  if (deployments.some(item => !terminalStates.has(item.readyState))) {
-    throw new Error("Native Preview の試験デプロイの終了を確認できません。");
-  }
+  const terminal = await Promise.all(deployments.map(item =>
+    terminalStates.has(item.readyState) ? item : vercel.waitForTerminal(item, verifyCurrent)));
+  const groups = separateDeployments(terminal);
+  const { provision, applications } = groups;
+  const record = branchEvidence(groups);
+  const proof = record && await confirmBranchEvidence(vercel, record, verifyCurrent);
   const branch = await nativePilotStage("neon-branch", () =>
-    neon.findNativeBranch(identity.ref, provision?.requestedAt, provision?.readyAt));
+    neon.findNativeBranch(identity.ref, proof?.notBefore, proof?.readyAt));
   if (!deployments.length) {
     if (branch) throw new Error("Native Preview の試験用ブランチの所有を確認できません。");
     return;
@@ -89,9 +95,8 @@ async function cleanupPilot(
 
   // Keep the application that recorded the branch ID until all other resources are absent.
   const anchor = applications.at(-1);
-  const proof = provision && await confirmProvision(vercel, provision, verifyCurrent);
   if (branch && !proof) {
-    throw new Error("Native Preview の試験用ブランチの初回分岐の所有を確認できません。");
+    throw new Error("Native Preview の試験用ブランチの所有を確認できません。");
   }
   const database = branch ? databaseIdentity(branch) : anchor?.database;
   const evidence = anchor ?? provision;
@@ -106,7 +111,7 @@ async function cleanupPilot(
     if (app.id !== anchor?.id) await vercel.remove(app, verifyCurrent);
   }
   if (branch && proof) {
-    await neon.removeNativeBranch(identity.ref, branch, proof.requestedAt, verifyCurrent, proof.readyAt);
+    await neon.removeNativeBranch(identity.ref, branch, proof.notBefore, verifyCurrent, proof.readyAt);
   } else {
     await neon.confirmNativeBranchAbsent(identity.ref, database);
   }
@@ -155,14 +160,16 @@ export async function executeNativePilot(input: PilotOperation): Promise<{ id: s
     return "removed";
   }
 
-  const { provision: existing, applications } = separateDeployments(deployments);
+  const groups = separateDeployments(deployments);
+  const existing = branchEvidence(groups);
+  const { applications } = groups;
   const currentApplication = applications.find(item => item.sha === requested.sha);
   if (existing && !currentApplication) {
     await nativePilotStage("github-history", () => input.verifyApplicationCreation(target.number, target.sha, identity.createdAt));
   }
   // An existing branch without our deployment evidence could belong to an earlier PR using this ref.
   if (!existing) {
-    if (deployments.length) throw new Error("Native Preview の初回分岐のデプロイを確認できません。");
+    if (deployments.length) throw new Error("Native Preview の試験用ブランチの所有記録を確認できません。");
     await nativePilotStage("neon-branch", async () => {
       if (await neon.findNativeBranch(identity.ref)) {
         throw new Error("Native Preview の試験用ブランチの所有を確認できません。");
@@ -170,11 +177,11 @@ export async function executeNativePilot(input: PilotOperation): Promise<{ id: s
     });
     await nativePilotStage("github-history", () => input.verifyFirstCreation(target.number, identity.createdAt));
   }
-  const provision = existing ?? await nativePilotStage("vercel-create-request", () =>
+  const record = existing ?? await nativePilotStage("vercel-create-request", () =>
     vercel.provision(requested, randomUUID(), verifyCurrent));
-  const deployment = await confirmProvision(vercel, provision, verifyCurrent);
+  const deployment = await confirmBranchEvidence(vercel, record, verifyCurrent);
   const branch = await nativePilotStage("neon-branch", async () => {
-    const child = await neon.findNativeBranch(identity.ref, deployment.requestedAt, deployment.readyAt);
+    const child = await neon.findNativeBranch(identity.ref, deployment.notBefore, deployment.readyAt);
     if (!child) throw new Error("Native Preview の試験用ブランチを確認できません。");
     return child;
   });
@@ -188,15 +195,16 @@ export async function executeNativePilot(input: PilotOperation): Promise<{ id: s
   const peerBranches: NativePeerBranch[] = [];
   for (const peer of peers) {
     const records = await nativePilotStage("vercel-inventory", () => vercel.list(targetOf(peer)));
-    const { provision: evidence } = separateDeployments(records);
+    const evidence = branchEvidence(separateDeployments(records));
     const peerBranch = await nativePilotStage("neon-branch", () =>
-      neon.findNativeBranch(peer.ref, evidence?.requestedAt, evidence?.readyAt));
+      neon.findNativeBranch(peer.ref, evidence?.phase === "provision" ? evidence.requestedAt : undefined, evidence?.readyAt));
     if (peerBranch) {
       if (evidence?.readyAt === undefined) {
         throw new NativePilotStageError("ownership", new Error("比較する Native Preview ブランチの所有を確認できません。"));
       }
-      const verified = await confirmProvision(vercel, evidence, verifyCurrent);
+      const verified = await confirmBranchEvidence(vercel, evidence, verifyCurrent);
       verifyNativePilotEndpoint(peerBranch.endpointId, verified.endpointId);
+      if (evidence.phase === "application") verifyApplicationDatabase(evidence, databaseIdentity(peerBranch));
       peerBranches.push({ ref: peer.ref, branch: peerBranch });
     } else if (records.length) {
       throw new NativePilotStageError("ownership", new Error("比較する Native Preview ブランチを確認できません。"));
@@ -204,7 +212,7 @@ export async function executeNativePilot(input: PilotOperation): Promise<{ id: s
   }
   await verifyCurrent();
   await nativePilotStage("neon-isolation", () => neon.prepareNativeBranch(
-    identity.ref, branch, deployment.requestedAt, target.number, deployment.generation,
+    identity.ref, branch, deployment.notBefore, target.number, deployment.generation,
     standingBranchId, peerBranches, verifyCurrent, deployment.readyAt,
   ));
   const application = await nativePilotStage("vercel-create-request", () =>

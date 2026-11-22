@@ -1,7 +1,8 @@
+import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { milleRepositoryId } from "./native-identity";
-import { nativePilotStage, NativePilotHttpError } from "./native-pilot-diagnostics";
+import { nativePilotStage, NativePilotHttpError, NativePilotStageError } from "./native-pilot-diagnostics";
 
 const projectName = "mille";
 const repository = "tyask/mille";
@@ -393,24 +394,32 @@ export class NativePilotVercel {
     await nativePilotStage("vercel-preflight", () => this.preflight());
     const readAvailable = () => nativePilotStage("vercel-inventory", async () => {
       const inventory = await this.listOwned(target);
-      const anchor = inventory.deployments.find(item => item.phase === "provision");
-      if (!anchor || anchor.generation !== generation) {
-        throw new Error("Vercel の静的な準備用 Deployment の世代を照合できません。");
-      }
       for (const deployment of inventory.deployments) {
         if (deployment.phase !== "application") continue;
         if (deployment.sha === target.sha) throw new Error("現在の SHA のアプリ Deployment は作成済みです。");
         if (!sameDatabase(deployment.database, database)) throw new Error("Vercel の既存アプリの DB が一致しません。");
       }
-      return { anchor, owned: inventory.owned };
+      return inventory;
     });
-    const { anchor } = await readAvailable();
-    const verified = await nativePilotStage("vercel-static", () => this.confirmStatic(anchor, verifyCurrent));
+    const available = await readAvailable();
+    const anchor = available.deployments.find(item => item.phase === "provision")
+      ?? available.deployments.find(item => item.phase === "application" && item.readyState === "READY");
+    if (!anchor || anchor.generation !== generation) {
+      throw new NativePilotStageError("vercel-inventory", new Error("Vercel の既存 Deployment の世代を照合できません。"));
+    }
+    const verified = anchor.phase === "provision"
+      ? await nativePilotStage("vercel-static", () => this.confirmStatic(anchor, verifyCurrent))
+      : await nativePilotStage("vercel-application", () => this.confirmApplication(anchor, verifyCurrent));
     if (verified.endpointId !== database.endpointId) {
-      throw new Error("Vercel の静的な準備用ビルドとアプリの接続先が一致しません。");
+      throw new Error("Vercel の既存ビルドとアプリの接続先が一致しません。");
     }
     const current = await readAvailable();
-    if (!sameDeployment(verified, current.anchor)) throw new Error("準備用 Deployment の所有が変わりました。");
+    const original = current.deployments.find(item => item.id === anchor.id);
+    const staticAnchor = current.deployments.find(item => item.phase === "provision");
+    if (!original || original.readyState !== "READY" || !sameDeployment(verified, original)
+      || (staticAnchor && staticAnchor.id !== original.id)) {
+      throw new Error("Vercel の既存 Deployment の所有が変わりました。");
+    }
     return this.create(target, generation, { phase: "application", database }, current.owned, verifyCurrent);
   }
 
@@ -437,6 +446,7 @@ export class NativePilotVercel {
       MILLE_NATIVE_PREVIEW_SOURCE_SHA: target.sha,
       MILLE_NATIVE_PREVIEW_GENERATION: generation,
       ...(database ? {
+        AUTH_SECRET: randomBytes(32).toString("base64url"),
         MILLE_NATIVE_PREVIEW_NEON_BRANCH_ID: database.branchId,
         MILLE_NATIVE_PREVIEW_NEON_ENDPOINT_ID: database.endpointId,
         MILLE_NATIVE_PREVIEW_DATABASE_HOST_SHA256: database.hostDigest,
@@ -516,8 +526,32 @@ export class NativePilotVercel {
   private async confirmBuild(
     deployment: NativePilotDeployment, verifyCurrent?: VerifyCurrent,
   ): Promise<NativePilotDeployment & { endpointId: string }> {
-    const target = parse(targetSchema, deployment);
     const phaseLabel = deployment.phase === "provision" ? "静的な準備用ビルド" : "アプリビルド";
+    return this.pollDeployment(deployment, verifyCurrent, async current => {
+      if (current.readyState === "READY") {
+        const endpointId = await this.readBuildEndpoint(current);
+        if (endpointId !== undefined) return { ...current, endpointId };
+      } else if (terminal.has(current.readyState)) {
+        throw new Error(`Vercel の${phaseLabel}は ${current.readyState} で終了しました。`);
+      }
+      return undefined;
+    }, previous => new Error(previous.readyState === "READY"
+      ? `Vercel の${phaseLabel}照合記録を確認できません。`
+      : `Vercel の${phaseLabel}が READY になりませんでした。`));
+  }
+
+  async waitForTerminal(deployment: NativePilotDeployment, verifyCurrent: VerifyCurrent): Promise<NativePilotDeployment> {
+    return this.pollDeployment(deployment, verifyCurrent,
+      current => terminal.has(current.readyState) ? current : undefined,
+      () => new Error("Vercel Deployment のビルド終了を確認できません。"));
+  }
+
+  private async pollDeployment<T>(
+    deployment: NativePilotDeployment, verifyCurrent: VerifyCurrent | undefined,
+    inspect: (current: NativePilotDeployment) => T | undefined | Promise<T | undefined>,
+    timeout: (last: NativePilotDeployment) => Error,
+  ): Promise<T> {
+    const target = parse(targetSchema, deployment);
     const deadline = Date.now() + 10 * 60_000;
     let previous = deployment;
     for (let attempt = 0; attempt < 120 && Date.now() < deadline; attempt++) {
@@ -525,19 +559,14 @@ export class NativePilotVercel {
       const current = (await this.list(target)).find(item => item.id === deployment.id);
       if (!current || !sameDeployment(previous, current)) throw new Error("Vercel Deployment の所有が変わりました。");
       previous = current;
-      if (current.readyState === "READY") {
-        const endpointId = await this.readBuildEndpoint(current);
-        if (endpointId !== undefined) {
-          await verifyCurrent?.();
-          return { ...current, endpointId };
-        }
-      } else if (terminal.has(current.readyState)) {
-        throw new Error(`Vercel の${phaseLabel}は ${current.readyState} で終了しました。`);
+      const result = await inspect(current);
+      if (result !== undefined) {
+        await verifyCurrent?.();
+        return result;
       }
       await this.wait(5_000);
     }
-    if (previous.readyState === "READY") throw new Error(`Vercel の${phaseLabel}照合記録を確認できません。`);
-    throw new Error(`Vercel の${phaseLabel}が READY になりませんでした。`);
+    throw timeout(previous);
   }
 
   async remove(deployment: NativePilotDeployment, verifyCurrent: VerifyCurrent): Promise<void> {
@@ -557,17 +586,17 @@ export class NativePilotVercel {
     const first = await readRemoval();
     if (!first.current) return;
     if (first.alias?.deploymentId === deployment.id) {
-      await verifyCurrent();
       const alias = await this.verifiedAlias(target.ref, first.owned);
       if (alias?.deploymentId === deployment.id) {
+        await verifyCurrent();
         const aliasRemoved = await this.send(`/v2/aliases/${alias.uid}`, "DELETE");
         if (aliasRemoved.status !== 404) verifyStatus(aliasRemoved, "DELETE");
       }
     }
-    await verifyCurrent();
     const before = await readRemoval();
     if (!before.current) return;
     if (before.alias?.deploymentId === deployment.id) throw new Error("対象 Deployment のエイリアスが残っています。");
+    await verifyCurrent();
     const response = await this.send(`/v13/deployments/${deployment.id}`, "DELETE");
     if (response.status !== 404) verifyStatus(response, "DELETE");
     if ((await readRemoval()).current) throw new Error("Vercel Deployment の削除を確認できません。");

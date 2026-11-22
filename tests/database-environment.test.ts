@@ -19,6 +19,7 @@ const nativeSha = "a".repeat(40);
 const nativeUrl = `postgresql://neondb_owner:native-fixture-password@${nativeHost}/neondb?sslmode=require&channel_binding=require`;
 const native = {
   ...preview, VERCEL: "1", VERCEL_TARGET_ENV: "preview", VERCEL_DEPLOYMENT_ID: "dpl_NativeFixture",
+  AUTH_SECRET: "a".repeat(43),
   VERCEL_GIT_REPO_OWNER: "tyask", VERCEL_GIT_REPO_SLUG: "mille", VERCEL_GIT_COMMIT_REF: nativeRef,
   VERCEL_GIT_COMMIT_SHA: nativeSha, VERCEL_GIT_PULL_REQUEST_ID: "41",
   MILLE_NATIVE_PREVIEW_PHASE: "application", MILLE_NATIVE_PREVIEW_PR: "41", MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: nativeRef,
@@ -102,7 +103,8 @@ test("Native app runtime refuses mismatched Preview metadata, connection identit
     { MILLE_NATIVE_PREVIEW_NEON_BRANCH_ID: "" }, { MILLE_NATIVE_PREVIEW_NEON_ENDPOINT_ID: "ep-other" },
     { MILLE_NATIVE_PREVIEW_NEON_ENDPOINT_ID: `${nativeEndpoint}-pooler` }, { MILLE_NATIVE_PREVIEW_GENERATION: "latest" },
     { VERCEL: undefined }, { VERCEL_DEPLOYMENT_ID: undefined }, { VERCEL_ENV: "production" }, { VERCEL_TARGET_ENV: "production" },
-    { AUTH_MODE: "google" }, { MILLE_DB_MODE: "memory" }, { MILLE_MEMORY_DATABASE_TOKEN: token },
+    { AUTH_MODE: "google" }, { AUTH_SECRET: undefined }, { AUTH_SECRET: "short" },
+    { MILLE_DB_MODE: "memory" }, { MILLE_MEMORY_DATABASE_TOKEN: token },
     { VERCEL_GIT_REPO_OWNER: "other" }, { VERCEL_GIT_REPO_SLUG: "other" }, { VERCEL_GIT_COMMIT_REF: "codex/native-preview-pilot-b" },
     { VERCEL_GIT_COMMIT_SHA: "b".repeat(40) }, { VERCEL_GIT_PULL_REQUEST_ID: "42" },
     { VERCEL_GIT_COMMIT_REF: "main", MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: "main" },

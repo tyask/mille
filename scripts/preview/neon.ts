@@ -543,7 +543,7 @@ export class NeonPreview {
   }
 
   async prepareNativeBranch(
-    ref: string, expected: NativeNeonBranch, notBefore: number, pr: number, generation: string, standingBranchId: string,
+    ref: string, expected: NativeNeonBranch, notBefore: number | undefined, pr: number, generation: string, standingBranchId: string,
     expectedPeers: readonly NativePeerBranch[], verifyCurrent: VerifyCurrent, notAfter?: number,
   ): Promise<void> {
     previewDatabaseEnvironmentId(pr);
@@ -607,7 +607,7 @@ export class NeonPreview {
   }
 
   async removeNativeBranch(
-    ref: string, expected: NativeNeonBranch, notBefore: number, verifyCurrent: VerifyCurrent, notAfter?: number,
+    ref: string, expected: NativeNeonBranch, notBefore: number | undefined, verifyCurrent: VerifyCurrent, notAfter?: number,
   ): Promise<void> {
     const name = nativeBranchName(ref, notBefore, notAfter);
     if (!nativeIdentity.safeParse(expected).success || !isNativeDirectHost(expected.endpointId, expected.host)
