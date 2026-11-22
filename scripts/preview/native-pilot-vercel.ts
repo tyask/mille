@@ -1,6 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { milleRepositoryId } from "./native-identity";
+import { nativePilotStage, NativePilotHttpError } from "./native-pilot-diagnostics";
 
 const projectName = "mille";
 const repository = "tyask/mille";
@@ -105,11 +106,26 @@ export type NativePilotDeployment = NativePilotTarget & {
 };
 type VerifyCurrent = () => Promise<void>;
 type Config = z.infer<typeof configSchema>;
+type Method = "GET" | "POST" | "DELETE";
 
-function parse<T>(schema: z.ZodType<T>, value: unknown): T {
+function parse<T>(schema: z.ZodType<T>, value: unknown, status?: number): T {
   const parsed = schema.safeParse(value);
-  if (!parsed.success) throw new Error("Vercel の Native 試験用構成または応答を確認できません。");
+  if (!parsed.success) {
+    const message = "Vercel の Native 試験用構成または応答を確認できません。";
+    throw status === undefined ? new Error(message) : new NativePilotHttpError(message, status);
+  }
   return parsed.data;
+}
+
+function verifyStatus(response: Response, method: Method): void {
+  if (!response.ok) {
+    throw new NativePilotHttpError(`Vercel API ${method} が失敗しました (HTTP ${response.status})。`, response.status);
+  }
+}
+
+async function readJson(response: Response): Promise<unknown> {
+  try { return await response.json(); }
+  catch { throw new NativePilotHttpError("Vercel API の応答形式を確認できません。", response.status); }
 }
 
 function sameDeployment(a: NativePilotDeployment, b: NativePilotDeployment): boolean {
@@ -162,12 +178,11 @@ export class NativePilotVercel {
     this.config = parse(configSchema, config);
   }
 
-  private async api(path: string, method: "GET" | "POST" | "DELETE" = "GET", body?: unknown, allowMissing = false) {
+  private async send(path: string, method: Method, body?: unknown): Promise<Response> {
     const url = new URL(path, "https://api.vercel.com");
     url.searchParams.set("teamId", this.config.teamId);
-    let response: Response;
     try {
-      response = await this.request(url, {
+      return await this.request(url, {
         method, redirect: "error", signal: AbortSignal.timeout(30_000),
         headers: {
           Authorization: `Bearer ${this.config.token}`, Accept: "application/json",
@@ -178,11 +193,13 @@ export class NativePilotVercel {
     } catch {
       throw new Error(`Vercel API ${method} の応答を確認できません。`);
     }
+  }
+
+  private async api(path: string, method: Method = "GET", body?: unknown, allowMissing = false) {
+    const response = await this.send(path, method, body);
     if (response.status === 404 && allowMissing) return null;
-    if (!response.ok) throw new Error(`Vercel API ${method} が失敗しました (HTTP ${response.status})。`);
-    if (method === "DELETE") return null;
-    try { return await response.json() as unknown; }
-    catch { throw new Error("Vercel API の応答形式を確認できません。"); }
+    verifyStatus(response, method);
+    return method === "DELETE" ? null : readJson(response);
   }
 
   async preflight(): Promise<void> {
@@ -287,9 +304,11 @@ export class NativePilotVercel {
   async provision(target: NativePilotTarget, generation: string, verifyCurrent: VerifyCurrent): Promise<NativePilotDeployment> {
     target = parse(targetSchema, target);
     generation = parse(generationId, generation);
-    await this.preflight();
-    if (await this.find(target)) throw new Error("Vercel の Native 試験用 Deployment は作成済みです。");
-    await verifyCurrent();
+    await nativePilotStage("vercel-preflight", () => this.preflight());
+    await nativePilotStage("vercel-inventory", async () => {
+      if (await this.find(target)) throw new Error("Vercel の Native 試験用 Deployment は作成済みです。");
+    });
+    await nativePilotStage("github-target", verifyCurrent);
     const requestedAt = Date.now();
     const env = {
       AUTH_MODE: "test",
@@ -300,7 +319,7 @@ export class NativePilotVercel {
       MILLE_NATIVE_PREVIEW_GENERATION: generation,
       MILLE_NATIVE_PREVIEW_ATTEST_ENDPOINT: "1",
     };
-    const { id } = parse(z.object({ id: deploymentId }), await this.api("/v13/deployments?forceNew=1", "POST", {
+    const body = {
       name: projectName, project: this.config.projectId, public: false,
       gitSource: { type: "github", repoId: milleRepositoryId, ref: target.ref, sha: target.sha },
       env, build: { env },
@@ -309,13 +328,24 @@ export class NativePilotVercel {
         milleNativePilotPr: String(target.pr), milleNativePilotRef: target.ref, milleNativePilotSha: target.sha,
         milleNativePilotGeneration: generation, milleNativePilotRequestedAt: String(requestedAt),
       },
-    }));
-    await verifyCurrent();
-    const result = await this.deployment(id, target, true);
-    if (!result || result.generation !== generation || result.requestedAt !== requestedAt) {
-      throw new Error("作成した Vercel Deployment の世代または作成要求時刻を確認できません。");
-    }
-    return result;
+    };
+    const response = await nativePilotStage("vercel-create-request", async () => {
+      console.log("Native Preview 診断 Vercel のデプロイ作成要求を開始しました。");
+      const result = await this.send("/v13/deployments?forceNew=1", "POST", body);
+      verifyStatus(result, "POST");
+      return result;
+    });
+    const { id } = await nativePilotStage("vercel-create-response", async () =>
+      parse(z.object({ id: deploymentId }), await readJson(response), response.status));
+    console.log(`Native Preview 診断 Vercel のデプロイ作成応答を受領しました (HTTP ${response.status})。`);
+    await nativePilotStage("github-target", verifyCurrent);
+    return nativePilotStage("vercel-create-response", async () => {
+      const result = await this.deployment(id, target, true);
+      if (!result || result.generation !== generation || result.requestedAt !== requestedAt) {
+        throw new Error("作成した Vercel Deployment の世代または作成要求時刻を確認できません。");
+      }
+      return result;
+    });
   }
 
   async confirmStatic(deployment: NativePilotDeployment, verifyCurrent?: VerifyCurrent): Promise<NativePilotDeployment> {

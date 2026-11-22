@@ -1,0 +1,19 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "recordedAt": "2026-11-22T05:01:26Z",
+  "planApproval": {
+    "sequence": 1,
+    "reply": "承認します。",
+    "scope": "チャットで提示した AC-03 の停止原因の特定と Cake に沿った Native Preview の完了計画"
+  },
+  "issueApproval": {
+    "sequence": 2,
+    "reply": "承認します。",
+    "scope": "計画追記後に GitHub から再取得し、URL と全文をチャットに提示した Issue #32 の本文"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "sha256": "f42ae356f224c13bbc80cdb712d50f4673ed4daf8799e903ab344b8755e354bf"
+  }
+}

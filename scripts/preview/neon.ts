@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { MigrationSource } from "../db/sql";
 import { preparePreviewDatabase, previewDatabaseEnvironmentId } from "./database";
 import { isNativePreviewTaskBranch } from "./native-identity";
+import { NativePilotStageError, nativePilotStage } from "./native-pilot-diagnostics";
 
 const api = "https://console.neon.tech/api/v2";
 const projectName = "mille-preview";
@@ -149,7 +150,7 @@ function nativePassword(connection: string): string {
 }
 
 export class NeonPreviewError extends Error {
-  constructor(message: string, readonly diagnostic: string) {
+  constructor(message: string, readonly diagnostic: string, readonly httpStatus?: number) {
     super(message);
   }
 }
@@ -159,6 +160,7 @@ class NeonRequestError extends NeonPreviewError {
     super(
       status ? `Neon API が HTTP ${status} を返しました。` : "Neon API に接続できませんでした。",
       `${request}.${status ? `http_${status}` : "network"}`,
+      status || undefined,
     );
   }
 }
@@ -222,7 +224,7 @@ export class NeonPreview {
           const field = schemaPath
             .filter((key): key is string => typeof key === "string" && diagnosticSchemaProperties.has(key))
             .join(".") || "response";
-          throw new NeonPreviewError("Neon API の応答形式が一致しません。", `${request}.schema.${field}`);
+          throw new NeonPreviewError("Neon API の応答形式が一致しません。", `${request}.schema.${field}`, response.status);
         }
         return result.data;
       }
@@ -288,6 +290,16 @@ export class NeonPreview {
   }
 
   async #assertEmptyTemplate(nativeRoot?: NativeNeonBranch): Promise<void> {
+    if (!nativeRoot) {
+      const { connectionString } = await this.#templateConnection();
+      await this.#inspectTemplateDatabases(connectionString);
+      return;
+    }
+    const { connectionString } = await nativePilotStage("neon-template-metadata", () => this.#templateConnection(nativeRoot));
+    await nativePilotStage("neon-template-sql", () => this.#inspectTemplateDatabases(connectionString));
+  }
+
+  async #templateConnection(nativeRoot?: NativeNeonBranch) {
     const { parentBranchId } = this.#config;
     const [parent, resources] = await Promise.all([
       this.#request(`/branches/${parentBranchId}`, branchDetails),
@@ -303,7 +315,10 @@ export class NeonPreview {
       || resources.roles[0].name !== templateRole || resources.roles[0].protected) {
       throw new Error("Neon テンプレートの DB またはロールの一覧が一致しません。");
     }
-    const { connectionString } = await this.#connection(parentBranchId, templateDatabase, templateRole, nativeRoot);
+    return this.#connection(parentBranchId, templateDatabase, templateRole, nativeRoot);
+  }
+
+  async #inspectTemplateDatabases(connectionString: string): Promise<void> {
     for (const name of [templateDatabase, "postgres", "template1"]) {
       const url = new URL(connectionString);
       url.pathname = `/${name}`;
@@ -526,30 +541,35 @@ export class NeonPreview {
       throw new Error("Neon Native Preview の標準 DB とロールが一致しません。");
     }
 
-    const [template, standing, ...peers] = await Promise.all([
-      this.#nativeRoot(this.#config.parentBranchId, templateName, true), this.#nativeRoot(standingBranchId, "main", false),
-      ...peerNames.map(peer => this.#verifiedNativeBranch(inventory, peer)),
-    ]);
-    const otherBranches = [template, standing, ...peers].filter(other => other !== null);
-    const endpoints = new Set([child, ...otherBranches].map(item => item.endpointId));
-    if (otherBranches.length !== peerNames.length + 2 || endpoints.size !== otherBranches.length + 1) {
-      throw new Error("Neon Native Preview の比較対象を確認できません。");
-    }
-    const connection = await this.#connection(child.id, templateDatabase, templateRole, child);
-    const password = nativePassword(connection.connectionString);
-    for (const other of otherBranches) {
-      const otherConnection = await this.#connection(other.id, templateDatabase, templateRole, other);
-      if (nativePassword(otherConnection.connectionString) === password) {
-        throw new Error("Neon Native Preview のロール資格情報が共有されています。");
+    const connection = await nativePilotStage("neon-isolation", async () => {
+      const [template, standing, ...peers] = await Promise.all([
+        this.#nativeRoot(this.#config.parentBranchId, templateName, true), this.#nativeRoot(standingBranchId, "main", false),
+        ...peerNames.map(peer => this.#verifiedNativeBranch(inventory, peer)),
+      ]);
+      const otherBranches = [template, standing, ...peers].filter(other => other !== null);
+      const endpoints = new Set([child, ...otherBranches].map(item => item.endpointId));
+      if (otherBranches.length !== peerNames.length + 2 || endpoints.size !== otherBranches.length + 1) {
+        throw new Error("Neon Native Preview の比較対象を確認できません。");
       }
-    }
+      const childConnection = await this.#connection(child.id, templateDatabase, templateRole, child);
+      const password = nativePassword(childConnection.connectionString);
+      for (const other of otherBranches) {
+        const otherConnection = await this.#connection(other.id, templateDatabase, templateRole, other);
+        if (nativePassword(otherConnection.connectionString) === password) {
+          throw new NativePilotStageError("neon-shared-credentials", new Error("Neon Native Preview のロール資格情報が共有されています。"));
+        }
+      }
+      return childConnection;
+    });
 
-    await verifyCurrent();
-    try {
-      await preparePreviewDatabase({ pr, ...connection, initialize: true });
-    } catch {
-      throw new Error("Neon Native Preview の DB 照合・migration・seed を確認できません。");
-    }
+    await nativePilotStage("github-target", verifyCurrent);
+    await nativePilotStage("neon-initialize", async () => {
+      try {
+        await preparePreviewDatabase({ pr, ...connection, initialize: true });
+      } catch {
+        throw new Error("Neon Native Preview の DB 照合・migration・seed を確認できません。");
+      }
+    });
   }
 
   async #requireNativeAbsent<T>(path: string, schema: z.ZodType<T>): Promise<void> {

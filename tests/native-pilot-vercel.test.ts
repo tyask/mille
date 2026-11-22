@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { formatNativePilotFailure, NativePilotStageError } from "../scripts/preview/native-pilot-diagnostics";
 import { NativePilotVercel } from "../scripts/preview/native-pilot-vercel";
 
 const config = {
@@ -40,9 +41,10 @@ type ListEntry = { uid: string; projectId: string; meta?: object; gitSource?: ob
 type Input = Record<string, unknown>;
 
 function scenario(options: {
-  project?: Input; envs?: readonly unknown[]; envPagination?: Input; deployment?: Input | null;
+  project?: Input; projectResponse?: Response; envs?: readonly unknown[]; envPagination?: Input; deployment?: Input | null;
   details?: (requestNumber: number) => Input; inventory?: (cursor: string | null) => { deployments: ListEntry[]; pagination: { count: number; next: number | null } };
-  outputs?: unknown; aliases?: unknown[]; directAlias?: Input; deletePersists?: boolean; aliasPersists?: boolean; rejectPost?: boolean;
+  outputs?: unknown; aliases?: unknown[]; directAlias?: Input; deletePersists?: boolean; aliasPersists?: boolean;
+  postResponse?: Response; throwPost?: boolean;
 } = {}) {
   const requests: string[] = [];
   const writes: Input[] = [];
@@ -59,7 +61,7 @@ function scenario(options: {
     const method = init?.method;
     requests.push(`${method} ${url.pathname}`);
     switch (url.pathname) {
-      case `/v9/projects/${config.projectId}`: return Response.json({ ...project, ...options.project });
+      case `/v9/projects/${config.projectId}`: return options.projectResponse ?? Response.json({ ...project, ...options.project });
       case `/v10/projects/${config.projectId}/env`:
         assert.equal(url.searchParams.get("decrypt"), "false");
         return Response.json({ envs: options.envs ?? [nativeEnv], pagination: options.envPagination });
@@ -77,7 +79,8 @@ function scenario(options: {
         writes.push(body);
         const requestedAt = Number(body.meta.milleNativePilotRequestedAt);
         existing = { ...deployment, createdAt: requestedAt + 1, ready: requestedAt + 2, meta: body.meta };
-        return options.rejectPost ? Response.json({ message: secret }, { status: 500 }) : Response.json({ id });
+        if (options.throwPost) throw new Error(secret);
+        return options.postResponse ?? Response.json({ id });
       }
       case `/v13/deployments/${id}`:
         if (method === "DELETE") {
@@ -164,11 +167,42 @@ test("作成時の状態変更や不明な POST 結果を停止し、再試行�
   const stopped = scenario({ deployment: null });
   await assert.rejects(stopped.client.provision(target, generation, async () => { throw new Error("PR 更新"); }), /PR 更新/);
   assert.equal(stopped.writes.length, 0);
-  const uncertain = scenario({ deployment: null, rejectPost: true });
+  const uncertain = scenario({ deployment: null, postResponse: Response.json({ message: secret }, { status: 500 }) });
   await assert.rejects(uncertain.client.provision(target, generation, current), /HTTP 500/);
   assert.equal((await uncertain.client.find(target))?.generation, generation);
   await assert.rejects(uncertain.client.provision(target, generation, current), /作成済み/);
   assert.equal(uncertain.writes.length, 1);
+});
+
+test("事前照合と作成要求・応答の失敗を固定工程と HTTP 状態で区別する", async () => {
+  const denied = scenario({ deployment: null, projectResponse: new Response(secret, { status: 403 }) });
+  await assert.rejects(denied.client.provision(target, generation, current), error => {
+    assert.ok(error instanceof NativePilotStageError);
+    assert.equal(error.stage, "vercel-preflight");
+    assert.equal(formatNativePilotFailure(error), "Native Preview 診断 Vercel のプロジェクト・環境変数照合 (HTTP 403)");
+    return true;
+  });
+  assert.equal(denied.writes.length, 0);
+
+  const cases = [
+    { options: { postResponse: new Response(secret, { status: 403 }) }, stage: "vercel-create-request", status: " (HTTP 403)" },
+    { options: { throwPost: true }, stage: "vercel-create-request", status: "" },
+    { options: { postResponse: new Response(secret, { status: 201 }) }, stage: "vercel-create-response", status: " (HTTP 201)" },
+    { options: { postResponse: Response.json({ id: secret }, { status: 201 }) }, stage: "vercel-create-response", status: " (HTTP 201)" },
+    { options: { details: () => ({ ownerId: "team_Other" }) }, stage: "vercel-create-response", status: "" },
+  ];
+  for (const { options, stage, status } of cases) {
+    const failed = scenario({ deployment: null, ...options });
+    await assert.rejects(failed.client.provision(target, generation, current), error => {
+      assert.ok(error instanceof NativePilotStageError);
+      assert.equal(error.stage, stage);
+      const label = stage === "vercel-create-request" ? "デプロイ作成要求" : "デプロイ作成応答・所有照合";
+      assert.equal(formatNativePilotFailure(error), `Native Preview 診断 Vercel の${label}${status}`);
+      assert.doesNotMatch(error.message, new RegExp(secret));
+      return true;
+    });
+    assert.deepEqual(failed.requests.filter(request => request.startsWith("POST ")), ["POST /v13/deployments"]);
+  }
 });
 
 test("一覧を全ページ調べ、同じ ref の別 Deployment と不完全なページを拒否する", async () => {

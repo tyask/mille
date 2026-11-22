@@ -4,6 +4,18 @@ import { resolveManualPreviewTarget, resolveMergedPreviewTargets, resolvePreview
 type GitHubMutation = { method: "POST" | "PATCH"; body: Record<string, unknown> };
 export type PreviewGitHubRequest = (path: string, mutation?: GitHubMutation) => Promise<unknown>;
 
+export class PreviewGitHubHttpError extends Error {
+  constructor(readonly httpStatus: number) {
+    super("GitHub API の照合に失敗しました。");
+  }
+}
+
+export function previewGitHubHttpStatus(error: unknown): number | undefined {
+  if (error instanceof PreviewGitHubHttpError) return error.httpStatus;
+  if (error instanceof Error && error.cause instanceof PreviewGitHubHttpError) return error.cause.httpStatus;
+  return undefined;
+}
+
 export async function previewContext() {
   const { GITHUB_REPOSITORY, GITHUB_REF, GITHUB_WORKFLOW_REF, GITHUB_EVENT_NAME,
     GITHUB_EVENT_PATH, GITHUB_SHA, GH_TOKEN } = process.env;
@@ -30,8 +42,8 @@ export async function previewContext() {
       redirect: "error",
       signal: AbortSignal.timeout(15_000),
     });
-    if (!response.ok) throw new Error("GitHub API の照合に失敗しました。");
-    return response.json();
+    if (!response.ok) throw new PreviewGitHubHttpError(response.status);
+    return response.json().catch(() => { throw new PreviewGitHubHttpError(response.status); });
   };
   const read = (path: string) => request(path);
 

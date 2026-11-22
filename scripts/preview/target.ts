@@ -92,8 +92,8 @@ export async function resolveNativePreviewIdentity(number: number, read: ReadGit
   let response: unknown;
   try {
     response = await read(`pulls/${number}`);
-  } catch {
-    throw new Error(failure);
+  } catch (error) {
+    throw new Error(failure, { cause: error });
   }
   const parsed = nativePullRequest.safeParse(response);
   if (!parsed.success) throw new Error(failure);

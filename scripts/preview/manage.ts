@@ -1,9 +1,10 @@
 import { appendFile } from "node:fs/promises";
 import { z } from "zod";
 import { previewMigrationSources } from "./database";
-import { previewContext } from "./github";
+import { previewContext, previewGitHubHttpStatus } from "./github";
 import { assertPreviewGitDeploymentPolicy } from "./git-policy";
 import { executeNativePilot, nativePilotProviders } from "./native-pilot";
+import { formatNativePilotFailure, NativePilotStageError, nativePilotStage } from "./native-pilot-diagnostics";
 import { assertNativePilotFirstCreation } from "./native-pilot-history";
 import { nativePilotPrs } from "./native-pilot-selection";
 import { NeonPreview, NeonPreviewError } from "./neon";
@@ -57,11 +58,11 @@ async function main() {
   const summary = process.env.GITHUB_STEP_SUMMARY;
   if (pilots) {
     stage = "Native Preview の試験用リソース照合・準備・整理";
-    const providers = nativePilotProviders(process.env, {
+    const providers = await nativePilotStage("configuration", () => nativePilotProviders(process.env, {
       token: config.VERCEL_TOKEN,
       teamId: config.MILLE_PR_PREVIEW_VERCEL_TEAM_ID,
       projectId: config.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID,
-    });
+    }));
     const outcome = await executeNativePilot({
       target, pilotPrs: pilots, controlSha: context.controlSha, read: context.read, neon, ...providers,
       verifyFirstCreation: (pr, createdAt) => assertNativePilotFirstCreation(pr, createdAt, process.env, context.read),
@@ -110,6 +111,12 @@ async function main() {
 
 main().catch((error: unknown) => {
   console.error(`Mille PR Preview は「${stage}」で停止しました。資格情報やプロバイダーの応答本文は出力しません。`);
-  if (error instanceof NeonPreviewError) console.error(`Neon 診断 ${error.diagnostic}`);
+  if (error instanceof NativePilotStageError) {
+    const cause = error.cause;
+    const status = cause instanceof NeonPreviewError ? cause.httpStatus : previewGitHubHttpStatus(cause);
+    console.error(formatNativePilotFailure(error, status));
+  } else if (error instanceof NeonPreviewError) {
+    console.error(`Neon 診断 ${error.diagnostic}`);
+  }
   process.exitCode = 1;
 });

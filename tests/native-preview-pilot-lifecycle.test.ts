@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { PreviewGitHubHttpError, previewGitHubHttpStatus } from "../scripts/preview/github";
 import { executeNativePilot, nativePilotProviders } from "../scripts/preview/native-pilot";
 import { milleRepositoryId } from "../scripts/preview/native-identity";
 import { assertNativePilotFirstCreation } from "../scripts/preview/native-pilot-history";
+import { formatNativePilotFailure, NativePilotStageError } from "../scripts/preview/native-pilot-diagnostics";
 import type { NativePilotDeployment } from "../scripts/preview/native-pilot-vercel";
 import type { PreviewTarget } from "../scripts/preview/target";
 
@@ -178,6 +180,48 @@ test("Native pilot never creates another deployment after an unknown previous cr
   prior.input.verifyFirstCreation = async () => { throw new Error("unknown creation"); };
   await assert.rejects(executeNativePilot(prior.input), /unknown creation/);
   assert.ok(!prior.events.includes("provision"));
+});
+
+test("Native pilot reports the fixed history stage and HTTP status before making any deployment request", async () => {
+  const { input, events } = fixture(deploy);
+  const secret = "fixture-secret-must-not-be-logged";
+  const cause = new PreviewGitHubHttpError(403);
+  cause.message = secret;
+  input.verifyFirstCreation = async () => { throw cause; };
+  await assert.rejects(executeNativePilot(input), (error: unknown) => {
+    assert.ok(error instanceof NativePilotStageError);
+    assert.equal(error.cause, cause);
+    assert.equal(formatNativePilotFailure(error, previewGitHubHttpStatus(error.cause)),
+      "Native Preview 診断 GitHub の初回作成履歴の照合 (HTTP 403)");
+    return true;
+  });
+  assert.deepEqual(events, ["vercel preflight", "neon preflight"]);
+});
+
+test("Native pilot keeps the HTTP status when reporting a GitHub PR lookup failure", async () => {
+  const { input, events } = fixture(deploy);
+  input.read = async () => { throw new PreviewGitHubHttpError(404); };
+  await assert.rejects(executeNativePilot(input), (error: unknown) => {
+    assert.ok(error instanceof NativePilotStageError);
+    assert.equal(error.message, "Native Preview の PR ソースを照合できません。");
+    assert.equal(formatNativePilotFailure(error, previewGitHubHttpStatus(error.cause)),
+      "Native Preview 診断 GitHub の試験 PR・HEAD 照合 (HTTP 404)");
+    return true;
+  });
+  assert.deepEqual(events, []);
+});
+
+test("Native pilot preserves the precise template stage without exposing exception contents", async () => {
+  const { input, events } = fixture(deploy);
+  input.neon.nativePreflight = async () => {
+    throw new NativePilotStageError("neon-template-sql", new Error("fixture-secret including HTTP 403"));
+  };
+  await assert.rejects(executeNativePilot(input), (error: unknown) => {
+    assert.ok(error instanceof NativePilotStageError);
+    assert.equal(formatNativePilotFailure(error), "Native Preview 診断 Neon のテンプレート空状態の読み取り");
+    return true;
+  });
+  assert.deepEqual(events, ["vercel preflight"]);
 });
 
 test("Native pilot uses complete prior workflow history before issuing a first create", async () => {
