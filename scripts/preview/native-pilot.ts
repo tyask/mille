@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { assertPreviewGitDeploymentPolicy } from "./git-policy";
 import { NativePilotStageError, nativePilotStage } from "./native-pilot-diagnostics";
@@ -31,8 +31,8 @@ type PilotOperation = {
 const targetOf = (identity: PilotIdentity) => ({ pr: identity.number, ref: identity.ref, sha: identity.sha });
 const isPilotRef = (ref: string) => /^codex\/native-preview-pilot-[ab]$/.test(ref);
 
-function verifyNativePilotEndpoint(host: string, digest: string | undefined) {
-  if (!digest || createHash("sha256").update(host).digest("hex") !== digest) {
+function verifyNativePilotEndpoint(endpointId: string, buildEndpointId: string) {
+  if (endpointId !== buildEndpointId) {
     throw new NativePilotStageError("ownership", new Error("Native Preview の試験デプロイと Neon の接続先が一致しません。"));
   }
 }
@@ -87,11 +87,12 @@ export async function executeNativePilot(input: PilotOperation): Promise<"prepar
         throw new Error("先行試行の Neon ブランチと接続先の不在を直接確認できません。Deployment の記録を保持します。");
       }
       if (existing.readyAt === undefined) throw new Error("Native Preview の試験用ブランチの作成期間を確認できません。");
-      verifyNativePilotEndpoint(branch.host, existing.endpointDigest);
+      const verified = await nativePilotStage("vercel-static", () => vercel.confirmStatic(existing, verifyCurrent));
+      verifyNativePilotEndpoint(branch.endpointId, verified.endpointId);
       // Keep these public IDs in the trusted job log for recovery if a run stops during deletion.
       console.log(`Native Preview 削除照合 ${existing.id} ${branch.id} ${branch.endpointId}`);
       await neon.removeNativeBranch(identity.ref, branch, existing.requestedAt, verifyCurrent, existing.readyAt);
-      await vercel.remove(existing, verifyCurrent);
+      await vercel.remove(verified, verifyCurrent);
     });
     return "removed";
   }
@@ -117,7 +118,7 @@ export async function executeNativePilot(input: PilotOperation): Promise<"prepar
     if (!child) throw new Error("Native Preview の試験用ブランチを確認できません。");
     return child;
   });
-  verifyNativePilotEndpoint(branch.host, deployment.endpointDigest);
+  verifyNativePilotEndpoint(branch.endpointId, deployment.endpointId);
 
   const peerRefs: string[] = [];
   for (const peer of peers) {
@@ -128,7 +129,8 @@ export async function executeNativePilot(input: PilotOperation): Promise<"prepar
       if (evidence?.readyAt === undefined) {
         throw new NativePilotStageError("ownership", new Error("比較する Native Preview ブランチの所有を確認できません。"));
       }
-      verifyNativePilotEndpoint(peerBranch.host, evidence.endpointDigest);
+      const verified = await nativePilotStage("vercel-static", () => vercel.confirmStatic(evidence, verifyCurrent));
+      verifyNativePilotEndpoint(peerBranch.endpointId, verified.endpointId);
       peerRefs.push(peer.ref);
     }
   }

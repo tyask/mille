@@ -23,11 +23,14 @@ const ref = "codex/native-preview-pilot-a";
 const peerRef = "codex/native-preview-pilot-b";
 const closedAt = "2026-11-25T14:00:00Z";
 const database = { id: "br-test", endpointId: "ep-test", host: "ep-test.ap-southeast-1.aws.neon.tech" };
+const peerDatabase = { id: "br-peer", endpointId: "ep-peer", host: "ep-peer.ap-southeast-1.aws.neon.tech" };
 const deployment: NativePilotDeployment = {
   id: "dpl_Fixture", pr, ref, sha: head, generation: "8a481116-21d6-4dfc-a8ba-32e49289ac28",
   requestedAt: 1795600000000, createdAt: 1795600000010, readyAt: 1795600001000,
   url: "https://mille-test-fumin1.vercel.app", readyState: "READY",
-  endpointDigest: createHash("sha256").update(database.host).digest("hex"),
+};
+const peerDeployment: NativePilotDeployment = {
+  ...deployment, id: "dpl_Peer", pr: peer, ref: peerRef, sha: "c".repeat(40),
 };
 const deploy = { operation: "deploy", number: pr, sha: head } as const;
 const cleanup = { operation: "cleanup", number: pr, sha: head, closedAt } as const;
@@ -49,8 +52,12 @@ function fixture(target: PreviewTarget, options: {
   markerMode?: string;
   existing?: NativePilotDeployment;
   child?: typeof database;
+  buildEndpointId?: string;
+  peerExists?: boolean;
+  peerBuildEndpointId?: string;
 } = {}) {
   const events: string[] = [];
+  const verifiedBuilds: NativePilotDeployment[] = [];
   let created = false;
   const refs = new Map([[pr, ref], [peer, peerRef]]);
   const git = new Map([
@@ -86,7 +93,11 @@ function fixture(target: PreviewTarget, options: {
     async verifyFirstCreation(number) { assert.equal(number, pr); },
     vercel: {
       async preflight() { events.push("vercel preflight"); },
-      async find(requested) { return requested.pr === pr ? options.existing ?? null : null; },
+      async find(requested, exactSha) {
+        if (requested.pr === pr) return options.existing ?? null;
+        assert.equal(exactSha, false);
+        return options.peerExists ? peerDeployment : null;
+      },
       async provision(requested, _generation, verify) {
         assert.deepEqual(requested, { pr, ref, sha: head });
         await verify();
@@ -94,7 +105,15 @@ function fixture(target: PreviewTarget, options: {
         created = true;
         return deployment;
       },
-      async confirmStatic(current) { events.push("static"); return current; },
+      async confirmStatic(current, verify) {
+        await verify?.();
+        events.push("static");
+        verifiedBuilds.push(current);
+        const endpointId = current.pr === pr
+          ? options.buildEndpointId ?? database.endpointId
+          : options.peerBuildEndpointId ?? peerDatabase.endpointId;
+        return { ...current, endpointId };
+      },
       async remove(current, verify) {
         await verify();
         events.push("remove deployment");
@@ -103,14 +122,17 @@ function fixture(target: PreviewTarget, options: {
     },
     neon: {
       async nativePreflight() { events.push("neon preflight"); },
-      async findNativeBranch(branchRef) { return branchRef === ref ? options.child ?? (created ? database : null) : null; },
+      async findNativeBranch(branchRef) {
+        if (branchRef === ref) return options.child ?? (created ? database : null);
+        return options.peerExists ? peerDatabase : null;
+      },
       async prepareNativeBranch(_ref, exact, start, number, _standing, peers, verify, end) {
         await verify();
         assert.deepEqual(exact, database);
         assert.equal(start, deployment.requestedAt);
         assert.equal(end, deployment.readyAt);
         assert.equal(number, pr);
-        assert.deepEqual(peers, []);
+        assert.deepEqual(peers, options.peerExists ? [peerRef] : []);
         events.push("prepare");
       },
       async removeNativeBranch(_ref, exact, start, verify, end) {
@@ -122,7 +144,7 @@ function fixture(target: PreviewTarget, options: {
       },
     },
   };
-  return { input, events, refs };
+  return { input, events, refs, verifiedBuilds };
 }
 
 test("Native pilot prepares a branch only after matching trusted source, receipt, static output and injected endpoint", async () => {
@@ -149,11 +171,21 @@ test("Native pilot stops before creating, initializing or deleting resources whe
   }
 });
 
-test("Native pilot rejects unreconciled branches and mismatched published endpoint digests", async () => {
+test("Native pilot rejects unreconciled branches and mismatched build endpoint IDs", async () => {
   const unknown = fixture(deploy, { child: database });
   await assert.rejects(executeNativePilot(unknown.input), /所有を確認/);
   assert.ok(!unknown.events.includes("provision"));
-  const mismatch = fixture(deploy, { existing: { ...deployment, endpointDigest: "e".repeat(64) }, child: database });
+  const mismatch = fixture(deploy, { existing: deployment, child: database, buildEndpointId: "ep-other" });
+  await assert.rejects(executeNativePilot(mismatch.input), /接続先が一致/);
+  assert.ok(!mismatch.events.includes("prepare"));
+});
+
+test("Native pilot checks a peer's actual deployed SHA and endpoint before initializing", async () => {
+  const valid = fixture(deploy, { peerExists: true });
+  assert.equal(await executeNativePilot(valid.input), "prepared");
+  assert.deepEqual(valid.verifiedBuilds.map(item => item.sha), [head, peerDeployment.sha]);
+
+  const mismatch = fixture(deploy, { peerExists: true, peerBuildEndpointId: "ep-other" });
   await assert.rejects(executeNativePilot(mismatch.input), /接続先が一致/);
   assert.ok(!mismatch.events.includes("prepare"));
 });
@@ -161,16 +193,18 @@ test("Native pilot rejects unreconciled branches and mismatched published endpoi
 test("Native pilot keeps evidence until the exact branch is deleted and refuses an unverified endpoint", async () => {
   const valid = fixture(cleanup, { existing: deployment, child: database });
   assert.equal(await executeNativePilot(valid.input), "removed");
-  assert.deepEqual(valid.events.slice(-2), ["remove branch", "remove deployment"]);
+  assert.deepEqual(valid.events.slice(-3), ["static", "remove branch", "remove deployment"]);
   for (const existing of [
     { ...deployment, readyState: "BUILDING" as const },
-    { ...deployment, endpointDigest: "e".repeat(64) },
     { ...deployment, readyAt: undefined },
   ]) {
     const unsafe = fixture(cleanup, { existing, child: database });
-    await assert.rejects(executeNativePilot(unsafe.input), /終了|接続先|作成期間/);
+    await assert.rejects(executeNativePilot(unsafe.input), /終了|作成期間/);
     assert.ok(!unsafe.events.some(event => event.startsWith("remove")));
   }
+  const mismatch = fixture(cleanup, { existing: deployment, child: database, buildEndpointId: "ep-other" });
+  await assert.rejects(executeNativePilot(mismatch.input), /接続先が一致/);
+  assert.ok(!mismatch.events.some(event => event.startsWith("remove")));
 });
 
 test("Native pilot retains its receipt if it cannot directly prove deletion after an interrupted earlier attempt", async () => {

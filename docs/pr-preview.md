@@ -70,8 +70,8 @@ Neon の接続情報は取得したプロセス内で接続先を照合します
 1. 切替に必要な処理を `main` に入れ、現行方式の PR 資源の削除と管理ジョブの終了を確認します。既存の停止設定で旧ジョブを休止し、別承認を得た切替で空の `mille-pr-template` を既定にします。Vercel で既存ストアを `mille` に接続し、**Environments** と **Create database branch for deployment** はどちらも **Preview** だけを選びます。**Custom Prefix** を `MILLE_NATIVE_PREVIEW` にし、**Sensitive** をオンにします。Vercel の設定画面で接続先が `mille` の 1 件であること、接続と自動分岐がともに Preview 限定であること、生成された変数名が `MILLE_NATIVE_PREVIEW_DATABASE_URL` であることを確認します。常設 Preview の Git ブランチ向け接続設定は既存 endpoint を使います。
 2. 信頼済み `main` を起点に `codex/native-preview-pilot-a` と `codex/native-preview-pilot-b` で試験用 draft PR を2件用意します。各 PR の差分は `docs` ディレクトリへの通常ファイル `native-preview-pilot.md` の追加だけにします。管理ジョブは実際に渡す Git ツリーと信頼済み `main` のモードと blob を照合し、Vercel に管理トークンを渡さずに静的ビルドを要求します。
 3. GitHub Environment `mille-pr-preview` の variables に `MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID` と `MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID` を設定します。既存の管理資格情報を使い、Repository variables に `MILLE_PR_PREVIEW_MODE=native-pilot` と `MILLE_NATIVE_PREVIEW_PILOTS` を設定します。対象番号は2件を半角カンマで指定します。設定を照合した後に `MILLE_PR_PREVIEW_ENABLED=true` とします。まだ実行していない試験 PR で文書だけを一度更新すると、現行の PR 更新イベントから試験ジョブを起動できます。管理ジョブは選んだ2件を直列に実行します。手動の `deploy` でも現在の PR 番号と完全 SHA を指定できます。
-4. 結果は管理ジョブの Summary で確認します。静的成果物を照合し、準備用ビルドに注入された DB の接続先が専用ブランチの endpoint と一致することを確認します。Neon の管理 API で専用の接続先とロールのパスワードを既定・常設・確認済みの相手 PR と比較し、分離を照合できた場合だけ当該試験 DB に `main` の migration と架空ユーザー A/B を入れます。一般 PR のアプリへの資格情報の注入、接続の分離、更新時のデータ保持は Native 実環境で引き続き検証します。 [Neon のロール仕様](https://neon.com/docs/guides/protected-branches#new-passwords-generated-for-postgres-roles-on-child-branches)
-5. 試験 PR をクローズし、同じ管理ジョブで所有が合うブランチ・endpoint・静的デプロイの不在を確認します。削除が途中で止まり、再実行でブランチを特定できない場合は、保持された Vercel の記録と先行ジョブの削除照合ログの ID で各資源の状態を確認します。試験ジョブを停止して実行中の処理の終了を確認します。Vercel で試験接続を解除して接続先が 0 件であることを確認し、Neon の既定ブランチを常設用 `main` に戻してから試験モードを解除します。
+4. 結果は管理ジョブの Summary で確認します。準備用ビルドは静的ファイルを照合した後、Vercel デプロイ・PR・ref・HEAD・世代・Neon endpoint の識別子を1行出力します。管理ジョブは所有を確認した非公開の READY デプロイから公式のビルドイベントを取得し、静的生成と専用 endpoint の対応を照合します。Neon の管理 API で専用の接続先とロールのパスワードを既定・常設・確認済みの相手 PR と比較し、分離を照合できた場合だけ当該試験 DB に `main` の migration と架空ユーザー A/B を入れます。一般 PR のアプリへの資格情報の注入、接続の分離、更新時のデータ保持は Native 実環境で引き続き検証します。 [Vercel ビルドイベント API](https://vercel.com/docs/rest-api/deployments/get-deployment-events) · [Neon のロール仕様](https://neon.com/docs/guides/protected-branches#new-passwords-generated-for-postgres-roles-on-child-branches)
+5. 試験 PR をクローズし、同じ管理ジョブで所有が合うブランチ・endpoint・静的デプロイと、そのデプロイだけを参照する試験用エイリアスの不在を確認します。削除が途中で止まり、再実行でブランチを特定できない場合は、保持された Vercel の記録と先行ジョブの削除照合ログの ID で各資源の状態を確認します。試験ジョブを停止して実行中の処理の終了を確認します。Vercel で試験接続を解除して接続先が 0 件であることを確認し、Neon の既定ブランチを常設用 `main` に戻してから試験モードを解除します。
 
 ### Native 試験の停止箇所の確認
 
@@ -80,6 +80,8 @@ Neon の接続情報は取得したプロセス内で接続先を照合します
 次の実行を判断する前に、同じ PR の過去のジョブと各 HEAD、Vercel のデプロイとエイリアス、Neon のブランチと endpoint を照合します。作成要求の応答が不明な場合も、作成済みの可能性を考慮します。先行する `deploy` が実行され、対応するデプロイを確認できない場合は初回作成履歴の確認で停止します。既存資源の所有を照合した結果をもとに、復旧手順を判断します。
 
 Native の Git デプロイは Cake と同じく、プロジェクトの Preview 保護で開始し、作成結果の非公開設定と所有情報を照合してから先に進みます。Vercel が作成要求を HTTP 400 で拒否し、既知の入力エラーを返した場合は固定の理由が管理ログに追加されます。 [Cake の作成処理](https://github.com/tyask/Cake/blob/bc737a52701cc3ddf56a17fb947b8c952a379e22/scripts/preview/preview-service.ts#L50-L69) · [Vercel のエラー仕様](https://vercel.com/docs/rest-api/errors#deployment-errors)
+
+保護された静的ページを手動で確認する場合は、Vercel にログイン済みのブラウザを使います。`vercel curl` は自動化バイパスを生成できるため、バイパス0件を前提とする Native 試験ではブラウザまたはビルドイベントで確認します。 [Vercel CLI の動作](https://vercel.com/docs/cli/curl)
 
 切替を戻した後の接続設定は [旧構成での Actions 診断](#旧構成での-actions-診断) で確認します。Native 接続情報を使うアプリの動作、PR 更新後のデータ保持、クローズとマージによる作成済み資源の削除は、実資源を使う試験で確認します。
 

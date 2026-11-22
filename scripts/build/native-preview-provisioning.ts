@@ -8,26 +8,23 @@ type Environment = Readonly<Record<string, string | undefined>>;
 const phase = "provision";
 const markerName = ".mille-native-preview-provisioning";
 const markerProtocol = "mille-native-preview-provisioning/v1";
-function outputConfig(endpointDigest?: string): string {
-  return JSON.stringify({
-    version: 3,
-    routes: [
-      {
-        src: "/(.*)",
-        headers: {
-          "Cache-Control": "no-store",
-          "X-Robots-Tag": "noindex",
-          "X-Mille-Preview-Phase": phase,
-          "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
-          ...(endpointDigest && { "X-Mille-Native-Endpoint-SHA256": endpointDigest }),
-        },
-        continue: true,
+const outputConfig = JSON.stringify({
+  version: 3,
+  routes: [
+    {
+      src: "/(.*)",
+      headers: {
+        "Cache-Control": "no-store",
+        "X-Robots-Tag": "noindex",
+        "X-Mille-Preview-Phase": phase,
+        "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
       },
-      { src: "/", dest: "/index.html", methods: ["GET", "HEAD"] },
-      { src: "/(.*)", status: 404 },
-    ],
-  }) + "\n";
-}
+      continue: true,
+    },
+    { src: "/", dest: "/index.html", methods: ["GET", "HEAD"] },
+    { src: "/(.*)", status: 404 },
+  ],
+}) + "\n";
 const indexHtml = `<!doctype html>
 <html lang="ja">
 <meta charset="utf-8">
@@ -78,8 +75,7 @@ function regularFile(path: string): Buffer | undefined {
 
 const sha256 = (content: string | Buffer) => createHash("sha256").update(content).digest("hex");
 
-/** A trusted pilot publishes only the digest of its injected endpoint's direct hostname. */
-export function nativePilotEndpointDigest(environment: Environment): string | undefined {
+export function nativePilotEndpointId(environment: Environment): string | undefined {
   const attest = environment.MILLE_NATIVE_PREVIEW_ATTEST_ENDPOINT;
   if (attest === undefined) return undefined;
   const failed = () => new Error("Native Preview の試験用エンドポイントを確認できません。");
@@ -92,7 +88,9 @@ export function nativePilotEndpointDigest(environment: Environment): string | un
   if (url.protocol !== "postgresql:" || url.port || url.hash || url.pathname !== "/neondb"
     || url.username !== "neondb_owner" || !url.password || url.searchParams.getAll("sslmode").join() !== "require"
     || !/^ep-[a-z0-9-]+\.(?:[a-z0-9-]+\.)*ap-southeast-1\.aws\.neon\.tech$/.test(url.hostname)) throw failed();
-  return sha256(url.hostname.replace(/^(ep-[a-z0-9-]+)-pooler\./, "$1."));
+  const endpointId = url.hostname.split(".")[0].replace(/-pooler$/, "");
+  if (!/^ep-[a-z0-9][a-z0-9-]{0,56}$/.test(endpointId) || endpointId.endsWith("-pooler")) throw failed();
+  return endpointId;
 }
 
 function paths(root: string) {
@@ -135,10 +133,10 @@ export function clearNativePreviewProvisioningOutput(root: string): void {
   rmSync(marker);
 }
 
-export function writeNativePreviewProvisioningOutput(root: string, endpointDigest?: string): void {
+export function writeNativePreviewProvisioningOutput(root: string): void {
   const { next, vercel, marker, nextOutput, vercelOutput } = paths(root);
-  if (endpointDigest !== undefined && !/^[a-f0-9]{64}$/.test(endpointDigest)) throw new Error("エンドポイントの照合値が無効です。");
-  const routes = outputConfig(endpointDigest);
+  const configHash = sha256(outputConfig);
+  const indexHash = sha256(indexHtml);
   // Inspect both parents before deleting either cache. `.vercel/project.json` is outside the output.
   realDirectory(next);
   realDirectory(vercel);
@@ -148,13 +146,16 @@ export function writeNativePreviewProvisioningOutput(root: string, endpointDiges
   rmSync(vercelOutput, { recursive: true, force: true });
 
   mkdirSync(next);
-  writeFileSync(marker, `${markerProtocol}\n${sha256(routes)}\n${sha256(indexHtml)}\n`, { flag: "wx" });
+  writeFileSync(marker, `${markerProtocol}\n${configHash}\n${indexHash}\n`, { flag: "wx" });
   try {
     mkdirSync(nextOutput);
     const assets = join(nextOutput, "static");
     mkdirSync(assets);
-    writeFileSync(join(nextOutput, "config.json"), routes, { flag: "wx" });
+    writeFileSync(join(nextOutput, "config.json"), outputConfig, { flag: "wx" });
     writeFileSync(join(assets, "index.html"), indexHtml, { flag: "wx" });
+    if (!realDirectory(nextOutput) || !matchesProvisioningArtifact(nextOutput, configHash, indexHash)) {
+      throw new Error("Native Previewの準備用出力を照合できません。");
+    }
   } catch (error) {
     rmSync(nextOutput, { recursive: true, force: true });
     throw error;

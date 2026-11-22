@@ -11,9 +11,10 @@ const target = { pr: 17, ref: "codex/native-preview-pilot-a", sha: "a".repeat(40
 const generation = "b6ec6368-a4b9-47a5-99d0-7d15014fe50e";
 const id = "dpl_Pilot";
 const aliasHost = "mille-git-codex-native-preview-pilot-a-fumin1.vercel.app";
-const attachedAlias = { alias: aliasHost, projectId: config.projectId, deploymentId: id, redirect: null };
-const digest = "d".repeat(64);
-const routes = [{ headers: { "X-Mille-Native-Endpoint-SHA256": digest } }];
+const aliasUid = "alias_Pilot";
+const attachedAlias = { alias: aliasHost, uid: aliasUid, projectId: config.projectId, deploymentId: id, redirect: null };
+const endpointId = "ep-fixture-native";
+const evidenceText = `Mille: Native Preview 静的ビルド照合 v1 ${id} ${target.pr} ${target.ref} ${target.sha} ${generation} ${endpointId}`;
 const secret = "sensitive-fixture-must-never-appear";
 const variable = "MILLE_NATIVE_PREVIEW_DATABASE_URL";
 const project = {
@@ -33,17 +34,19 @@ const metadata = {
 };
 const deployment = {
   id, ownerId: config.teamId, projectId: config.projectId, name: "mille", target: null, public: false, alias: [],
-  url: "mille-pilot-fumin1.vercel.app", createdAt: 20001, ready: 21000, readyState: "READY", meta: metadata, gitSource: source, routes,
+  url: "mille-pilot-fumin1.vercel.app", createdAt: 20001, ready: 21000, readyState: "READY", meta: metadata, gitSource: source, routes: null,
 };
-const artifact = { type: "file", path: "index.html" };
-const build = { deploymentId: id, readyState: "READY", output: [artifact] };
+const evidenceEvent = { id: "event_evidence", created: 20950, deploymentId: id, type: "stdout", info: { type: "build" }, text: evidenceText };
+const unrelatedEvent = { id: "event_other", deploymentId: id, type: "stderr", info: { type: "build" }, text: secret };
 type ListEntry = { uid: string; projectId: string; meta?: object; gitSource?: object };
 type Input = Record<string, unknown>;
 
 function scenario(options: {
   project?: Input; projectResponse?: Response; envs?: readonly unknown[]; envPagination?: Input; deployment?: Input | null;
   details?: (requestNumber: number) => Input; inventory?: (cursor: string | null) => { deployments: ListEntry[]; pagination: { count: number; next: number | null } };
-  outputs?: unknown; aliases?: unknown[]; directAlias?: Input; deletePersists?: boolean; aliasPersists?: boolean;
+  events?: (requestNumber: number) => unknown; eventsResponse?: Response; aliases?: unknown[]; directAlias?: Input;
+  aliasResponse?: Response;
+  aliasReadback?: (requestNumber: number) => Input; deletePersists?: boolean; aliasPersists?: boolean;
   postResponse?: Response; throwPost?: boolean; readbackResponse?: Response;
 } = {}) {
   const requests: string[] = [];
@@ -51,6 +54,8 @@ function scenario(options: {
   let existing = options.deployment === null ? null : { ...deployment, ...options.deployment };
   let directAlias = options.directAlias;
   let detailsRead = 0;
+  let eventsRead = 0;
+  let aliasesRead = 0;
   let waits = 0;
   const request: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -85,16 +90,27 @@ function scenario(options: {
       case `/v13/deployments/${id}`:
         if (method === "DELETE") {
           if (!options.deletePersists) existing = null;
-          if (!options.aliasPersists) directAlias = undefined;
           return new Response(null, { status: 204 });
         }
         assert.equal(url.searchParams.get("withGitRepoInfo"), "true");
         if (options.readbackResponse) return options.readbackResponse;
         return existing ? Response.json({ ...existing, ...options.details?.(++detailsRead) }) : new Response(null, { status: 404 });
       case `/v2/deployments/${id}/aliases`: return Response.json({ aliases: options.aliases ?? [] });
-      case `/v4/aliases/${aliasHost}`: return directAlias ? Response.json(directAlias) : new Response(null, { status: 404 });
-      case `/v11/deployments/${id}/builds`:
-        return Response.json(options.outputs ?? { builds: [build] });
+      case `/v4/aliases/${aliasHost}`: {
+        const value = options.aliasReadback?.(++aliasesRead) ?? directAlias;
+        if (options.aliasResponse) return options.aliasResponse;
+        return value ? Response.json(value) : new Response(null, { status: 404 });
+      }
+      case `/v2/aliases/${aliasUid}`:
+        assert.equal(method, "DELETE");
+        if (!options.aliasPersists) directAlias = undefined;
+        return Response.json({ status: "SUCCESS" });
+      case `/v3/deployments/${id}/events`:
+        assert.equal(method, "GET");
+        assert.deepEqual(Object.fromEntries(url.searchParams), {
+          builds: "1", follow: "0", direction: "forward", limit: "200", teamId: config.teamId,
+        });
+        return options.eventsResponse ?? Response.json(options.events?.(++eventsRead) ?? [unrelatedEvent, evidenceEvent]);
       default: assert.fail("未定義の Vercel API リクエストです。");
     }
   };
@@ -160,7 +176,6 @@ test("確認済みの Git ソースと準備用環境変数だけで Preview を
   assert.equal(result.url, `https://${deployment.url}`);
   assert.ok(result.createdAt >= result.requestedAt);
   assert.equal(result.readyAt, result.createdAt + 1);
-  assert.equal(result.endpointDigest, digest);
   assert.doesNotMatch(JSON.stringify(writes), /fixture-management-token|sensitive-fixture/);
 });
 
@@ -254,8 +269,7 @@ test("一覧を全ページ調べ、同じ ref の別 Deployment と不完全な
     { deployment: { target: "production" } }, { deployment: { public: true } }, { aliases: [{ alias: "mille-fumin1.vercel.app" }] },
     { deployment: { gitSource: { ...source, repoId: 42 } } }, { deployment: { gitSource: { ...source, ref: "codex/other" } } },
     { deployment: { createdAt: 19000 } }, { deployment: { ready: null } }, { deployment: { ready: 20000 } },
-    { deployment: { routes: [routes[0], { headers: { "x-mille-native-endpoint-sha256": digest } }] } },
-    { deployment: { routes: [{ headers: { "X-Mille-Native-Endpoint-SHA256": "invalid" } }] } },
+    { deployment: { functions: { api: {} } } }, { deployment: { crons: [{ path: "/api" }] } },
   ]) {
     await assert.rejects(scenario(options).client.find(target));
   }
@@ -268,10 +282,11 @@ test("一覧を全ページ調べ、同じ ref の別 Deployment と不完全な
 test("一覧にあるデプロイと静的ビルドの読み戻しに失敗した場合は HTTP 404 を維持する", async () => {
   const { client, requests } = scenario({ readbackResponse: new Response(secret, { status: 404 }) });
   await assert.rejects(client.find(target), /HTTP 404/);
-  const { client: verified } = scenario();
-  const current = await verified.find(target);
-  assert.ok(current);
-  await assert.rejects(client.confirmStatic(current), /HTTP 404/);
+  const { client: verified, waits } = scenario({ eventsResponse: new Response(secret, { status: 404 }) });
+  const found = await verified.find(target);
+  assert.ok(found);
+  await assert.rejects(verified.confirmStatic(found), /HTTP 404/);
+  assert.equal(waits(), 0);
   assert.ok(requests.every(request => request.startsWith("GET ")));
 });
 
@@ -280,17 +295,36 @@ test("固定 ref の生成エイリアスだけを正確な割り当てと照合
   const found = await client.find(target);
   assert.ok(found);
   await client.remove(found, current);
-  assert.equal(requests.filter(request => request === `GET /v4/aliases/${aliasHost}`).length, 3);
+  assert.deepEqual(requests.filter(request => request.startsWith("DELETE")), [
+    `DELETE /v2/aliases/${aliasUid}`, `DELETE /v13/deployments/${id}`,
+  ]);
+  assert.deepEqual(requests.slice(-6), [
+    `GET /v4/aliases/${aliasHost}`, `DELETE /v2/aliases/${aliasUid}`, `GET /v4/aliases/${aliasHost}`,
+    `DELETE /v13/deployments/${id}`, `GET /v13/deployments/${id}`, `GET /v4/aliases/${aliasHost}`,
+  ]);
   const collision = scenario({ deployment: null, directAlias: { ...attachedAlias, deploymentId: "dpl_Other" } });
   await assert.rejects(collision.client.provision(target, generation, current), /既に割り当て/);
   assert.equal(collision.writes.length, 0);
+  const invalid = scenario({ deployment: null, aliasResponse: Response.json(null) });
+  await assert.rejects(invalid.client.find(target), { status: 200 });
+  const nullDeployment = scenario({ readbackResponse: Response.json(null) });
+  await assert.rejects(nullDeployment.client.remove(found, current), { status: 200 });
+  assert.ok(nullDeployment.requests.every(request => !request.startsWith("DELETE")));
   const lingering = scenario({ aliases: [{ alias: aliasHost }], directAlias: attachedAlias, aliasPersists: true });
   await assert.rejects(lingering.client.remove(found, current), /既に割り当て/);
+  assert.deepEqual(lingering.requests.filter(request => request.startsWith("DELETE")), [`DELETE /v2/aliases/${aliasUid}`]);
+  const reassigned = scenario({ directAlias: attachedAlias, aliasReadback: reads => reads === 3
+    ? { ...attachedAlias, deploymentId: "dpl_Other" } : attachedAlias });
+  const beforeReassignment = await reassigned.client.find(target);
+  assert.ok(beforeReassignment);
+  await assert.rejects(reassigned.client.remove(beforeReassignment, current), /割り当てを確認/);
+  assert.ok(reassigned.requests.every(request => !request.startsWith("DELETE")));
   const wrongRef = scenario();
   await assert.rejects(wrongRef.client.find({ ...target, ref: "codex/other" }));
   assert.deepEqual(wrongRef.requests, []);
   for (const badAlias of [
     undefined, { ...attachedAlias, projectId: "prj_Other" }, { ...attachedAlias, deploymentId: "dpl_Other" },
+    { ...attachedAlias, uid: "../other" }, { ...attachedAlias, uid: undefined },
     { ...attachedAlias, redirect: "example.com" }, { ...attachedAlias, protectionBypass: { [secret]: true } },
   ]) {
     const { client } = scenario({ aliases: [{ alias: aliasHost }], directAlias: badAlias });
@@ -298,33 +332,55 @@ test("固定 ref の生成エイリアスだけを正確な割り当てと照合
   }
 });
 
-test("READY を待ち、静的 index 1 件の完全な成果物だけを承認する", async () => {
+test("READY と同じ Deployment の静的ビルド照合記録を待つ", async () => {
   const pending = scenario({ details: reads => reads < 3
-    ? { readyState: "BUILDING", routes: null, ready: null }
-    : { readyState: "READY" } });
+    ? { readyState: "BUILDING", ready: null }
+    : { readyState: "READY" }, events: reads => reads === 1 ? [unrelatedEvent] : [unrelatedEvent, evidenceEvent] });
   const found = await pending.client.find(target);
   assert.ok(found);
   assert.equal(found.readyState, "BUILDING");
   assert.deepEqual(await pending.client.confirmStatic(found), {
-    ...found, readyState: "READY", readyAt: deployment.ready, endpointDigest: digest,
+    ...found, readyState: "READY", readyAt: deployment.ready, endpointId,
   });
-  assert.equal(pending.waits(), 1);
-  for (const outputs of [
-    { builds: [] }, { builds: [{ ...build, output: undefined }] }, { builds: [{ ...build, readyState: "ERROR" }] },
-    { builds: [{ ...build, output: [artifact, artifact] }] }, { builds: [{ ...build, deploymentId: "dpl_Other" }] },
-    { builds: [{ ...build, output: [{ ...artifact, path: "other.html" }] }] },
-    { builds: [{ ...build, output: [artifact, { type: "lambda", path: "api/auth" }] }] },
-    { builds: [build], pagination: { next: 50 } },
+  assert.equal(pending.waits(), 2);
+  assert.equal(pending.requests.filter(request => request === `GET /v3/deployments/${id}/events`).length, 2);
+  const previousSha = "b".repeat(40);
+  const previous = scenario({
+    deployment: { gitSource: { ...source, sha: previousSha }, meta: { ...metadata, milleNativePilotSha: previousSha } },
+    events: () => [{ ...evidenceEvent, text: evidenceText.replace(target.sha, previousSha) }],
+  });
+  const identified = await previous.client.find(target, false);
+  assert.ok(identified);
+  assert.equal((await previous.client.confirmStatic(identified)).endpointId, endpointId);
+});
+
+test("重複、切れた一覧、別の所有情報、形式不正の静的ビルド照合記録を直ちに拒否する", async () => {
+  for (const events of [
+    [evidenceEvent, evidenceEvent], [evidenceEvent, ...Array(199).fill(unrelatedEvent)], { events: [evidenceEvent] },
+    [{ ...evidenceEvent, deploymentId: "dpl_Other" }], [{ ...evidenceEvent, type: "stderr" }],
+    [{ ...evidenceEvent, info: { type: "runtime" } }],
+    ...[
+      evidenceText.replace(id, "dpl_Other"), evidenceText.replace(" 17 ", " 18 "),
+      evidenceText.replace(target.ref, "codex/native-preview-pilot-b"), evidenceText.replace(target.sha, "b".repeat(40)),
+      evidenceText.replace(generation, "dc54f877-d22f-4ab7-b5d7-c90532fde379"),
+      evidenceText.replace(endpointId, secret), evidenceText.replace(endpointId, `${endpointId}-pooler`),
+      evidenceText.replace("v1", "v2"), `prefix ${evidenceText}`, `${evidenceText}\n`, `${evidenceText} extra`,
+    ].map(text => [{ ...evidenceEvent, text }]),
   ]) {
-    const { client } = scenario({ outputs });
+    const { client, waits } = scenario({ events: () => events });
     const identified = await client.find(target);
     assert.ok(identified);
-    await assert.rejects(client.confirmStatic(identified));
+    await assert.rejects(client.confirmStatic(identified), (error: Error) => {
+      assert.doesNotMatch(error.message, new RegExp(secret));
+      return true;
+    });
+    assert.equal(waits(), 0);
   }
-  const withoutAttestation = scenario({ deployment: { routes: [] } });
+  const withoutAttestation = scenario({ events: () => [unrelatedEvent] });
   const identified = await withoutAttestation.client.find(target);
   assert.ok(identified);
-  await assert.rejects(withoutAttestation.client.confirmStatic(identified), /静的な準備用ビルド/);
+  await assert.rejects(withoutAttestation.client.confirmStatic(identified), /静的な準備用ビルド照合記録を確認できません/);
+  assert.equal(withoutAttestation.waits(), 120);
 });
 
 test("終了した同じ Deployment の削除を再照合し、既に削除済みでも完了する", async () => {
