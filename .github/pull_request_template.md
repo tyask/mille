@@ -16,6 +16,7 @@
 - 固有のPreview URL
 - 対象の完全HEAD SHAとDeployment ID
 - 作成・ブラウザ確認の状況と証拠
+- `status`・必要な `verify` の実行 URL と試行、実行元 `main` SHA、専用 DB の branch・endpoint・世代、ブラウザの実行時 SHA と結果
 
 <!-- 現行手順に従って現在HEADの結果を記録します。保護用の値や接続情報を記載しません。 -->
 
