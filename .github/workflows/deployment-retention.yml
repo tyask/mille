@@ -1,0 +1,35 @@
+name: Mille Deployment Retention
+on:
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: mille-deployment-retention
+  cancel-in-progress: false
+  queue: max
+jobs:
+  plan:
+    name: Plan retention for old production deployments
+    if: github.repository == 'tyask/mille' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    environment: mille-pr-preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .node-version
+      - run: npm ci --ignore-scripts
+      - name: Inspect Vercel deployment retention candidates
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          MILLE_PR_PREVIEW_VERCEL_TEAM_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_TEAM_ID }}
+          MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID }}
+        run: node --import tsx scripts/preview/deployment-retention.ts

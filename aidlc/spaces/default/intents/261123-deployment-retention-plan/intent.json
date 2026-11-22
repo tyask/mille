@@ -1,0 +1,27 @@
+{
+  "id": "261123-deployment-retention-plan",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-06"
+  ],
+  "phase": "旧デプロイの候補一覧",
+  "branch": "codex/issue-32-retention-plan",
+  "baseSha": "258f997dbbe1725c0af6eb4ecb2174bdc3e66902",
+  "referenceSha": "5975e5f20d9eb755d991b8725840feab0b778d65",
+  "state": "frozen",
+  "plan": "plan.md",
+  "planSha256": "3bf3141d08f450cec1cab05acc97d05e9d149467543b13d42f02daee239a6e6b",
+  "approvedPlan": "../261121-cake-parity-ci/plan.md",
+  "approvedPlanSha256": "b0377e7832481c600e4ec7fc1a38716274563aa0541161eac765183e17cac58c",
+  "approvedIssueSnapshot": "../261121-cake-parity-ci/issue.md",
+  "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
+  "issueSource": "../261121-cake-parity-ci/issue-source.json",
+  "approvalEvidence": "../261121-cake-parity-ci/approvals.json",
+  "frozenAt": "2026-11-22T16:32:21Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "候補一覧の関連テスト7件。候補への照合中のエイリアス追加と100件の個別一覧を含む",
+    "既存 Vercel 認証で実環境を GET のみ照合（30件中22件が旧 main 本番の暫定候補）",
+    "ワークフロー、保持と出典の条件、git diff --check を自己レビュー"
+  ]
+}
