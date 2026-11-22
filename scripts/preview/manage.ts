@@ -4,7 +4,7 @@ import { previewMigrationSources } from "./database";
 import { previewContext, previewGitHubHttpStatus } from "./github";
 import { assertPreviewGitDeploymentPolicy } from "./git-policy";
 import { executeNativePilot, nativePilotProviders } from "./native-pilot";
-import { formatNativePilotFailure, NativePilotStageError, nativePilotStage } from "./native-pilot-diagnostics";
+import { formatNativePilotFailure, NativePilotStageError, nativePilotStage, type NativePilotStage } from "./native-pilot-diagnostics";
 import { assertNativePilotFirstCreation } from "./native-pilot-history";
 import { nativePilotPrs } from "./native-pilot-selection";
 import { NeonPreview, NeonPreviewError } from "./neon";
@@ -26,8 +26,11 @@ const configuration = z.object({
 let stage = "実行元と PR の照合";
 async function main() {
   const target = previewTargetSchema.parse(JSON.parse(process.env.MILLE_PR_PREVIEW_TARGET ?? ""));
-  const context = await previewContext();
-  const targets = await context.targets();
+  const mode = process.env.MILLE_PR_PREVIEW_MODE;
+  const check = <T>(step: NativePilotStage, run: () => T | Promise<T>) =>
+    mode === "native-pilot" ? nativePilotStage(step, run) : run();
+  const context = await check("github-target", previewContext);
+  const targets = await check("github-target", context.targets);
   if (!targets.some((value) => samePreviewTarget(value, target))) {
     console.log("PR イベントが変更されたため処理を終了しました。");
     return;
@@ -38,15 +41,15 @@ async function main() {
       throw new Error("PR の SHA または状態が変わりました。");
     }
   };
-  await verifyCurrent();
-  const pilots = nativePilotPrs(process.env.MILLE_PR_PREVIEW_MODE, process.env.MILLE_NATIVE_PREVIEW_PILOTS);
+  await check("github-target", verifyCurrent);
+  const pilots = await check("configuration", () => nativePilotPrs(mode, process.env.MILLE_NATIVE_PREVIEW_PILOTS));
   if (pilots && !pilots.includes(target.number)) return;
   if (target.operation === "deploy") {
     stage = "通常の Git デプロイを制限する設定の照合";
-    await assertPreviewGitDeploymentPolicy(context.controlSha, target.sha, context.read);
+    await check("github-deployment-policy", () => assertPreviewGitDeploymentPolicy(context.controlSha, target.sha, context.read));
   }
   stage = "管理ジョブの設定の検証";
-  const config = configuration.parse(process.env);
+  const config = await check("configuration", () => configuration.parse(process.env));
   const neon = new NeonPreview({
     apiKey: config.NEON_API_KEY,
     projectId: config.MILLE_PR_PREVIEW_NEON_PROJECT_ID,

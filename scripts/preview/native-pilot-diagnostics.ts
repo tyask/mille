@@ -20,10 +20,10 @@ const stages = {
   cleanup: "所有を照合した試験用資源の削除",
 } as const;
 
-type Stage = keyof typeof stages;
+export type NativePilotStage = keyof typeof stages;
 
 export class NativePilotStageError extends Error {
-  constructor(readonly stage: Stage, cause: unknown) {
+  constructor(readonly stage: NativePilotStage, cause: unknown) {
     super(cause instanceof Error ? cause.message : "Native Preview の試験工程で停止しました。", { cause });
   }
 }
@@ -34,7 +34,7 @@ export class NativePilotHttpError extends Error {
   }
 }
 
-export async function nativePilotStage<T>(stage: Stage, run: () => T | Promise<T>): Promise<T> {
+export async function nativePilotStage<T>(stage: NativePilotStage, run: () => T | Promise<T>): Promise<T> {
   try {
     return await run();
   } catch (error) {

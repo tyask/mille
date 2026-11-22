@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
-import { NativePilotStageError, formatNativePilotFailure } from "../scripts/preview/native-pilot-diagnostics";
+import { neonConfig } from "@neondatabase/serverless";
+import { NativePilotHttpError, NativePilotStageError, formatNativePilotFailure } from "../scripts/preview/native-pilot-diagnostics";
 import { NeonPreview, NeonPreviewError, type NativeNeonBranch } from "../scripts/preview/neon";
 
 const config = { apiKey: "fixture-api-token", projectId: "fixture-preview-project", parentBranchId: "br-template",
@@ -38,6 +39,7 @@ function scenario(t: TestContext, options: {
   nonemptyTemplate?: string;
   templateMetadataStatus?: number;
   templateSqlFailureAt?: string;
+  templateSqlTransportFailureAt?: string;
   initializeFails?: boolean;
   endpointStays?: boolean;
 } = {}) {
@@ -59,6 +61,7 @@ function scenario(t: TestContext, options: {
         assert.match(payload.queries[0].query, /pg_largeobject_metadata/);
         inspected.push(database);
         if (options.templateSqlFailureAt === database) return Response.json({ message: secret }, { status: 400 });
+        if (options.templateSqlTransportFailureAt === database) throw new Error(secret);
         return Response.json({ results: [{
           fields: [{ name: "database", dataTypeID: 25 }, { name: "role", dataTypeID: 25 }, { name: "empty", dataTypeID: 16 }],
           rows: [[database, role, options.nonemptyTemplate === database ? "f" : "t"]],
@@ -140,7 +143,8 @@ function failureIn(stage: NativePilotStageError["stage"], httpStatus?: number) {
   return (error: unknown) => {
     assert.ok(error instanceof NativePilotStageError);
     assert.equal(error.stage, stage);
-    const status = error.cause instanceof NeonPreviewError ? error.cause.httpStatus : undefined;
+    const status = error.cause instanceof NativePilotHttpError ? error.cause.status
+      : error.cause instanceof NeonPreviewError ? error.cause.httpStatus : undefined;
     assert.equal(status, httpStatus);
     const diagnostic = formatNativePilotFailure(error, status);
     const loggedStatus = /\(HTTP ([0-9]{3})\)$/.exec(diagnostic)?.[1];
@@ -190,14 +194,55 @@ test("Native 診断はテンプレートのメタデータと読み取り SQL �
     assert.deepEqual(fixture.events, []);
     t.mock.restoreAll();
   }
-  for (const options of [{ templateSqlFailureAt: "postgres" }, { nonemptyTemplate: "postgres" }]) {
+  for (const [options, status] of [
+    [{ templateSqlFailureAt: "postgres" }, 400],
+    [{ nonemptyTemplate: "postgres" }, 200],
+    [{ templateSqlTransportFailureAt: "postgres" }, undefined],
+  ] as const) {
     const fixture = scenario(t, options);
-    await assert.rejects(service.nativePreflight(standing.id, endpoint(standing).id, [ref, peerRef]), failureIn("neon-template-sql"));
+    await assert.rejects(service.nativePreflight(standing.id, endpoint(standing).id, [ref, peerRef]),
+      failureIn("neon-template-sql", status));
     assert.deepEqual(fixture.passwordReads, [template.id]);
     assert.deepEqual(fixture.inspected, [db, "postgres"]);
     assert.deepEqual(fixture.events, []);
     t.mock.restoreAll();
   }
+});
+
+test("Native SQL の診断は設定済みの fetch を使い、並行する問い合わせの HTTP 状態を混同しない", async t => {
+  const fixture = scenario(t);
+  const originalFetch: unknown = neonConfig.fetchFunction;
+  t.after(() => { neonConfig.fetchFunction = originalFetch; });
+  const firstStarted = Promise.withResolvers<void>();
+  const releaseFirst = Promise.withResolvers<void>();
+  let sqlRequests = 0;
+  const configuredFetch: typeof fetch = async (input, init) => {
+    assert.equal(new URL(String(input)).pathname, "/sql");
+    assert.equal(new Headers(init?.headers).get("Neon-Batch-Read-Only"), "true");
+    if (++sqlRequests === 1) {
+      firstStarted.resolve();
+      await releaseFirst.promise;
+      throw new Error(secret);
+    }
+    return Response.json({ message: secret }, { status: 429 });
+  };
+  neonConfig.fetchFunction = configuredFetch;
+
+  const service = new NeonPreview(config);
+  const first = assert.rejects(service.nativePreflight(standing.id, endpoint(standing).id, [ref, peerRef]),
+    failureIn("neon-template-sql"));
+  await firstStarted.promise;
+  try {
+    await assert.rejects(service.nativePreflight(standing.id, endpoint(standing).id, [ref, peerRef]),
+      failureIn("neon-template-sql", 429));
+  } finally {
+    releaseFirst.resolve();
+    await first;
+  }
+
+  assert.equal(sqlRequests, 2);
+  assert.deepEqual(fixture.inspected, []);
+  assert.deepEqual(fixture.events, []);
 });
 
 test("Native の子は正確な Git ブランチ名、作成時刻と直接接続先で識別する", async t => {

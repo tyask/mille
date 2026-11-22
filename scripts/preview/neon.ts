@@ -1,10 +1,11 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { setTimeout as delay } from "node:timers/promises";
-import { neon } from "@neondatabase/serverless";
+import { neon, neonConfig } from "@neondatabase/serverless";
 import { z } from "zod";
 import type { MigrationSource } from "../db/sql";
 import { preparePreviewDatabase, previewDatabaseEnvironmentId } from "./database";
 import { isNativePreviewTaskBranch } from "./native-identity";
-import { NativePilotStageError, nativePilotStage } from "./native-pilot-diagnostics";
+import { NativePilotHttpError, NativePilotStageError, nativePilotStage } from "./native-pilot-diagnostics";
 
 const api = "https://console.neon.tech/api/v2";
 const projectName = "mille-preview";
@@ -12,6 +13,23 @@ const templateName = "mille-pr-template";
 const templateDatabase = "neondb";
 const templateRole = "neondb_owner";
 const repository = "tyask/mille";
+
+const templateSqlHttp = new AsyncLocalStorage<{ status?: number }>();
+const observingFetches = new WeakSet<typeof fetch>();
+
+function observeTemplateSqlHttp(): void {
+  const configuredFetch = neonConfig.fetchFunction as typeof fetch | undefined;
+  if (configuredFetch && observingFetches.has(configuredFetch)) return;
+  const observingFetch: typeof fetch = async (...args) => {
+    const observation = templateSqlHttp.getStore();
+    const response = await (configuredFetch ?? globalThis.fetch)(...args);
+    if (observation) observation.status = response.status;
+    return response;
+  };
+  observingFetches.add(observingFetch);
+  neonConfig.fetchFunction = observingFetch;
+}
+
 // Neon provides cloud_admin-owned monitoring objects in its system databases.
 const templateInspection = `
   SELECT pg_catalog.current_database() AS database, current_user AS role,
@@ -296,7 +314,7 @@ export class NeonPreview {
       return;
     }
     const { connectionString } = await nativePilotStage("neon-template-metadata", () => this.#templateConnection(nativeRoot));
-    await nativePilotStage("neon-template-sql", () => this.#inspectTemplateDatabases(connectionString));
+    await nativePilotStage("neon-template-sql", () => this.#inspectTemplateDatabases(connectionString, true));
   }
 
   async #templateConnection(nativeRoot?: NativeNeonBranch) {
@@ -318,18 +336,26 @@ export class NeonPreview {
     return this.#connection(parentBranchId, templateDatabase, templateRole, nativeRoot);
   }
 
-  async #inspectTemplateDatabases(connectionString: string): Promise<void> {
+  async #inspectTemplateDatabases(connectionString: string, captureHttpStatus = false): Promise<void> {
+    if (captureHttpStatus) observeTemplateSqlHttp();
     for (const name of [templateDatabase, "postgres", "template1"]) {
       const url = new URL(connectionString);
       url.pathname = `/${name}`;
-      try {
+      // The SDK's error does not expose a status. Observe each response without reading its body.
+      const observation: { status?: number } | undefined = captureHttpStatus ? {} : undefined;
+      const read = async () => {
         const query = neon(url.href);
         const [rows] = await query.transaction([query.query(templateInspection)], { readOnly: true });
         if (rows.length !== 1 || rows[0].database !== name || rows[0].role !== templateRole || rows[0].empty !== true) {
           throw new Error("Neon テンプレートの内容が一致しません。");
         }
+      };
+      try {
+        await (observation ? templateSqlHttp.run(observation, read) : read());
       } catch {
-        throw new Error("Neon テンプレートが空であることを確認できません。");
+        const message = "Neon テンプレートが空であることを確認できません。";
+        if (observation?.status !== undefined) throw new NativePilotHttpError(message, observation.status);
+        throw new Error(message);
       }
     }
   }
