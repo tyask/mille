@@ -200,7 +200,7 @@ export class NeonPreview {
   readonly #config: Config;
   readonly #project: string;
 
-  constructor(config: Config) {
+  constructor(config: Config, private readonly request?: typeof fetch) {
     const parsed = configSchema.safeParse(config);
     if (!parsed.success) throw new Error("Neon PR Preview の設定が無効です。");
     this.#config = parsed.data;
@@ -215,7 +215,7 @@ export class NeonPreview {
       await verifyCurrent?.();
       let response: Response | undefined;
       try {
-        response = await fetch(`${api}${this.#project}${path}`, {
+        response = await (this.request ?? fetch)(`${api}${this.#project}${path}`, {
           method,
           headers: { Authorization: `Bearer ${this.#config.apiKey}`, "Content-Type": "application/json" },
           ...(body ? { body: JSON.stringify(body) } : {}),
@@ -656,6 +656,19 @@ export class NeonPreview {
       this.#requireNativeAbsent(`/branches/${branchId}`, branchDetails),
       this.#requireNativeAbsent(`/endpoints/${endpointId}`, z.object({ endpoint })),
     ]);
+  }
+
+  async readPreviewBranch(pr: number): Promise<NativeNeonBranch> {
+    const name = previewDatabaseEnvironmentId(pr);
+    await this.preflight();
+    const matches = (await this.#branches()).filter(item => item.name === name);
+    if (matches.length !== 1) throw new Error("Neon PR 専用ブランチを一意に特定できません。");
+    const { id, current_state, pending_state } = await this.#ownedBranch(matches[0].id, name, pr);
+    if (current_state !== "ready" || pending_state != null) {
+      throw new Error("Neon PR 専用ブランチの準備完了を確認できません。");
+    }
+    const { id: endpointId, host } = await this.#writableEndpoint(id);
+    return { id, endpointId, host };
   }
 
   async ensure(pr: number, verifyCurrent?: VerifyCurrent, migrations?: readonly MigrationSource[]) {

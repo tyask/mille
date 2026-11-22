@@ -1,0 +1,31 @@
+{
+  "id": "261123-preview-verification",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-04"
+  ],
+  "phase": "信頼済み main から正式 PR Preview を照合する",
+  "branch": "codex/issue-32-preview-verification",
+  "baseSha": "258f997dbbe1725c0af6eb4ecb2174bdc3e66902",
+  "referenceSha": "5975e5f20d9eb755d991b8725840feab0b778d65",
+  "state": "frozen",
+  "plan": "plan.md",
+  "planSha256": "d62a809783daef251feaee696a5cffbb74bfff7f4662328ba41df9a20586f594",
+  "approvedPlan": "../261121-cake-parity-ci/plan.md",
+  "approvedPlanSha256": "b0377e7832481c600e4ec7fc1a38716274563aa0541161eac765183e17cac58c",
+  "approvedIssueSnapshot": "../261121-cake-parity-ci/issue.md",
+  "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
+  "issueSource": "../261121-cake-parity-ci/issue-source.json",
+  "approvalEvidence": "../261121-cake-parity-ci/approvals.json",
+  "frozenAt": "2026-11-22T16:19:44Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "正式 Preview、既存の Neon と Vercel 管理、ローカル QA の関連テスト82件",
+    "ワークフロー構造、同一 origin への OIDC、証跡の公開項目、旧ローカル QA の差分を自己レビュー",
+    "ローカル Chromium でポップアップの初回通信遮断とページ内ヘッダー付与を照合",
+    "Chromium のローカル圧縮レスポンスで文書ポリシーの適用、通常表示と Worker の通信遮断を照合",
+    "Chromium で同一 origin の正規リダイレクトを通し、エラー文書が実行前に遮断されることを照合",
+    "Chromium で空の Location を遮断し、正規リダイレクトを空本文と検証済み URL で再構成して表示を確認",
+    "git diff --check"
+  ]
+}

@@ -255,6 +255,18 @@ export class VercelPreview {
     throw new Error("Vercel Preview の READY を確認できませんでした。");
   }
 
+  async readReadyPreview(target: { number: number; sha: string }, expectedHost: string): Promise<{ id: string; url: string }> {
+    await this.preflight();
+    const candidates = (await this.deployments(target.number)).filter(deployment =>
+      deployment.meta.millePreviewSha === target.sha && deployment.readyState === "READY");
+    const hostHash = createHash("sha256").update(expectedHost).digest("hex");
+    if (candidates.length !== 1 || candidates[0].meta.millePreviewDbHostHash !== hostHash) {
+      throw new Error("Vercel Preview の現 HEAD、専用 DB、READY の状態を照合できません。");
+    }
+    const { id, url } = candidates[0];
+    return { id, url: `https://${url}` };
+  }
+
   async deploy(
     target: { number: number; sha: string },
     db: PreviewDatabase,
