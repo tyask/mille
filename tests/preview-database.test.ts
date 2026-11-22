@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import type { DatabaseConfiguration } from "../lib/server/database/environment";
+import { nativePreviewEnvironmentId } from "../lib/server/database/native-preview";
+import { TEST_USERS } from "../lib/shared/test-users";
 import { migrationSql, repositoryMigrationSources } from "../scripts/db/sql";
 import { preparePreviewDatabase, previewDatabaseEnvironmentId, previewMigrationSources } from "../scripts/preview/database";
 
@@ -64,4 +66,46 @@ test("PR HEAD の追加 migration を適用し、適用後のハッシュ不一�
   const edited = previewMigrationSources([...baseline, candidate("fixture", "CREATE TABLE pr_fixture (id bigint)")]);
   await assert.rejects(database.exec(migrationSql(configuration, true, edited)), /checksum mismatch/);
   assert.deepEqual((await database.query("SELECT id FROM pr_fixture")).rows, [{ id: 12 }]);
+});
+
+test("Native DB の準備は同じ所有マーカーのデータを保持し、違う世代とブランチを拒否する", async t => {
+  const database = new PGlite();
+  t.after(() => database.close());
+  const pr = 12;
+  const generation = "2e149af1-e261-4c8e-92c8-1178c00094c8";
+  const branch = "br-native";
+  const environmentId = nativePreviewEnvironmentId(pr, generation, branch);
+  const input = {
+    pr, initialize: true, expectedDatabase: "neondb", expectedHost: "ep-native.neon.tech",
+    connectionString: "postgresql://dummy:dummy@ep-native.neon.tech/neondb?sslmode=require",
+  };
+  t.mock.method(globalThis, "fetch", async (url: string, init: RequestInit) => {
+    assert.equal(new URL(url).pathname, "/sql");
+    const connection = new URL(new Headers(init.headers).get("Neon-Connection-String") ?? "");
+    assert.equal(connection.hostname, input.expectedHost);
+    assert.equal(connection.pathname, `/${input.expectedDatabase}`);
+    const payload = JSON.parse(String(init.body)) as { query: string; params: string[] };
+    try {
+      const { rows, fields } = await database.query(payload.query, payload.params, { rowMode: "array" });
+      return Response.json({ rows, fields });
+    } catch (error) {
+      return Response.json({ message: error instanceof Error ? error.message : "Fixture query error" }, { status: 400 });
+    }
+  });
+
+  await preparePreviewDatabase({ ...input, environmentId });
+  const user = TEST_USERS[0];
+  await database.query("UPDATE app_users SET is_enabled = false WHERE id = $1", [user.id]);
+  await preparePreviewDatabase({ ...input, environmentId });
+
+  for (const otherId of [
+    previewDatabaseEnvironmentId(pr),
+    nativePreviewEnvironmentId(pr + 1, generation, branch),
+    nativePreviewEnvironmentId(pr, generation, "br-other"),
+    nativePreviewEnvironmentId(pr, "2e149af1-e261-4c8e-92c8-1178c00094c9", branch),
+  ]) {
+    await assert.rejects(preparePreviewDatabase({ ...input, environmentId: otherId }), /environment mismatch/);
+  }
+  assert.deepEqual((await database.query("SELECT environment_id FROM mille_environment")).rows, [{ environment_id: environmentId }]);
+  assert.deepEqual((await database.query("SELECT is_enabled FROM app_users WHERE id = $1", [user.id])).rows, [{ is_enabled: false }]);
 });

@@ -1,0 +1,22 @@
+{
+  "id": "261122-native-application",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": ["AC-03"],
+  "phase": "Cake に沿った Native Preview アプリ公開・再利用・削除",
+  "branch": "codex/issue-32-native-application",
+  "baseSha": "ebb96295fd239f04d2b025b643dd5374b60b00a9",
+  "state": "frozen",
+  "plan": "plan.md",
+  "planSha256": "9eea62d17180fc39dc3fda50fd73f26ec5023978a37a86d80205e2e03fc7cfc0",
+  "approvedIssueSnapshot": "issue.md",
+  "approvedIssueSha256": "ded299dca2e9ced3e08e6a1ea29cada6da75955b3a7cf19d0679985929a69f4a",
+  "issueSource": "issue-source.json",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-22T08:45:19Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "Native のビルド・実行時接続、Vercel・Neon 管理、通知と従来経路の関連テスト101件",
+    "Cake の静的準備・アプリ公開と再利用の照合、世代と DB の所有、試験 PR のソース制約と削除の自己レビュー",
+    "git diff --check"
+  ]
+}

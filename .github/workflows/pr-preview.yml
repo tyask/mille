@@ -120,7 +120,7 @@ jobs:
       fail-fast: false
       matrix:
         target: ${{ fromJSON(needs.prepare.outputs.targets) }}
-    name: PR ${{ matrix.target.number }} ${{ matrix.target.operation }}
+    name: ${{ vars.MILLE_PR_PREVIEW_MODE == 'native-pilot' && matrix.target.operation == 'deploy' && format('PR {0} deploy [{1}]', matrix.target.number, matrix.target.sha) || format('PR {0} {1}', matrix.target.number, matrix.target.operation) }}
     concurrency:
       group: ${{ vars.MILLE_PR_PREVIEW_MODE == 'native-pilot' && 'mille-pr-native-preview-pilot' || format('mille-pr-preview-{0}', matrix.target.number) }}
       cancel-in-progress: false

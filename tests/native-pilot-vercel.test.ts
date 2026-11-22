@@ -10,10 +10,14 @@ const repoId = 1436928292;
 const target = { pr: 17, ref: "codex/native-preview-pilot-a", sha: "a".repeat(40) };
 const generation = "b6ec6368-a4b9-47a5-99d0-7d15014fe50e";
 const id = "dpl_Pilot";
+const applicationId = "dpl_Application";
+const secondApplicationId = "dpl_Application2";
 const aliasHost = "mille-git-codex-native-preview-pilot-a-fumin1.vercel.app";
 const aliasUid = "alias_Pilot";
 const attachedAlias = { alias: aliasHost, uid: aliasUid, projectId: config.projectId, deploymentId: id, redirect: null };
 const endpointId = "ep-fixture-native";
+const database = { branchId: "br-fixture-native", endpointId, hostDigest: "a".repeat(64) };
+const updatedTarget = { ...target, sha: "b".repeat(40) };
 const evidenceText = `Mille: Native Preview 静的ビルド照合 v1 ${id} ${target.pr} ${target.ref} ${target.sha} ${generation} ${endpointId}`;
 const secret = "sensitive-fixture-must-never-appear";
 const variable = "MILLE_NATIVE_PREVIEW_DATABASE_URL";
@@ -36,22 +40,43 @@ const deployment = {
   id, ownerId: config.teamId, projectId: config.projectId, name: "mille", target: null, public: false, alias: [],
   url: "mille-pilot-fumin1.vercel.app", createdAt: 20001, ready: 21000, readyState: "READY", meta: metadata, gitSource: source, routes: null,
 };
+const applicationMetadata = {
+  milleNativePilotPhase: "application", milleNativePilotBranchId: database.branchId,
+  milleNativePilotEndpointId: database.endpointId, milleNativePilotHostDigest: database.hostDigest,
+};
+const application = {
+  ...deployment, id: applicationId, functions: { api: {} },
+  meta: { ...metadata, ...applicationMetadata },
+};
+const updatedApplication = {
+  ...application, id: secondApplicationId, gitSource: { ...source, sha: updatedTarget.sha },
+  meta: { ...application.meta, milleNativePilotSha: updatedTarget.sha },
+};
 const evidenceEvent = { id: "event_evidence", created: 20950, deploymentId: id, type: "stdout", info: { type: "build" }, text: evidenceText };
 const unrelatedEvent = { id: "event_other", deploymentId: id, type: "stderr", info: { type: "build" }, text: secret };
+
+function applicationEvent(record: typeof application = application, endpoint: string = endpointId) {
+  return {
+    ...evidenceEvent, deploymentId: record.id,
+    text: `Mille: Native Preview アプリビルド照合 v1 ${record.id} ${target.pr} ${target.ref} ${record.gitSource.sha} ${generation} ${endpoint}`,
+  };
+}
 type ListEntry = { uid: string; projectId: string; meta?: object; gitSource?: object };
 type Input = Record<string, unknown>;
 
 function scenario(options: {
-  project?: Input; projectResponse?: Response; envs?: readonly unknown[]; envPagination?: Input; deployment?: Input | null;
+  project?: Input; projectResponse?: Response; envs?: readonly unknown[]; envPagination?: Input; deployment?: Input | null; deployments?: Input[];
   details?: (requestNumber: number) => Input; inventory?: (cursor: string | null) => { deployments: ListEntry[]; pagination: { count: number; next: number | null } };
-  events?: (requestNumber: number) => unknown; eventsResponse?: Response; aliases?: unknown[]; directAlias?: Input;
+  events?: (requestNumber: number, id: string) => unknown; eventsResponse?: Response; aliases?: unknown[]; directAlias?: Input;
   aliasResponse?: Response;
   aliasReadback?: (requestNumber: number) => Input; deletePersists?: boolean; aliasPersists?: boolean;
   postResponse?: Response; throwPost?: boolean; readbackResponse?: Response;
 } = {}) {
   const requests: string[] = [];
   const writes: Input[] = [];
-  let existing = options.deployment === null ? null : { ...deployment, ...options.deployment };
+  const records = options.deployments ?? (options.deployment === null ? [] : [{ ...deployment, ...options.deployment }]);
+  const existing = new Map(records.map(item => [String(item.id), { ...item }]));
+  let aliases = options.aliases;
   let directAlias = options.directAlias;
   let detailsRead = 0;
   let eventsRead = 0;
@@ -73,7 +98,7 @@ function scenario(options: {
       case "/v6/deployments": {
         assert.equal(url.searchParams.get("projectId"), config.projectId);
         assert.equal(url.searchParams.get("limit"), "100");
-        const items = existing ? [{ uid: id, projectId: config.projectId, meta: existing.meta }] : [];
+        const items = [...existing.values()].map(item => ({ uid: item.id, projectId: config.projectId, meta: item.meta }));
         return Response.json(options.inventory?.(url.searchParams.get("until"))
           ?? { deployments: items, pagination: { count: items.length, next: null } });
       }
@@ -83,19 +108,14 @@ function scenario(options: {
         const body = JSON.parse(String(init?.body));
         writes.push(body);
         const requestedAt = Number(body.meta.milleNativePilotRequestedAt);
-        existing = { ...deployment, createdAt: requestedAt + 1, ready: requestedAt + 2, meta: body.meta };
+        const createdId = body.meta.milleNativePilotPhase === "provision" ? id
+          : existing.has(applicationId) ? secondApplicationId : applicationId;
+        existing.set(createdId, {
+          ...deployment, id: createdId, createdAt: requestedAt + 1, ready: requestedAt + 2, meta: body.meta, gitSource: body.gitSource,
+        });
         if (options.throwPost) throw new Error(secret);
-        return options.postResponse ?? Response.json({ id });
+        return options.postResponse ?? Response.json({ id: createdId });
       }
-      case `/v13/deployments/${id}`:
-        if (method === "DELETE") {
-          if (!options.deletePersists) existing = null;
-          return new Response(null, { status: 204 });
-        }
-        assert.equal(url.searchParams.get("withGitRepoInfo"), "true");
-        if (options.readbackResponse) return options.readbackResponse;
-        return existing ? Response.json({ ...existing, ...options.details?.(++detailsRead) }) : new Response(null, { status: 404 });
-      case `/v2/deployments/${id}/aliases`: return Response.json({ aliases: options.aliases ?? [] });
       case `/v4/aliases/${aliasHost}`: {
         const value = options.aliasReadback?.(++aliasesRead) ?? directAlias;
         if (options.aliasResponse) return options.aliasResponse;
@@ -103,16 +123,35 @@ function scenario(options: {
       }
       case `/v2/aliases/${aliasUid}`:
         assert.equal(method, "DELETE");
-        if (!options.aliasPersists) directAlias = undefined;
+        if (!options.aliasPersists) {
+          const record = existing.get(String(directAlias?.deploymentId));
+          if (record) record.alias = [];
+          aliases = undefined;
+          directAlias = undefined;
+        }
         return Response.json({ status: "SUCCESS" });
-      case `/v3/deployments/${id}/events`:
-        assert.equal(method, "GET");
-        assert.deepEqual(Object.fromEntries(url.searchParams), {
-          builds: "1", follow: "0", direction: "forward", limit: "200", teamId: config.teamId,
-        });
-        return options.eventsResponse ?? Response.json(options.events?.(++eventsRead) ?? [unrelatedEvent, evidenceEvent]);
-      default: assert.fail("未定義の Vercel API リクエストです。");
     }
+    const detail = /^\/v13\/deployments\/(dpl_[A-Za-z0-9]+)$/.exec(url.pathname);
+    if (detail) {
+      if (method === "DELETE") {
+        if (!options.deletePersists) existing.delete(detail[1]);
+        return new Response(null, { status: 204 });
+      }
+      assert.equal(url.searchParams.get("withGitRepoInfo"), "true");
+      if (options.readbackResponse) return options.readbackResponse;
+      const record = existing.get(detail[1]);
+      return record ? Response.json({ ...record, ...options.details?.(++detailsRead) }) : new Response(null, { status: 404 });
+    }
+    if (/^\/v2\/deployments\/dpl_[A-Za-z0-9]+\/aliases$/.test(url.pathname)) return Response.json({ aliases: aliases ?? [] });
+    const events = /^\/v3\/deployments\/(dpl_[A-Za-z0-9]+)\/events$/.exec(url.pathname);
+    if (events) {
+      assert.equal(method, "GET");
+      assert.deepEqual(Object.fromEntries(url.searchParams), {
+        builds: "1", follow: "0", direction: "forward", limit: "200", teamId: config.teamId,
+      });
+      return options.eventsResponse ?? Response.json(options.events?.(++eventsRead, events[1]) ?? [unrelatedEvent, evidenceEvent]);
+    }
+    assert.fail("未定義の Vercel API リクエストです。");
   };
   return { client: new NativePilotVercel(config, request, async () => { waits++; }), requests, writes, waits: () => waits };
 }
@@ -185,7 +224,7 @@ test("作成時の状態変更や不明な POST 結果を停止し、再試行�
   assert.equal(stopped.writes.length, 0);
   const uncertain = scenario({ deployment: null, postResponse: Response.json({ message: secret }, { status: 500 }) });
   await assert.rejects(uncertain.client.provision(target, generation, current), /HTTP 500/);
-  assert.equal((await uncertain.client.find(target))?.generation, generation);
+  assert.equal((await uncertain.client.list(target))[0]?.generation, generation);
   await assert.rejects(uncertain.client.provision(target, generation, current), /作成済み/);
   assert.equal(uncertain.writes.length, 1);
 });
@@ -261,7 +300,7 @@ test("一覧を全ページ調べ、同じ ref の別 Deployment と不完全な
   const pages = (cursor: string | null) => cursor === null
     ? { deployments: [unrelated], pagination: { count: 1, next: 100 } }
     : { deployments: [own], pagination: { count: 1, next: null } };
-  assert.equal((await scenario({ inventory: pages }).client.find(target))?.id, id);
+  assert.equal((await scenario({ inventory: pages }).client.list(target))[0]?.id, id);
   for (const options of [
     { deployment: { meta: { githubCommitRef: target.ref } }, inventory: () => ({ deployments: [{ ...own, meta: { githubCommitRef: target.ref } }], pagination: { count: 1, next: null } }) },
     { inventory: () => ({ deployments: [own], pagination: { count: 1, next: 25 } }) },
@@ -271,19 +310,18 @@ test("一覧を全ページ調べ、同じ ref の別 Deployment と不完全な
     { deployment: { createdAt: 19000 } }, { deployment: { ready: null } }, { deployment: { ready: 20000 } },
     { deployment: { functions: { api: {} } } }, { deployment: { crons: [{ path: "/api" }] } },
   ]) {
-    await assert.rejects(scenario(options).client.find(target));
+    await assert.rejects(scenario(options).client.list(target));
   }
   const previousSha = "b".repeat(40);
   const previous = scenario({ deployment: { gitSource: { ...source, sha: previousSha }, meta: { ...metadata, milleNativePilotSha: previousSha } } });
-  await assert.rejects(previous.client.find(target));
-  assert.equal((await previous.client.find(target, false))?.sha, previousSha);
+  assert.equal((await previous.client.list(target))[0]?.sha, previousSha);
 });
 
 test("一覧にあるデプロイと静的ビルドの読み戻しに失敗した場合は HTTP 404 を維持する", async () => {
   const { client, requests } = scenario({ readbackResponse: new Response(secret, { status: 404 }) });
-  await assert.rejects(client.find(target), /HTTP 404/);
+  await assert.rejects(client.list(target), /HTTP 404/);
   const { client: verified, waits } = scenario({ eventsResponse: new Response(secret, { status: 404 }) });
-  const found = await verified.find(target);
+  const [found] = await verified.list(target);
   assert.ok(found);
   await assert.rejects(verified.confirmStatic(found), /HTTP 404/);
   assert.equal(waits(), 0);
@@ -292,35 +330,36 @@ test("一覧にあるデプロイと静的ビルドの読み戻しに失敗し�
 
 test("固定 ref の生成エイリアスだけを正確な割り当てと照合する", async () => {
   const { client, requests } = scenario({ deployment: { alias: [aliasHost] }, aliases: [{ alias: aliasHost }], directAlias: attachedAlias });
-  const found = await client.find(target);
+  const [found] = await client.list(target);
   assert.ok(found);
   await client.remove(found, current);
   assert.deepEqual(requests.filter(request => request.startsWith("DELETE")), [
     `DELETE /v2/aliases/${aliasUid}`, `DELETE /v13/deployments/${id}`,
   ]);
-  assert.deepEqual(requests.slice(-6), [
-    `GET /v4/aliases/${aliasHost}`, `DELETE /v2/aliases/${aliasUid}`, `GET /v4/aliases/${aliasHost}`,
-    `DELETE /v13/deployments/${id}`, `GET /v13/deployments/${id}`, `GET /v4/aliases/${aliasHost}`,
-  ]);
+  const aliasDelete = requests.indexOf(`DELETE /v2/aliases/${aliasUid}`);
+  const deploymentDelete = requests.indexOf(`DELETE /v13/deployments/${id}`);
+  assert.ok(requests.slice(aliasDelete + 1, deploymentDelete).includes(`GET /v4/aliases/${aliasHost}`));
+  assert.ok(requests.slice(deploymentDelete + 1).includes(`GET /v4/aliases/${aliasHost}`));
+  assert.ok(requests.slice(deploymentDelete + 1).includes(`GET /v13/deployments/${id}`));
   const collision = scenario({ deployment: null, directAlias: { ...attachedAlias, deploymentId: "dpl_Other" } });
-  await assert.rejects(collision.client.provision(target, generation, current), /既に割り当て/);
+  await assert.rejects(collision.client.provision(target, generation, current), /割り当てを確認/);
   assert.equal(collision.writes.length, 0);
   const invalid = scenario({ deployment: null, aliasResponse: Response.json(null) });
-  await assert.rejects(invalid.client.find(target), { status: 200 });
+  await assert.rejects(invalid.client.list(target), { status: 200 });
   const nullDeployment = scenario({ readbackResponse: Response.json(null) });
   await assert.rejects(nullDeployment.client.remove(found, current), { status: 200 });
   assert.ok(nullDeployment.requests.every(request => !request.startsWith("DELETE")));
   const lingering = scenario({ aliases: [{ alias: aliasHost }], directAlias: attachedAlias, aliasPersists: true });
-  await assert.rejects(lingering.client.remove(found, current), /既に割り当て/);
+  await assert.rejects(lingering.client.remove(found, current), /エイリアスが残っています/);
   assert.deepEqual(lingering.requests.filter(request => request.startsWith("DELETE")), [`DELETE /v2/aliases/${aliasUid}`]);
   const reassigned = scenario({ directAlias: attachedAlias, aliasReadback: reads => reads === 3
     ? { ...attachedAlias, deploymentId: "dpl_Other" } : attachedAlias });
-  const beforeReassignment = await reassigned.client.find(target);
+  const [beforeReassignment] = await reassigned.client.list(target);
   assert.ok(beforeReassignment);
   await assert.rejects(reassigned.client.remove(beforeReassignment, current), /割り当てを確認/);
   assert.ok(reassigned.requests.every(request => !request.startsWith("DELETE")));
   const wrongRef = scenario();
-  await assert.rejects(wrongRef.client.find({ ...target, ref: "codex/other" }));
+  await assert.rejects(wrongRef.client.list({ ...target, ref: "codex/other" }));
   assert.deepEqual(wrongRef.requests, []);
   for (const badAlias of [
     undefined, { ...attachedAlias, projectId: "prj_Other" }, { ...attachedAlias, deploymentId: "dpl_Other" },
@@ -328,7 +367,7 @@ test("固定 ref の生成エイリアスだけを正確な割り当てと照合
     { ...attachedAlias, redirect: "example.com" }, { ...attachedAlias, protectionBypass: { [secret]: true } },
   ]) {
     const { client } = scenario({ aliases: [{ alias: aliasHost }], directAlias: badAlias });
-    await assert.rejects(client.find(target));
+    await assert.rejects(client.list(target));
   }
 });
 
@@ -336,7 +375,7 @@ test("READY と同じ Deployment の静的ビルド照合記録を待つ", async
   const pending = scenario({ details: reads => reads < 3
     ? { readyState: "BUILDING", ready: null }
     : { readyState: "READY" }, events: reads => reads === 1 ? [unrelatedEvent] : [unrelatedEvent, evidenceEvent] });
-  const found = await pending.client.find(target);
+  const [found] = await pending.client.list(target);
   assert.ok(found);
   assert.equal(found.readyState, "BUILDING");
   assert.deepEqual(await pending.client.confirmStatic(found), {
@@ -349,7 +388,7 @@ test("READY と同じ Deployment の静的ビルド照合記録を待つ", async
     deployment: { gitSource: { ...source, sha: previousSha }, meta: { ...metadata, milleNativePilotSha: previousSha } },
     events: () => [{ ...evidenceEvent, text: evidenceText.replace(target.sha, previousSha) }],
   });
-  const identified = await previous.client.find(target, false);
+  const [identified] = await previous.client.list(target);
   assert.ok(identified);
   assert.equal((await previous.client.confirmStatic(identified)).endpointId, endpointId);
 });
@@ -368,7 +407,7 @@ test("重複、切れた一覧、別の所有情報、形式不正の静的ビ�
     ].map(text => [{ ...evidenceEvent, text }]),
   ]) {
     const { client, waits } = scenario({ events: () => events });
-    const identified = await client.find(target);
+    const [identified] = await client.list(target);
     assert.ok(identified);
     await assert.rejects(client.confirmStatic(identified), (error: Error) => {
       assert.doesNotMatch(error.message, new RegExp(secret));
@@ -377,7 +416,7 @@ test("重複、切れた一覧、別の所有情報、形式不正の静的ビ�
     assert.equal(waits(), 0);
   }
   const withoutAttestation = scenario({ events: () => [unrelatedEvent] });
-  const identified = await withoutAttestation.client.find(target);
+  const [identified] = await withoutAttestation.client.list(target);
   assert.ok(identified);
   await assert.rejects(withoutAttestation.client.confirmStatic(identified), /静的な準備用ビルド照合記録を確認できません/);
   assert.equal(withoutAttestation.waits(), 120);
@@ -385,14 +424,14 @@ test("重複、切れた一覧、別の所有情報、形式不正の静的ビ�
 
 test("終了した同じ Deployment の削除を再照合し、既に削除済みでも完了する", async () => {
   const { client, requests } = scenario();
-  const found = await client.find(target);
+  const [found] = await client.list(target);
   assert.ok(found);
   await client.remove(found, current);
   await client.remove(found, current);
   assert.deepEqual(requests.filter(request => request.startsWith("DELETE")), [`DELETE /v13/deployments/${id}`]);
-  assert.equal(await client.find(target), null);
+  assert.deepEqual(await client.list(target), []);
   const pending = scenario({ deployment: { readyState: "BUILDING" } });
-  const building = await pending.client.find(target);
+  const [building] = await pending.client.list(target);
   assert.ok(building);
   await assert.rejects(pending.client.remove(building, current), /ビルド終了/);
   assert.ok(pending.requests.every(request => !request.startsWith("DELETE")));
@@ -404,4 +443,175 @@ test("終了した同じ Deployment の削除を再照合し、既に削除済�
     if (++verified === 2) throw new Error("PR 再オープン");
   }), /PR 再オープン/);
   assert.ok(stopped.requests.every(request => !request.startsWith("DELETE")));
+  for (const directAlias of [undefined, attachedAlias]) {
+    const reopened = scenario({ directAlias });
+    await assert.rejects(reopened.client.remove(found, async () => {
+      const checked = reopened.requests.filter(request => request === `GET /v4/aliases/${aliasHost}`);
+      if (checked.length >= 2) throw new Error("PR 再オープン");
+    }), /PR 再オープン/);
+    assert.ok(reopened.requests.every(request => !request.startsWith("DELETE")));
+  }
+});
+
+test("所有する Deployment の終了を待ち、終了状態をビルド記録なしで確認する", async () => {
+  for (const readyState of ["READY", "ERROR", "CANCELED", "BLOCKED"]) {
+    const fixture = scenario({ details: reads => reads < 3
+      ? { readyState: "BUILDING", ready: null }
+      : { readyState, ready: readyState === "READY" ? deployment.ready : null }, events: () => assert.fail("ビルド記録の取得は不要です。") });
+    const [pending] = await fixture.client.list(target);
+    let verified = 0;
+    const finished = await fixture.client.waitForTerminal(pending, async () => { verified++; });
+    assert.equal(finished.id, pending.id);
+    assert.equal(finished.readyState, readyState);
+    assert.equal(fixture.waits(), 1);
+    assert.equal(verified, 3);
+    assert.ok(fixture.requests.every(request => request.startsWith("GET ")));
+  }
+  const changed = scenario({ details: reads => ({
+    readyState: "BUILDING", ready: null, url: reads === 1 ? deployment.url : "different-pilot.vercel.app",
+  }) });
+  const [pending] = await changed.client.list(target);
+  await assert.rejects(changed.client.waitForTerminal(pending, current), /所有が変わりました/);
+  assert.equal(changed.waits(), 0);
+});
+
+test("異なる SHA のアプリと静的な準備を同一世代として一覧に含める", async () => {
+  const owned = scenario({ deployments: [updatedApplication, application, deployment],
+    directAlias: { ...attachedAlias, deploymentId: applicationId } });
+  const listed = await owned.client.list(updatedTarget);
+  assert.deepEqual(listed.map(item => [item.id, item.phase, item.sha, item.generation, item.database]), [
+    [secondApplicationId, "application", updatedTarget.sha, generation, database],
+    [applicationId, "application", target.sha, generation, database],
+    [id, "provision", target.sha, generation, undefined],
+  ]);
+  for (const deployments of [
+    [deployment, { ...deployment, id: "dpl_SecondProvision" }],
+    [deployment, application, { ...application, id: "dpl_Duplicate" }],
+    [deployment, { ...application, meta: { ...application.meta, milleNativePilotGeneration: "dc54f877-d22f-4ab7-b5d7-c90532fde379" } }],
+    [application, { ...updatedApplication, meta: { ...updatedApplication.meta, milleNativePilotBranchId: "br-other" } }],
+    [deployment, { ...application, crons: [{ path: "/api" }] }],
+    [deployment, { ...application, meta: { ...application.meta, milleNativePilotHostDigest: undefined } }],
+  ]) {
+    await assert.rejects(scenario({ deployments }).client.list(updatedTarget));
+  }
+  await assert.rejects(scenario({ deployments: [deployment, application],
+    directAlias: { ...attachedAlias, deploymentId: secondApplicationId } }).client.list(target), /割り当てを確認/);
+});
+
+test("照合済みの静的ビルドを使い、同じ世代と DB に SHA ごとにアプリを作成する", async () => {
+  const { client, writes } = scenario({ directAlias: attachedAlias });
+  const deployed = await client.deployApplication(target, generation, database, current);
+  assert.equal(deployed.phase, "application");
+  assert.deepEqual(deployed.database, database);
+  assert.equal(deployed.sha, target.sha);
+  const updated = await client.deployApplication(updatedTarget, generation, database, current);
+  assert.equal(updated.sha, updatedTarget.sha);
+  assert.equal(updated.generation, generation);
+  assert.deepEqual(updated.database, database);
+  assert.equal(writes.length, 2);
+  const { env, meta, ...body } = writes[1];
+  const { AUTH_SECRET: sessionSecret, ...applicationEnvironment } = env as Input;
+  assert.match(String(sessionSecret), /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(sessionSecret, (writes[0].env as Input).AUTH_SECRET);
+  assert.ok(!Object.values(meta as Input).includes(sessionSecret));
+  assert.deepEqual(body, { project: config.projectId, name: "mille", gitSource: { ...source, sha: updatedTarget.sha }, build: { env } });
+  assert.deepEqual(applicationEnvironment, {
+    AUTH_MODE: "test", MILLE_NATIVE_PREVIEW_PHASE: "application", MILLE_NATIVE_PREVIEW_PR: "17",
+    MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: target.ref, MILLE_NATIVE_PREVIEW_SOURCE_SHA: updatedTarget.sha,
+    MILLE_NATIVE_PREVIEW_GENERATION: generation, MILLE_NATIVE_PREVIEW_NEON_BRANCH_ID: database.branchId,
+    MILLE_NATIVE_PREVIEW_NEON_ENDPOINT_ID: database.endpointId, MILLE_NATIVE_PREVIEW_DATABASE_HOST_SHA256: database.hostDigest,
+  });
+  assert.deepEqual(meta, {
+    ...metadata, ...applicationMetadata, milleNativePilotSha: updatedTarget.sha,
+    milleNativePilotRequestedAt: String(updated.requestedAt),
+  });
+  assert.doesNotMatch(JSON.stringify(writes), /fixture-management-token|sensitive-fixture|DATABASE_URL/);
+});
+
+test("アプリの新規作成前に準備の世代、接続先、重複と従来の DB を照合する", async () => {
+  const otherGeneration = "dc54f877-d22f-4ab7-b5d7-c90532fde379";
+  for (const input of [
+    { records: [] }, { records: [application] }, { records: [deployment], generation: otherGeneration },
+    { records: [deployment], database: { ...database, endpointId: "ep-other" } },
+    { records: [deployment, updatedApplication] },
+    { records: [deployment, application], database: { ...database, hostDigest: "c".repeat(64) } },
+  ]) {
+    const fixture = scenario({ deployments: input.records });
+    await assert.rejects(fixture.client.deployApplication(updatedTarget, input.generation ?? generation, input.database ?? database, current));
+    assert.equal(fixture.writes.length, 0);
+  }
+  const unknown = scenario({ postResponse: new Response(secret, { status: 500 }) });
+  await assert.rejects(unknown.client.deployApplication(target, generation, database, current), /HTTP 500/);
+  await assert.rejects(unknown.client.deployApplication(target, generation, database, current), /作成済み/);
+  assert.equal(unknown.writes.length, 1);
+});
+
+test("静的な準備が期限切れのときは同じ DB の READY アプリを再照合して新しい SHA を作成する", async () => {
+  const appAlias = { ...attachedAlias, deploymentId: applicationId };
+  const fixture = scenario({ deployments: [application], directAlias: appAlias, events: () => [applicationEvent()] });
+  const updated = await fixture.client.deployApplication(updatedTarget, generation, database, current);
+  assert.equal(updated.sha, updatedTarget.sha);
+  assert.equal(updated.generation, generation);
+  assert.deepEqual(updated.database, database);
+  assert.equal(fixture.writes.length, 1);
+  assert.ok(fixture.requests.includes(`GET /v3/deployments/${applicationId}/events`));
+
+  for (const events of [[], [evidenceEvent], [applicationEvent(application, "ep-other")]]) {
+    const missing = scenario({ deployments: [application], directAlias: appAlias, events: () => events });
+    await assert.rejects(missing.client.deployApplication(updatedTarget, generation, database, current), (error: Error) => {
+      assert.ok(error instanceof NativePilotStageError);
+      assert.equal(error.stage, "vercel-application");
+      return true;
+    });
+    assert.equal(missing.writes.length, 0);
+  }
+  const changed = scenario({ deployments: [application], directAlias: appAlias, events: () => [applicationEvent()],
+    details: reads => reads > 2 ? { ready: application.ready + 1 } : {} });
+  await assert.rejects(changed.client.deployApplication(updatedTarget, generation, database, current), /所有が変わりました/);
+  assert.equal(changed.writes.length, 0);
+});
+
+test("READY のアプリに対応するビルド照合記録と DB メタデータを確認する", async () => {
+  const fixture = scenario({ deployments: [deployment, updatedApplication],
+    events: (_reads, id) => id === secondApplicationId ? [unrelatedEvent, applicationEvent(updatedApplication)] : [evidenceEvent] });
+  const listed = await fixture.client.list(updatedTarget);
+  const app = listed.find(item => item.phase === "application");
+  assert.ok(app);
+  assert.deepEqual(await fixture.client.confirmApplication(app), { ...app, endpointId });
+  await assert.rejects(fixture.client.confirmStatic(app), /静的な準備用 Deployment/);
+  for (const events of [
+    [applicationEvent(updatedApplication, "ep-other")], [evidenceEvent, applicationEvent(updatedApplication)],
+    [applicationEvent()], [applicationEvent(updatedApplication), applicationEvent(updatedApplication)],
+  ]) {
+    const wrong = scenario({ deployments: [updatedApplication], events: () => events });
+    await assert.rejects(wrong.client.confirmApplication(app));
+    assert.equal(wrong.waits(), 0);
+  }
+});
+
+test("同じ世代の別デプロイに移ったエイリアスを保ち、最後のアプリと共に削除する", async () => {
+  const aliasForLatest = { ...attachedAlias, deploymentId: secondApplicationId };
+  const fixture = scenario({ deployments: [deployment, application, updatedApplication], directAlias: aliasForLatest });
+  const [anchor, old, latest] = await fixture.client.list(updatedTarget);
+  await fixture.client.remove(old, current);
+  await fixture.client.remove(anchor, current);
+  assert.deepEqual((await fixture.client.list(updatedTarget)).map(item => item.id), [secondApplicationId]);
+  assert.deepEqual(fixture.requests.filter(request => request.startsWith("DELETE")), [
+    `DELETE /v13/deployments/${applicationId}`, `DELETE /v13/deployments/${id}`,
+  ]);
+  await fixture.client.remove(latest, current);
+  assert.deepEqual(await fixture.client.list(updatedTarget), []);
+  assert.deepEqual(fixture.requests.filter(request => request.startsWith("DELETE")).slice(-2), [
+    `DELETE /v2/aliases/${aliasUid}`, `DELETE /v13/deployments/${secondApplicationId}`,
+  ]);
+  const reassign = scenario({ deployments: [application, updatedApplication],
+    aliasReadback: reads => reads >= 3 ? aliasForLatest : { ...attachedAlias, deploymentId: applicationId } });
+  const [replaced] = await reassign.client.list(updatedTarget);
+  await reassign.client.remove(replaced, current);
+  assert.deepEqual(reassign.requests.filter(request => request.startsWith("DELETE")), [`DELETE /v13/deployments/${applicationId}`]);
+  const newGeneration = { ...updatedApplication, meta: { ...updatedApplication.meta,
+    milleNativePilotGeneration: "dc54f877-d22f-4ab7-b5d7-c90532fde379" } };
+  const foreign = scenario({ deployments: [application, newGeneration], directAlias: aliasForLatest });
+  await assert.rejects(foreign.client.remove(old, current), /世代/);
+  assert.ok(foreign.requests.every(request => !request.startsWith("DELETE")));
 });

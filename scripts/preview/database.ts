@@ -37,14 +37,16 @@ export function previewDatabaseEnvironmentId(pr: number): string {
 /** Call only after the provider's project, branch, database and direct endpoint are verified. */
 export async function preparePreviewDatabase(input: {
   pr: number;
+  environmentId?: string;
   connectionString: string;
   expectedHost: string;
   expectedDatabase: string;
   initialize: boolean;
   migrations?: readonly MigrationSource[];
 }): Promise<void> {
+  const legacyEnvironmentId = previewDatabaseEnvironmentId(input.pr);
   const configuration = hostedDatabaseConfiguration(
-    "preview", input.expectedHost, previewDatabaseEnvironmentId(input.pr),
+    "preview", input.expectedHost, input.environmentId ?? legacyEnvironmentId,
     { MILLE_PREVIEW_DATABASE_URL: input.connectionString },
   );
   const url = new URL(configuration.url);

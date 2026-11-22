@@ -14,9 +14,9 @@ export function nativePilotPrs(mode: string | undefined, value: string | undefin
 }
 
 export function selectPreviewWork(targets: readonly PreviewTarget[], pilots: readonly number[] | undefined) {
-  if (pilots) return { targets: targets.filter(target => pilots.includes(target.number)), deploy: undefined };
-  const deploy = targets.find(target => target.operation === "deploy");
+  const selected = pilots ? targets.filter(target => pilots.includes(target.number)) : targets;
+  const deploy = selected.find(target => target.operation === "deploy");
   // Matrix results can only be used for a notification when a single job owns the output.
-  if (deploy && targets.length !== 1) throw new Error("deploy の対象を1件に絞れませんでした。");
-  return { targets, deploy };
+  if (deploy && selected.length !== 1) throw new Error("deploy の対象を1件に絞れませんでした。");
+  return { targets: selected, deploy };
 }

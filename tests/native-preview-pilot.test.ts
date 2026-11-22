@@ -13,13 +13,12 @@ const deploy = { number: 51, sha: headSha, operation: "deploy" } satisfies Previ
 const cleanup = { number: 52, sha: headSha, operation: "cleanup", closedAt } satisfies PreviewTarget;
 const unrelated = { ...deploy, number: 53 };
 
-test("Native の試験は明示した2件だけを選び、通知対象を出さない", () => {
+test("Native の試験は明示した2件だけを選び、単独の deploy を通知対象にする", () => {
   const pilots = nativePilotPrs("native-pilot", "51,52");
   assert.deepEqual(pilots, [51, 52]);
-  assert.deepEqual(selectPreviewWork([unrelated, deploy, cleanup], pilots), {
-    targets: [deploy, cleanup], deploy: undefined,
-  });
-  assert.deepEqual(selectPreviewWork([deploy], pilots), { targets: [deploy], deploy: undefined });
+  assert.throws(() => selectPreviewWork([unrelated, deploy, cleanup], pilots), /1件/);
+  assert.deepEqual(selectPreviewWork([unrelated, deploy], pilots), { targets: [deploy], deploy });
+  assert.deepEqual(selectPreviewWork([cleanup], pilots), { targets: [cleanup], deploy: undefined });
   assert.deepEqual(selectPreviewWork([unrelated], pilots), { targets: [], deploy: undefined });
 });
 
