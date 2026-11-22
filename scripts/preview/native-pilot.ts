@@ -4,7 +4,7 @@ import { assertPreviewGitDeploymentPolicy } from "./git-policy";
 import { NativePilotStageError, nativePilotStage } from "./native-pilot-diagnostics";
 import { assertNativePilotSource } from "./native-pilot-source";
 import { NativePilotVercel } from "./native-pilot-vercel";
-import type { NeonPreview } from "./neon";
+import type { NativePeerBranch, NeonPreview } from "./neon";
 import { resolveNativePreviewIdentity, samePreviewTarget, type PreviewTarget } from "./target";
 
 const settings = z.object({
@@ -120,7 +120,7 @@ export async function executeNativePilot(input: PilotOperation): Promise<"prepar
   });
   verifyNativePilotEndpoint(branch.endpointId, deployment.endpointId);
 
-  const peerRefs: string[] = [];
+  const peerBranches: NativePeerBranch[] = [];
   for (const peer of peers) {
     const evidence = await nativePilotStage("vercel-inventory", () => vercel.find(targetOf(peer), false));
     const peerBranch = await nativePilotStage("neon-branch", () =>
@@ -131,12 +131,12 @@ export async function executeNativePilot(input: PilotOperation): Promise<"prepar
       }
       const verified = await nativePilotStage("vercel-static", () => vercel.confirmStatic(evidence, verifyCurrent));
       verifyNativePilotEndpoint(peerBranch.endpointId, verified.endpointId);
-      peerRefs.push(peer.ref);
+      peerBranches.push({ ref: peer.ref, branch: peerBranch });
     }
   }
   await verifyCurrent();
   await nativePilotStage("neon-isolation", () => neon.prepareNativeBranch(
-    identity.ref, branch, deployment.requestedAt, target.number, standingBranchId, peerRefs, verifyCurrent, deployment.readyAt,
+    identity.ref, branch, deployment.requestedAt, target.number, standingBranchId, peerBranches, verifyCurrent, deployment.readyAt,
   ));
   return "prepared";
 }

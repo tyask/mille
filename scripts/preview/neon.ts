@@ -126,6 +126,7 @@ type Config = z.input<typeof configSchema>;
 type Branch = z.infer<typeof branch>;
 type VerifyCurrent = () => Promise<void>;
 export type NativeNeonBranch = z.infer<typeof nativeIdentity>;
+export type NativePeerBranch = { ref: string; branch: NativeNeonBranch };
 export { branchDetails as neonPreviewBranchDetails, branchEndpoints as neonPreviewBranchEndpoints,
   nativeBranchInventory as neonPreviewBranchInventory, connectionUri as neonPreviewConnectionUri };
 
@@ -549,11 +550,12 @@ export class NeonPreview {
 
   async prepareNativeBranch(
     ref: string, expected: NativeNeonBranch, notBefore: number, pr: number, standingBranchId: string,
-    peerRefs: readonly string[], verifyCurrent: VerifyCurrent, notAfter?: number,
+    expectedPeers: readonly NativePeerBranch[], verifyCurrent: VerifyCurrent, notAfter?: number,
   ): Promise<void> {
     previewDatabaseEnvironmentId(pr);
     const name = nativeBranchName(ref, notBefore, notAfter);
-    const peerNames = peerRefs.map(peer => nativeBranchName(peer));
+    const peerTargets = expectedPeers.map(peer => ({ name: nativeBranchName(peer.ref), branch: peer.branch }));
+    const peerNames = peerTargets.map(peer => peer.name);
     if (peerNames.includes(name) || new Set(peerNames).size !== peerNames.length
       || standingBranchId === this.#config.parentBranchId) {
       throw new Error("Neon Native Preview の比較対象が一致しません。");
@@ -571,7 +573,10 @@ export class NeonPreview {
     const connection = await nativePilotStage("neon-isolation", async () => {
       const [template, standing, ...peers] = await Promise.all([
         this.#nativeRoot(this.#config.parentBranchId, templateName, true), this.#nativeRoot(standingBranchId, "main", false),
-        ...peerNames.map(peer => this.#verifiedNativeBranch(inventory, peer)),
+        ...peerTargets.map(async peer => {
+          const current = await this.#verifiedNativeBranch(inventory, peer.name);
+          return current && sameNativeBranch(current, peer.branch) ? current : null;
+        }),
       ]);
       const otherBranches = [template, standing, ...peers].filter(other => other !== null);
       const endpoints = new Set([child, ...otherBranches].map(item => item.endpointId));

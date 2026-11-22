@@ -132,7 +132,7 @@ function fixture(target: PreviewTarget, options: {
         assert.equal(start, deployment.requestedAt);
         assert.equal(end, deployment.readyAt);
         assert.equal(number, pr);
-        assert.deepEqual(peers, options.peerExists ? [peerRef] : []);
+        assert.deepEqual(peers, options.peerExists ? [{ ref: peerRef, branch: peerDatabase }] : []);
         events.push("prepare");
       },
       async removeNativeBranch(_ref, exact, start, verify, end) {
