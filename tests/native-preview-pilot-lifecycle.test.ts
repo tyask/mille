@@ -280,7 +280,7 @@ test("Native pilot rejects a different existing application binding before DB or
 
 test("Native pilot retains an owned app anchor until branch and other deployments are absent", async () => {
   const previous = { ...application, id: "dpl_Previous", sha: previousHead };
-  const normal = fixture(cleanup, { existing: deployment, applications: [previous, application], child: database });
+  const normal = fixture(cleanup, { existing: deployment, applications: [application, previous], child: database });
   assert.equal(await executeNativePilot(normal.input), "removed");
   assert.deepEqual(normal.events.slice(-5), ["static", "remove dpl_Previous", "remove branch", "remove dpl_Fixture", "remove dpl_App"]);
 
@@ -295,6 +295,19 @@ test("Native pilot retains an owned app anchor until branch and other deployment
   const unsafe = fixture(cleanup, { applications: [{ ...application, readyState: "ERROR" }], child: database });
   await assert.rejects(executeNativePilot(unsafe.input), /ブランチの所有/);
   assert.ok(!unsafe.events.some(event => event.startsWith("remove")));
+});
+
+test("Native cleanup preserves a READY app after static retention expiry and can retry a failed branch deletion", async () => {
+  const oldFailure = { ...application, id: "dpl_Failed", sha: previousHead, readyState: "ERROR" as const, readyAt: undefined };
+  const retry = fixture(cleanup, { applications: [application, oldFailure], child: database });
+  const remove = retry.input.neon.removeNativeBranch;
+  retry.input.neon.removeNativeBranch = async () => { throw new Error("Neon の削除が中断しました"); };
+  await assert.rejects(executeNativePilot(retry.input), /削除が中断/);
+  assert.deepEqual(retry.events.slice(-2), ["application ready", "remove dpl_Failed"]);
+
+  retry.input.neon.removeNativeBranch = remove;
+  assert.equal(await executeNativePilot(retry.input), "removed");
+  assert.deepEqual(retry.events.slice(-3), ["application ready", "remove branch", "remove dpl_App"]);
 });
 
 test("Native cleanup waits for the running app to settle before any deletion", async () => {

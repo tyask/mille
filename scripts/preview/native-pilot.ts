@@ -93,8 +93,8 @@ async function cleanupPilot(
     return;
   }
 
-  // Keep the application that recorded the branch ID until all other resources are absent.
-  const anchor = applications.at(-1);
+  // Keep a READY application as recovery evidence until all other resources are absent.
+  const anchor = applications.find(item => item.readyState === "READY") ?? applications.at(-1);
   if (branch && !proof) {
     throw new Error("Native Preview の試験用ブランチの所有を確認できません。");
   }
