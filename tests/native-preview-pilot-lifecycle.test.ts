@@ -125,6 +125,18 @@ test("Native pilot makes no provider change for unsafe source or shared Git ref"
   assert.deepEqual(reused.events, []);
 });
 
+test("Native pilot stops deployment and cleanup before resource changes when store access is denied", async () => {
+  const denied = new Error("Vercel ストアの取得に失敗しました (HTTP 403)。");
+  for (const { input, events } of [fixture(deploy), fixture(cleanup, { existing: deployment, child: database })]) {
+    input.vercel.preflight = async () => {
+      events.push("vercel preflight");
+      throw denied;
+    };
+    await assert.rejects(executeNativePilot(input), denied);
+    assert.deepEqual(events, ["vercel preflight", "neon preflight"]);
+  }
+});
+
 test("Native pilot rejects unreconciled branches and mismatched published endpoint digests", async () => {
   const unknown = fixture(deploy, { child: database });
   await assert.rejects(executeNativePilot(unknown.input), /所有を確認/);

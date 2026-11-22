@@ -1,6 +1,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { milleRepositoryId } from "./native-identity";
+import { nativePreviewStoreAccess, requestNativePreviewStore } from "./native-preview-store";
 
 const projectName = "mille";
 const repository = "tyask/mille";
@@ -13,7 +14,7 @@ const nativeVariables = new Set([
   "POSTGRES_USER", "POSTGRES_HOST", "POSTGRES_PASSWORD", "POSTGRES_DATABASE", "POSTGRES_URL_NO_SSL", "POSTGRES_PRISMA_URL",
 ].map(key => `${prefix}${key}`));
 
-const teamId = z.string().regex(/^team_[A-Za-z0-9]+$/);
+const { teamId } = nativePreviewStoreAccess.shape;
 const projectId = z.string().regex(/^prj_[A-Za-z0-9]+$/);
 const deploymentId = z.string().regex(/^dpl_[A-Za-z0-9]+$/);
 const sha = z.string().regex(/^[a-f0-9]{40}$/);
@@ -27,13 +28,12 @@ const previewOnly = z.tuple([z.literal("preview")]);
 const readyState = z.enum(["QUEUED", "INITIALIZING", "ANALYZING", "BUILDING", "DEPLOYING", "READY", "ERROR", "CANCELED", "BLOCKED"]);
 const terminal = new Set<string>(["READY", "ERROR", "CANCELED", "BLOCKED"]);
 const targetSchema = z.object({ pr, ref, sha });
-const configSchema = z.object({
-  token: z.string().min(1), teamId, projectId,
-  storeId: z.string().regex(/^store_[A-Za-z0-9]+$/),
+const configSchema = nativePreviewStoreAccess.extend({
+  token: z.string().min(1), projectId,
   integrationId: z.string().regex(/^icfg_[A-Za-z0-9]+$/),
   productId: z.string().regex(/^iap_[A-Za-z0-9]+$/),
   neonProjectId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/),
-});
+}).refine(config => config.storeToken !== config.token.trim());
 
 const environment = z.object({
   key: z.string().min(1),
@@ -182,6 +182,15 @@ export class NativePilotVercel {
     catch { throw new Error("Vercel API の応答形式を確認できません。"); }
   }
 
+  private async readStore() {
+    const response = await requestNativePreviewStore(this.config, this.request, AbortSignal.timeout(30_000));
+    if (!response.ok) throw new Error(`Vercel ストアの取得に失敗しました (HTTP ${response.status})。`);
+    let metadata: unknown;
+    try { metadata = await response.json(); }
+    catch { throw new Error("Vercel ストアの応答形式を確認できません。"); }
+    return parse(store, metadata);
+  }
+
   async preflight(): Promise<void> {
     const config = this.config;
     const verifiedProject = parse(project, await this.api(`/v9/projects/${config.projectId}`));
@@ -189,7 +198,7 @@ export class NativePilotVercel {
       throw new Error("Vercel プロジェクトの所有を確認できません。");
     }
     const [{ store: attached }, listed] = await Promise.all([
-      this.api(`/v1/storage/stores/${config.storeId}`).then(value => parse(store, value)),
+      this.readStore(),
       this.api(`/v10/projects/${config.projectId}/env?decrypt=false`).then(value => parse(environmentInventory, value)),
     ]);
     const [binding] = attached.projectsMetadata;

@@ -50,6 +50,7 @@ jobs:
       - name: Check provider access and resource configuration
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_NATIVE_PREVIEW_STORE_TOKEN: ${{ secrets.VERCEL_NATIVE_PREVIEW_STORE_TOKEN }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
           MILLE_PR_PREVIEW_VERCEL_TEAM_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_TEAM_ID }}
           MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID }}

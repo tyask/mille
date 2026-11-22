@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { nativePilotProviders } from "../scripts/preview/native-pilot";
 import { NativePilotVercel } from "../scripts/preview/native-pilot-vercel";
 
 const config = {
   token: "fixture-management-token", teamId: "team_Mille", projectId: "prj_Mille", storeId: "store_Mille",
+  storeToken: "fixture-store-token",
   neonProjectId: "mille-fixture-project", integrationId: "icfg_Mille", productId: "iap_Mille",
 };
+const storePath = `/v1/storage/stores/${config.storeId}`;
 const repoId = 1436928292;
 const target = { pr: 17, ref: "codex/native-preview-pilot-a", sha: "a".repeat(40) };
 const generation = "b6ec6368-a4b9-47a5-99d0-7d15014fe50e";
@@ -54,7 +57,7 @@ type ListEntry = { uid: string; projectId: string; meta?: object; gitSource?: ob
 type Input = Record<string, unknown>;
 
 function scenario(options: {
-  project?: Input; store?: Input; envs?: readonly unknown[]; deployment?: Input | null;
+  project?: Input; store?: Input; storeFailure?: Response | Error; envs?: readonly unknown[]; deployment?: Input | null;
   details?: (requestNumber: number) => Input; inventory?: (cursor: string | null) => { deployments: ListEntry[]; pagination: { count: number; next: number | null } };
   outputs?: unknown; aliases?: unknown[]; directAlias?: Input; deletePersists?: boolean; aliasPersists?: boolean; rejectPost?: boolean;
 } = {}) {
@@ -66,15 +69,24 @@ function scenario(options: {
   let waits = 0;
   const request: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
-    assert.equal(url.origin, "https://api.vercel.com");
-    assert.equal(url.searchParams.get("teamId"), config.teamId);
-    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${config.token}`);
-    assert.equal(init?.redirect, "error");
     const method = init?.method;
     requests.push(`${method} ${url.pathname}`);
+    assert.equal(url.origin, "https://api.vercel.com");
+    assert.deepEqual(url.searchParams.getAll("teamId"), [config.teamId]);
+    const token = url.pathname === storePath ? config.storeToken : config.token;
+    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${token}`);
+    assert.equal(init?.redirect, "error");
+    if (method === "POST") assert.equal(url.pathname, "/v13/deployments");
+    else if (method === "DELETE") assert.equal(url.pathname, `/v13/deployments/${id}`);
+    else assert.equal(method, "GET");
+    if (method !== "POST") assert.equal(init?.body ?? null, null);
     switch (url.pathname) {
       case `/v9/projects/${config.projectId}`: return Response.json({ ...project, ...options.project });
-      case `/v1/storage/stores/${config.storeId}`: return Response.json({ store: { ...store, ...options.store } });
+      case storePath:
+        assert.equal(method, "GET");
+        assert.deepEqual([...url.searchParams], [["teamId", config.teamId]]);
+        if (options.storeFailure instanceof Error) throw options.storeFailure;
+        return options.storeFailure ?? Response.json({ store: { ...store, ...options.store } });
       case `/v10/projects/${config.projectId}/env`:
         assert.equal(url.searchParams.get("decrypt"), "false");
         return Response.json({ envs: options.envs ?? [nativeEnv] });
@@ -114,6 +126,12 @@ function scenario(options: {
 
 const current = async () => {};
 
+function assertSafeError(error: unknown) {
+  assert.ok(error instanceof Error);
+  assert.doesNotMatch(error.message, /fixture-management-token|fixture-store-token|sensitive-fixture/);
+  return true;
+}
+
 test("指定ストアの Preview 専用変数と分離した常設変数を復号なしで検証する", async () => {
   const standing = { key: "DATABASE_URL", target: ["preview"], gitBranch: "mille-standing-preview", value: secret };
   const { client, requests } = scenario({ envs: [standing, nativeEnv, { key: "AUTH_SECRET", target: ["production"] }] });
@@ -151,6 +169,42 @@ test("誤った連携、追加のスコープ、共有設定、追加接続、�
   }
 });
 
+test("ストア専用の資格情報がなければ通信前に拒否する", () => {
+  const request: typeof fetch = async () => assert.fail("ストア専用の資格情報がない状態で通信しました。");
+  for (const storeToken of [undefined, "", config.token]) {
+    assert.throws(() => new NativePilotVercel({ ...config, storeToken } as typeof config, request), assertSafeError);
+  }
+});
+
+test("Neon にストアの資格情報を設定した Native 試験を拒否する", () => {
+  const env = {
+    NODE_ENV: "test" as const,
+    VERCEL_NATIVE_PREVIEW_STORE_TOKEN: config.storeToken,
+    NEON_API_KEY: "fixture-neon-token",
+    MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: config.storeId,
+    MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: config.integrationId,
+    MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: config.productId,
+    MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID: "br-fixture-standing",
+    MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID: "ep-fixture-standing",
+  };
+  assert.doesNotThrow(() => nativePilotProviders(env, config));
+  assert.throws(() => nativePilotProviders({ ...env, NEON_API_KEY: config.storeToken }, config), assertSafeError);
+});
+
+test("ストアの取得拒否や通信失敗でデプロイの作成前に停止する", async () => {
+  for (const storeFailure of [
+    Response.json({ message: config.storeToken }, { status: 403 }),
+    Response.json({ message: config.storeToken }, { status: 404 }),
+    new Error(config.storeToken),
+  ]) {
+    const { client, requests, writes } = scenario({ storeFailure, deployment: null });
+    await assert.rejects(client.provision(target, generation, current), assertSafeError);
+    assert.equal(requests.filter(request => request === `GET ${storePath}`).length, 1);
+    assert.ok(requests.every(request => request.startsWith("GET ")));
+    assert.deepEqual(writes, []);
+  }
+});
+
 test("確認済みの Git ソースと準備用環境変数だけで Preview を作成する", async () => {
   const { client, writes } = scenario({ deployment: null });
   let verified = 0;
@@ -169,7 +223,7 @@ test("確認済みの Git ソースと準備用環境変数だけで Preview を
   assert.ok(result.createdAt >= result.requestedAt);
   assert.equal(result.readyAt, result.createdAt + 1);
   assert.equal(result.endpointDigest, digest);
-  assert.doesNotMatch(JSON.stringify(writes), /fixture-management-token|sensitive-fixture/);
+  assert.doesNotMatch(JSON.stringify(writes), /fixture-management-token|fixture-store-token|sensitive-fixture/);
 });
 
 test("作成時の状態変更や不明な POST 結果を停止し、再試行で二重作成しない", async () => {

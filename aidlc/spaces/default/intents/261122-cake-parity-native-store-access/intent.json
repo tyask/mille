@@ -1,0 +1,22 @@
+{
+  "id": "261122-cake-parity-native-store-access",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-03"
+  ],
+  "phase": "Native Preview ストアの読み取り資格情報の分離",
+  "branch": "codex/issue-32-native-store-access",
+  "baseSha": "3aa0ac3938b5bb6a3979196ec7b0aba62c13d338",
+  "state": "frozen",
+  "approvedIssueSha256": "c2656db0428e9eeba320d2360766af0bcc370f159f690ddd494c93fc8af72755",
+  "implementationPlanSha256": "117f87d00bb48c03a07f255f233e575cbaac457350427bfb673fc32c6e3502ab",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-22T03:34:35Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "診断、Vercel、Native ライフサイクル、Neon と旧 Preview の対象53テストを確認",
+    "固定 GET だけへの専用資格情報、ワークフローの条件、失敗時停止を自己レビュー",
+    "承認済み本文と計画の SHA-256 を照合",
+    "git diff --check"
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "recordedAt": "2026-11-22T03:31:36Z",
+  "planApproval": {
+    "sequence": 1,
+    "reply": "承認します",
+    "scope": "チャットで提示した AC-03 のストア資格情報を分ける変更計画"
+  },
+  "issueApproval": {
+    "sequence": 2,
+    "reply": "承認します",
+    "scope": "計画追記後に取得し、チャットに提示した Issue #32 の保存済み本文"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "sha256": "c2656db0428e9eeba320d2360766af0bcc370f159f690ddd494c93fc8af72755"
+  }
+}

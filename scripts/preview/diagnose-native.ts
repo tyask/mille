@@ -4,16 +4,18 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { nativeVercelProject, nativeVercelDeploymentInventory, nativeVercelEnvironmentInventory,
   hasDetachedPreviewEnvironments } from "./native-pilot-vercel";
+import { nativePreviewStoreAccess, requestNativePreviewStore } from "./native-preview-store";
 import { inspectDetachedNativeResource, NativeResourceInspectionError } from "./native-resource";
 import { neonPreviewBranchDetails, neonPreviewBranchEndpoints, neonPreviewBranchInventory,
   neonPreviewConnectionQuery, neonPreviewConnectionUri, matchesNeonPreviewConnection } from "./neon";
 
 const environment = z.object({
   VERCEL_TOKEN: z.string().min(1),
+  VERCEL_NATIVE_PREVIEW_STORE_TOKEN: nativePreviewStoreAccess.shape.storeToken,
   NEON_API_KEY: z.string().min(1),
-  MILLE_PR_PREVIEW_VERCEL_TEAM_ID: z.string().regex(/^team_[A-Za-z0-9]+$/),
+  MILLE_PR_PREVIEW_VERCEL_TEAM_ID: nativePreviewStoreAccess.shape.teamId,
   MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: z.string().regex(/^prj_[A-Za-z0-9]+$/),
-  MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: z.string().regex(/^store_[A-Za-z0-9]+$/),
+  MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: nativePreviewStoreAccess.shape.storeId,
   MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: z.string().regex(/^icfg_[A-Za-z0-9]+$/),
   MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: z.string().regex(/^iap_[A-Za-z0-9]+$/),
   MILLE_PR_PREVIEW_NEON_PROJECT_ID: z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/),
@@ -21,7 +23,8 @@ const environment = z.object({
   MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: z.string().regex(/^br-[a-z0-9][a-z0-9-]{0,56}$/),
   MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID: z.string().regex(/^br-[a-z0-9][a-z0-9-]{0,56}$/),
   MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID: z.string().regex(/^ep-[a-z0-9][a-z0-9-]{0,56}$/),
-});
+}).refine(env => env.VERCEL_NATIVE_PREVIEW_STORE_TOKEN !== env.VERCEL_TOKEN.trim()
+  && env.VERCEL_NATIVE_PREVIEW_STORE_TOKEN !== env.NEON_API_KEY.trim());
 
 const resourceChecks = {
   configuration: "診断の入力設定",
@@ -35,6 +38,12 @@ const resourceChecks = {
 
 type Check = { name: string; ok: boolean; status?: number };
 
+async function inspectMetadataResponse(check: Check, response: Response, expectedStatus = 200): Promise<unknown> {
+  check.status = response.status;
+  if (response.status !== expectedStatus) throw new Error("診断の HTTP 状態が一致しません。");
+  return expectedStatus === 404 ? null : response.json();
+}
+
 async function readMetadata(
   check: Check, url: URL, token: string, request: typeof fetch, expectedStatus = 200,
 ): Promise<unknown> {
@@ -44,9 +53,7 @@ async function readMetadata(
     redirect: "error",
     signal: AbortSignal.timeout(15_000),
   });
-  check.status = response.status;
-  if (response.status !== expectedStatus) throw new Error("診断の HTTP 状態が一致しません。");
-  return expectedStatus === 404 ? null : response.json();
+  return inspectMetadataResponse(check, response, expectedStatus);
 }
 
 async function probe(
@@ -79,6 +86,7 @@ export async function diagnoseNativePreview(
     standingBranchId: env.MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID,
     standingEndpointId: env.MILLE_NATIVE_PREVIEW_NEON_STANDING_ENDPOINT_ID,
   };
+  const storeAccess = { teamId: config.teamId, storeId: config.storeId, storeToken: env.VERCEL_NATIVE_PREVIEW_STORE_TOKEN };
   if (config.templateBranchId === config.standingBranchId || config.standingEndpointId.endsWith("-pooler")) {
     return [{ name: resourceChecks.configuration, ok: false }];
   }
@@ -105,9 +113,9 @@ export async function diagnoseNativePreview(
     if (!stage) throw new NativeResourceInspectionError("configuration");
     const check = { name: resourceChecks[stage], ok: false };
     checks.set(stage, check);
-    const store = stage === "store";
-    const url = store ? vercelUrl(path) : neonUrl(path);
-    const result = await readMetadata(check, url, store ? env.VERCEL_TOKEN : env.NEON_API_KEY, request);
+    const result = stage === "store"
+      ? await inspectMetadataResponse(check, await requestNativePreviewStore(storeAccess, request, AbortSignal.timeout(15_000)))
+      : await readMetadata(check, neonUrl(path), env.NEON_API_KEY, request);
     if (stage === "branch" && !neonPreviewBranchInventory.safeParse(result).success) {
       throw new NativeResourceInspectionError(stage);
     }

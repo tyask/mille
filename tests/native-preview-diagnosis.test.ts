@@ -23,6 +23,7 @@ const providerSecret = "sensitive-provider-fixture-must-not-appear";
 const templateUri = `postgresql://neondb_owner:${providerSecret}@${templateEndpoint.host}/neondb?sslmode=require`;
 const env = {
   VERCEL_TOKEN: "vercel-test-token",
+  VERCEL_NATIVE_PREVIEW_STORE_TOKEN: "vercel-store-test-token",
   NEON_API_KEY: "neon-test-token",
   MILLE_PR_PREVIEW_VERCEL_TEAM_ID: teamId,
   MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: vercelProjectId,
@@ -90,14 +91,14 @@ function scenario(overrides: Record<string, Response> = {}) {
   const request: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
     const vercel = !url.pathname.startsWith("/api/v2/");
-    if (vercel) {
-      assert.equal(url.searchParams.get("teamId"), teamId);
-      url.searchParams.delete("teamId");
-    }
+    const requestedTeamIds = url.searchParams.getAll("teamId");
+    if (vercel) url.searchParams.delete("teamId");
     const path = `${url.pathname}${url.search}`;
     requests.push(path);
+    if (vercel) assert.deepEqual(requestedTeamIds, [teamId]);
     assert.equal(url.origin, vercel ? vercelOrigin : neonOrigin);
-    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${vercel ? env.VERCEL_TOKEN : env.NEON_API_KEY}`);
+    const vercelToken = path === storePath ? env.VERCEL_NATIVE_PREVIEW_STORE_TOKEN : env.VERCEL_TOKEN;
+    assert.equal(new Headers(init?.headers).get("authorization"), `Bearer ${vercel ? vercelToken : env.NEON_API_KEY}`);
     assert.equal(init?.method, "GET");
     assert.equal(init?.body ?? null, null);
     assert.equal(init?.redirect, "error");
@@ -110,7 +111,8 @@ function scenario(overrides: Record<string, Response> = {}) {
 function assertSafeOutput(checks: Awaited<ReturnType<typeof diagnoseNativePreview>>) {
   const output = formatNativePreviewDiagnosis(checks);
   const serialized = JSON.stringify(checks);
-  for (const sensitive of [providerSecret, env.VERCEL_TOKEN, env.NEON_API_KEY, vercelOrigin, neonOrigin, "postgresql://"]) {
+  for (const sensitive of [providerSecret, env.VERCEL_TOKEN, env.VERCEL_NATIVE_PREVIEW_STORE_TOKEN,
+    env.NEON_API_KEY, vercelOrigin, neonOrigin, "postgresql://"]) {
     assert.ok(!output.includes(sensitive));
     assert.ok(!serialized.includes(sensitive));
   }
@@ -139,6 +141,18 @@ test("Vercel の HTTP 拒否と応答形式の不一致を区別し、秘密値�
   assert.notEqual(malformedCheck.name, deniedCheck.name);
   assert.notEqual(malformedCheck.status, 403);
   assertSafeOutput(malformedChecks);
+});
+
+test("ストア取得が拒否された場合に別の資格情報で再試行しない", async () => {
+  for (const status of [403, 404]) {
+    const fixture = scenario({ [storePath]: Response.json({ error: env.VERCEL_NATIVE_PREVIEW_STORE_TOKEN }, { status }) });
+    const checks = await diagnoseNativePreview(env, fixture.request);
+    assert.deepEqual(checks.filter(check => !check.ok), [{ name: "Vercel ストア", ok: false, status }]);
+    assert.equal(fixture.requests.filter(path => path === storePath).length, 1);
+    assert.ok(fixture.requests.includes(vercelProjectPath));
+    assert.ok(!fixture.requests.includes(neonProjectPath));
+    assertSafeOutput(checks);
+  }
 });
 
 test("Vercel プロジェクトを読み取れても不適合な保護設定を診断する", async () => {
@@ -186,12 +200,16 @@ test("Neon の DB 一覧に失敗した場合は未照合のロールを成功�
   assertSafeOutput(checks);
 });
 
-test("無効な対象や不足する資格情報は通信前に拒否する", async () => {
+test("無効な対象や不足・重複する資格情報は通信前に拒否する", async () => {
   const overrides = [
     { MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: `prj_Fixture?secret=${providerSecret}` },
     { MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: "//example.invalid" },
     { VERCEL_TOKEN: undefined },
+    { VERCEL_NATIVE_PREVIEW_STORE_TOKEN: undefined },
+    { VERCEL_NATIVE_PREVIEW_STORE_TOKEN: "" },
+    { VERCEL_NATIVE_PREVIEW_STORE_TOKEN: env.VERCEL_TOKEN },
     { NEON_API_KEY: undefined },
+    { NEON_API_KEY: env.VERCEL_NATIVE_PREVIEW_STORE_TOKEN },
   ];
   let requests = 0;
   const request: typeof fetch = async () => {

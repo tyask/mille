@@ -3,11 +3,13 @@ import { z } from "zod";
 import { assertPreviewGitDeploymentPolicy } from "./git-policy";
 import { assertNativePilotSource } from "./native-pilot-source";
 import { NativePilotVercel } from "./native-pilot-vercel";
+import { nativePreviewStoreAccess } from "./native-preview-store";
 import type { NeonPreview } from "./neon";
 import { resolveNativePreviewIdentity, samePreviewTarget, type PreviewTarget } from "./target";
 
 const settings = z.object({
-  MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: z.string().regex(/^store_[A-Za-z0-9]+$/),
+  VERCEL_NATIVE_PREVIEW_STORE_TOKEN: nativePreviewStoreAccess.shape.storeToken,
+  MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID: nativePreviewStoreAccess.shape.storeId,
   MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID: z.string().regex(/^icfg_[A-Za-z0-9]+$/),
   MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID: z.string().regex(/^iap_[A-Za-z0-9]+$/),
   MILLE_NATIVE_PREVIEW_NEON_STANDING_BRANCH_ID: z.string().regex(/^br-[a-z0-9-]+$/),
@@ -126,11 +128,14 @@ export function nativePilotProviders(environment: NodeJS.ProcessEnv, input: {
   token: string; teamId: string; projectId: string; neonProjectId: string;
 }) {
   const parsed = settings.safeParse(environment);
-  if (!parsed.success) throw new Error("Native Preview の試験設定が不足しています。");
+  if (!parsed.success || parsed.data.VERCEL_NATIVE_PREVIEW_STORE_TOKEN === environment.NEON_API_KEY?.trim()) {
+    throw new Error("Native Preview の試験設定を確認できません。");
+  }
   const env = parsed.data;
   return {
     vercel: new NativePilotVercel({
       ...input,
+      storeToken: env.VERCEL_NATIVE_PREVIEW_STORE_TOKEN,
       storeId: env.MILLE_NATIVE_PREVIEW_VERCEL_STORE_ID,
       integrationId: env.MILLE_NATIVE_PREVIEW_VERCEL_INTEGRATION_ID,
       productId: env.MILLE_NATIVE_PREVIEW_VERCEL_PRODUCT_ID,
