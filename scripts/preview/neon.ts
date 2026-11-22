@@ -14,14 +14,15 @@ const templateDatabase = "neondb";
 const templateRole = "neondb_owner";
 const repository = "tyask/mille";
 
-const templateSqlHttp = new AsyncLocalStorage<{ status?: number }>();
+const nativeSqlHttp = new AsyncLocalStorage<{ status?: number }>();
 const observingFetches = new WeakSet<typeof fetch>();
 
-function observeTemplateSqlHttp(): void {
+function observeNativeSqlHttp(): void {
   const configuredFetch = neonConfig.fetchFunction as typeof fetch | undefined;
   if (configuredFetch && observingFetches.has(configuredFetch)) return;
   const observingFetch: typeof fetch = async (...args) => {
-    const observation = templateSqlHttp.getStore();
+    const observation = nativeSqlHttp.getStore();
+    if (observation) observation.status = undefined;
     const response = await (configuredFetch ?? globalThis.fetch)(...args);
     if (observation) observation.status = response.status;
     return response;
@@ -337,7 +338,7 @@ export class NeonPreview {
   }
 
   async #inspectTemplateDatabases(connectionString: string, captureHttpStatus = false): Promise<void> {
-    if (captureHttpStatus) observeTemplateSqlHttp();
+    if (captureHttpStatus) observeNativeSqlHttp();
     for (const name of [templateDatabase, "postgres", "template1"]) {
       const url = new URL(connectionString);
       url.pathname = `/${name}`;
@@ -351,7 +352,7 @@ export class NeonPreview {
         }
       };
       try {
-        await (observation ? templateSqlHttp.run(observation, read) : read());
+        await (observation ? nativeSqlHttp.run(observation, read) : read());
       } catch {
         const message = "Neon テンプレートが空であることを確認できません。";
         if (observation?.status !== undefined) throw new NativePilotHttpError(message, observation.status);
@@ -590,10 +591,15 @@ export class NeonPreview {
 
     await nativePilotStage("github-target", verifyCurrent);
     await nativePilotStage("neon-initialize", async () => {
+      observeNativeSqlHttp();
+      const observation: { status?: number } = {};
       try {
-        await preparePreviewDatabase({ pr, ...connection, initialize: true });
+        await nativeSqlHttp.run(observation, () => preparePreviewDatabase({ pr, ...connection, initialize: true }));
       } catch {
-        throw new Error("Neon Native Preview の DB 照合・migration・seed を確認できません。");
+        const message = "Neon Native Preview の DB 照合・migration・seed を確認できません。";
+        const { status } = observation;
+        if (status !== undefined && (status < 200 || status >= 300)) throw new NativePilotHttpError(message, status);
+        throw new Error(message);
       }
     });
   }

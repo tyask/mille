@@ -240,25 +240,33 @@ export class NativePilotVercel {
     }
   }
 
-  private async deployment(id: string, target: NativePilotTarget, exactSha: boolean): Promise<NativePilotDeployment | null> {
+  private async deployment(
+    id: string, target: NativePilotTarget, exactSha: boolean, { allowMissing = true } = {},
+  ): Promise<NativePilotDeployment | null> {
     id = parse(deploymentId, id);
-    const value = await this.api(`/v13/deployments/${id}?withGitRepoInfo=true`, "GET", undefined, true);
-    if (value === null) return null;
-    const item = parse(detailSchema, value);
+    const response = await this.send(`/v13/deployments/${id}?withGitRepoInfo=true`, "GET");
+    if (allowMissing && response.status === 404) return null;
+    verifyStatus(response, "GET");
+    const value = await readJson(response);
+    if (allowMissing && value === null) return null;
+    const item = parse(detailSchema, value, response.status);
     const { meta, gitSource } = item;
     if (item.id !== id || item.projectId !== this.config.projectId || item.ownerId !== this.config.teamId
       || meta.milleNativePilotPr !== String(target.pr) || meta.milleNativePilotRef !== target.ref || gitSource.ref !== target.ref
       || gitSource.sha !== meta.milleNativePilotSha || (exactSha && gitSource.sha !== target.sha)
       || meta.milleNativePilotRequestedAt > item.createdAt
       || (item.ready != null && item.ready < item.createdAt) || (item.readyState === "READY" && item.ready == null)) {
-      throw new Error("Vercel の Native 試験用 Deployment の所有または Git ソースが一致しません。");
+      throw new NativePilotHttpError("Vercel の Native 試験用 Deployment の所有または Git ソースが一致しません。", response.status);
     }
-    if (item.deletedAt != null || item.softDeletedByRetention === true) return null;
+    if (item.deletedAt != null || item.softDeletedByRetention === true) {
+      if (allowMissing) return null;
+      throw new NativePilotHttpError("作成した Vercel Deployment は削除済みです。", response.status);
+    }
     await this.verifyDeploymentAlias(id, gitSource.ref, item.alias ?? []);
     const endpointDigests = (item.routes ?? []).flatMap(route => Object.entries(route.headers ?? {}))
       .filter(([name]) => name.toLowerCase() === endpointHeader).map(([, value]) => value);
     if (endpointDigests.length > 1) throw new Error("複数の Native エンドポイント確認ヘッダーがあります。");
-    const endpointDigest = parse(sha256.optional(), endpointDigests[0]);
+    const endpointDigest = parse(sha256.optional(), endpointDigests[0], response.status);
     return {
       id, pr: target.pr, ref: target.ref, sha: gitSource.sha, generation: meta.milleNativePilotGeneration,
       requestedAt: meta.milleNativePilotRequestedAt, createdAt: item.createdAt, url: `https://${item.url}`, readyState: item.readyState,
@@ -340,7 +348,7 @@ export class NativePilotVercel {
     console.log(`Native Preview 診断 Vercel のデプロイ作成応答を受領しました (HTTP ${response.status})。`);
     await nativePilotStage("github-target", verifyCurrent);
     return nativePilotStage("vercel-create-response", async () => {
-      const result = await this.deployment(id, target, true);
+      const result = await this.deployment(id, target, true, { allowMissing: false });
       if (!result || result.generation !== generation || result.requestedAt !== requestedAt) {
         throw new Error("作成した Vercel Deployment の世代または作成要求時刻を確認できません。");
       }

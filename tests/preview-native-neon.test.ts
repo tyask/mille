@@ -41,6 +41,7 @@ function scenario(t: TestContext, options: {
   templateSqlFailureAt?: string;
   templateSqlTransportFailureAt?: string;
   initializeFails?: boolean;
+  ownershipCheckFails?: "transport" | "marker";
   endpointStays?: boolean;
 } = {}) {
   let branches = options.branches ?? [template, standing, candidate, peer];
@@ -73,9 +74,10 @@ function scenario(t: TestContext, options: {
       if (options.initializeFails) return Response.json({ message: secret }, { status: 400 });
       const query: string = payload.query;
       if (query.startsWith("SELECT project")) {
+        if (options.ownershipCheckFails === "transport") throw new Error(secret);
         events.push("marker");
         return Response.json({ fields: ["project", "environment", "environment_id"].map(name => ({ name, dataTypeID: 25 })),
-          rows: [["tyask/mille", "preview", "mille-pr-8"]] });
+          rows: [["tyask/mille", "preview", options.ownershipCheckFails === "marker" ? "mille-pr-9" : "mille-pr-8"]] });
       }
       assert.match(query, /mille-pr-8/);
       events.push(query.includes("mille_seed") ? "seed" : "migration");
@@ -330,11 +332,18 @@ test("Native 診断は分離照合と初期化の失敗を区別する", async t
   assert.deepEqual(missing.events, []);
   t.mock.restoreAll();
 
-  const initialization = scenario(t, { initializeFails: true });
-  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], initialization.verifyCurrent),
-    failureIn("neon-initialize"));
-  assert.deepEqual(initialization.passwordReads, [candidate.id, template.id, standing.id, peer.id]);
-  assert.deepEqual(initialization.events, ["current"]);
+  for (const [options, status, events] of [
+    [{ initializeFails: true }, 400, ["current"]],
+    [{ ownershipCheckFails: "transport" }, undefined, ["current", "migration"]],
+    [{ ownershipCheckFails: "marker" }, undefined, ["current", "migration", "marker"]],
+  ] as const) {
+    const initialization = scenario(t, options);
+    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, [peerRef], initialization.verifyCurrent),
+      failureIn("neon-initialize", status));
+    assert.deepEqual(initialization.passwordReads, [candidate.id, template.id, standing.id, peer.id]);
+    assert.deepEqual(initialization.events, events);
+    t.mock.restoreAll();
+  }
 });
 
 test("Native 子だけを削除し、ブランチと endpoint の不在を再実行でも確認する", async t => {

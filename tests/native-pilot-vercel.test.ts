@@ -44,7 +44,7 @@ function scenario(options: {
   project?: Input; projectResponse?: Response; envs?: readonly unknown[]; envPagination?: Input; deployment?: Input | null;
   details?: (requestNumber: number) => Input; inventory?: (cursor: string | null) => { deployments: ListEntry[]; pagination: { count: number; next: number | null } };
   outputs?: unknown; aliases?: unknown[]; directAlias?: Input; deletePersists?: boolean; aliasPersists?: boolean;
-  postResponse?: Response; throwPost?: boolean;
+  postResponse?: Response; throwPost?: boolean; readbackResponse?: Response;
 } = {}) {
   const requests: string[] = [];
   const writes: Input[] = [];
@@ -89,6 +89,7 @@ function scenario(options: {
           return new Response(null, { status: 204 });
         }
         assert.equal(url.searchParams.get("withGitRepoInfo"), "true");
+        if (options.readbackResponse) return options.readbackResponse;
         return existing ? Response.json({ ...existing, ...options.details?.(++detailsRead) }) : new Response(null, { status: 404 });
       case `/v2/deployments/${id}/aliases`: return Response.json({ aliases: options.aliases ?? [] });
       case `/v4/aliases/${aliasHost}`: return directAlias ? Response.json(directAlias) : new Response(null, { status: 404 });
@@ -189,7 +190,9 @@ test("事前照合と作成要求・応答の失敗を固定工程と HTTP 状�
     { options: { throwPost: true }, stage: "vercel-create-request", status: "" },
     { options: { postResponse: new Response(secret, { status: 201 }) }, stage: "vercel-create-response", status: " (HTTP 201)" },
     { options: { postResponse: Response.json({ id: secret }, { status: 201 }) }, stage: "vercel-create-response", status: " (HTTP 201)" },
-    { options: { details: () => ({ ownerId: "team_Other" }) }, stage: "vercel-create-response", status: "" },
+    { options: { readbackResponse: new Response(secret, { status: 404 }) }, stage: "vercel-create-response", status: " (HTTP 404)" },
+    { options: { readbackResponse: Response.json({ id: secret }) }, stage: "vercel-create-response", status: " (HTTP 200)" },
+    { options: { details: () => ({ ownerId: "team_Other" }) }, stage: "vercel-create-response", status: " (HTTP 200)" },
   ];
   for (const { options, stage, status } of cases) {
     const failed = scenario({ deployment: null, ...options });
