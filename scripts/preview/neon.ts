@@ -93,17 +93,32 @@ const endpoint = z.object({
   type: z.string(),
   disabled: z.boolean(),
 });
+const branchEndpoints = z.object({ endpoints: z.array(endpoint) });
 const nativeBranchDetails = z.object({ branch: branch.extend({ created_at: z.iso.datetime() }) });
 const terminalCursor = z.union([z.literal(""), z.null()]).optional();
 const completeInventory = z.object({ next: terminalCursor, cursor: terminalCursor }).nullish();
 const nativeBranchInventory = z.object({ branches: z.array(branch), pagination: completeInventory });
 const nativeEndpointInventory = z.object({ endpoints: z.array(endpoint), pagination: completeInventory });
 const nativeIdentity = z.object({ id: branchId, endpointId: endpointIdentifier, host: z.string() });
+const connectionUri = z.object({ uri: z.string() });
 
 type Config = z.input<typeof configSchema>;
 type Branch = z.infer<typeof branch>;
 type VerifyCurrent = () => Promise<void>;
 export type NativeNeonBranch = z.infer<typeof nativeIdentity>;
+export { branchDetails as neonPreviewBranchDetails, branchEndpoints as neonPreviewBranchEndpoints,
+  nativeBranchInventory as neonPreviewBranchInventory, connectionUri as neonPreviewConnectionUri };
+
+export function neonPreviewConnectionQuery(branchId: string, endpointId: string, database: string, role: string) {
+  return new URLSearchParams({ branch_id: branchId, endpoint_id: endpointId, database_name: database,
+    role_name: role, pooled: "false" });
+}
+
+export function matchesNeonPreviewConnection(url: URL, host: string, database: string, role: string): boolean {
+  return url.protocol === "postgresql:" && url.host === host && url.pathname === `/${database}`
+    && url.username === role && url.password.length > 0 && !url.hash
+    && url.searchParams.getAll("sslmode").join() === "require";
+}
 
 function nativeBranchName(ref: string, notBefore?: number, notAfter?: number): string {
   if (!isNativePreviewTaskBranch(ref)
@@ -369,7 +384,7 @@ export class NeonPreview {
 
   async #writableEndpoint(id: string) {
     const { projectId } = this.#config;
-    const { endpoints } = await this.#request(`/branches/${id}/endpoints`, z.object({ endpoints: z.array(endpoint) }));
+    const { endpoints } = await this.#request(`/branches/${id}/endpoints`, branchEndpoints);
     const writable = endpoints.filter(item => item.type === "read_write");
     if (endpoints.some(item => item.branch_id !== id || item.project_id !== projectId)
       || writable.length !== 1 || writable[0].disabled) {
@@ -387,13 +402,11 @@ export class NeonPreview {
     if (expected && !sameNativeBranch(expected, { id, endpointId, host })) {
       throw new Error("Neon Native Preview の接続先が変わりました。");
     }
-    const params = new URLSearchParams({ branch_id: id, endpoint_id: endpointId, database_name: database, role_name: role, pooled: "false" });
-    const { uri } = await this.#request(`/connection_uri?${params}`, z.object({ uri: z.string() }));
+    const params = neonPreviewConnectionQuery(id, endpointId, database, role);
+    const { uri } = await this.#request(`/connection_uri?${params}`, connectionUri);
     let parsed: URL;
     try { parsed = new URL(uri); } catch { throw new Error("Neon 接続情報が無効です。"); }
-    if (parsed.protocol !== "postgresql:" || parsed.host !== host || parsed.pathname !== `/${database}`
-      || parsed.username !== role || !parsed.password || parsed.hash
-      || parsed.searchParams.getAll("sslmode").join() !== "require") {
+    if (!matchesNeonPreviewConnection(parsed, host, database, role)) {
       throw new Error("Neon 接続情報が専用の接続先と一致しません。");
     }
     return { connectionString: uri, expectedHost: host, expectedDatabase: database };

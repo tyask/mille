@@ -1,0 +1,22 @@
+{
+  "id": "261122-cake-parity-native-preview-diagnosis",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-03"
+  ],
+  "phase": "Native Preview の停止箇所の診断",
+  "branch": "codex/issue-32-native-preview-diagnosis",
+  "baseSha": "f8c54199e3764a7e6b3c711c64f5991d7f29a85f",
+  "state": "frozen",
+  "approvedIssueSha256": "dd0c896e3a3a1ec7b33516e0e76e599b8f8f609e6be6f2c21422ea90305ca078",
+  "implementationPlanSha256": "d81098ba2699bd6c8dd19eeefbb6caf71f3052b21e82b2989933e834e0c5490d",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-21T15:52:00Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "診断・未接続ストア照合・Vercel 経路の対象テスト21件が成功",
+    "GitHub の実行条件・固定 GET・秘密値を含まない診断出力を自己レビュー",
+    "承認済み Issue と実装計画の SHA-256 を照合",
+    "git diff --check"
+  ]
+}

@@ -97,10 +97,11 @@ const messages = {
   branch: "Neon の常設ブランチと PR 用テンプレートの分離を確認できません。",
   endpoint: "Neon の直接接続用 read-write エンドポイントを確認できません。",
   database: "Neon の標準 DB と所有ロールを確認できません。",
+  role: "Neon の標準 DB と所有ロールを確認できません。",
 } as const;
 
 export class NativeResourceInspectionError extends Error {
-  constructor(stage: keyof typeof messages) {
+  constructor(readonly stage: keyof typeof messages) {
     super(messages[stage]);
     this.name = "NativeResourceInspectionError";
   }
@@ -176,11 +177,10 @@ export async function inspectDetachedNativeResource(
   if (standingEndpoint.id !== standingEndpointId) throw new NativeResourceInspectionError("endpoint");
 
   const branchPath = `${projectPath}/branches/${template.id}`;
-  const [{ databases: [database] }, { roles: [role] }] = await Promise.all([
-    readMetadata(readers.neon, `${branchPath}/databases`, databases, "database"),
-    readMetadata(readers.neon, `${branchPath}/roles`, roles, "database"),
-  ]);
-  if (database.branch_id !== template.id || role.branch_id !== template.id) throw new NativeResourceInspectionError("database");
+  const { databases: [database] } = await readMetadata(readers.neon, `${branchPath}/databases`, databases, "database");
+  if (database.branch_id !== template.id) throw new NativeResourceInspectionError("database");
+  const { roles: [role] } = await readMetadata(readers.neon, `${branchPath}/roles`, roles, "role");
+  if (role.branch_id !== template.id) throw new NativeResourceInspectionError("role");
 
   return { teamId, storeId, integrationId, productId, neonProjectId, neonOrganizationId, region: project.region_id,
     branchId: template.id, endpointId: templateEndpoint.id, host: templateEndpoint.host, database: database.name, role: role.name,

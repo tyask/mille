@@ -51,6 +51,14 @@ Vercel に接続する前に、信頼済みの `main` の checkout で `npm run 
 
 分岐元候補の空の状態は、照合した `mille-pr-template` に対する読み取り専用 SQL で確認します。常設 Preview の既存接続変数が常設用 Git ブランチに限定され、現在の常設 endpoint を指すことも確認します。
 
+### 旧構成での Actions 診断
+
+Vercel の試験接続が解除され、Neon の既定が常設用 `main` の状態で、Actions の **Mille Native Preview Diagnosis** を信頼済みの `main` から手動実行します。上記の照合済み識別子のうち、`store`、`integration`、`product` に Vercel のストア・構成・製品 ID を、`neon_organization`、`standing_branch`、`standing_endpoint` に Neon の組織・常設ブランチ・常設 endpoint の ID を指定します。 [診断ワークフロー](../.github/workflows/native-preview-diagnosis.yml)
+
+診断は管理ジョブと同じ GitHub Environment `mille-pr-preview` の資格情報を使い、Vercel と Neon の管理 API を GET で照合します。診断ステップのログから確認項目と、取得できた場合の HTTP 状態を記録します。
+Neon の接続情報は取得したプロセス内で接続先を照合します。テンプレートの空状態は、前段で記載した読み取り専用 SQL の手順で確認します。
+試験エイリアスの HTTP 404 は復旧時の期待応答です。エイリアスへのアクセス権を判定する際は、他の Vercel 照合結果も確認します。
+
 ## Neon Native の接続と切替計画
 
 現行の管理ジョブは、`mille-pr-template` が既定のときは動作を停止します。Native 用の管理処理を用意し、現行 PR 用資源の状態と復旧手順を照合し、プロバイダー設定変更の別承認を得てから、空の `mille-pr-template` を既定に変更します。既存 Vercel プロジェクトの組み込み Preview に限定して接続し、Native 専用の接頭辞を使います。常設用の接続情報は従来の endpoint に固定し、常設 URL と本番設定を照合します。 [Neon の既定ブランチ切替](https://neon.com/docs/manage/branches#set-a-branch-as-default)
