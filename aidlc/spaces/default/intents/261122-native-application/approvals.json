@@ -1,0 +1,14 @@
+{
+  "plan": {
+    "approval": "承認します",
+    "target": "Cake に沿った Native 専用接続先の照合を使う AC-03 の見直し計画",
+    "order": 1
+  },
+  "issue": {
+    "approval": "承認します",
+    "target": "Issue #32 の GitHub 保存・再取得済み本文「AC-03 の分離確認を Cake の方式に揃える」",
+    "issueUrl": "https://github.com/tyask/mille/issues/32",
+    "updatedAt": "2026-11-22T08:35:45Z",
+    "order": 2
+  }
+}

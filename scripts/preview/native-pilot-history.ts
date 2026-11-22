@@ -12,6 +12,21 @@ const unknown = () => new Error("Native Preview の以前の作成結果を確�
 export async function assertNativePilotFirstCreation(
   pr: number, createdAt: string, environment: Readonly<Record<string, string | undefined>>, read: (path: string) => Promise<unknown>,
 ): Promise<void> {
+  return assertNoEarlierCreation(pr, createdAt, environment, read);
+}
+
+export async function assertNativePilotApplicationCreation(
+  pr: number, sha: string, createdAt: string,
+  environment: Readonly<Record<string, string | undefined>>, read: (path: string) => Promise<unknown>,
+): Promise<void> {
+  if (!/^[a-f0-9]{40}$/.test(sha)) throw unknown();
+  return assertNoEarlierCreation(pr, createdAt, environment, read, sha);
+}
+
+async function assertNoEarlierCreation(
+  pr: number, createdAt: string, environment: Readonly<Record<string, string | undefined>>,
+  read: (path: string) => Promise<unknown>, sha?: string,
+): Promise<void> {
   const current = run.safeParse({ id: Number(environment.GITHUB_RUN_ID), run_number: Number(environment.GITHUB_RUN_NUMBER) });
   if (!current.success || environment.GITHUB_RUN_ATTEMPT !== "1") throw unknown();
   const query = new URLSearchParams({ branch: "main", created: `>=${createdAt}`, per_page: String(paginationLimit) });
@@ -21,10 +36,17 @@ export async function assertNativePilotFirstCreation(
     throw unknown();
   }
   // A later run can acquire the pilot lock first if its preparation finishes sooner.
+  const oldName = `PR ${pr} deploy`;
+  const nativeName = new RegExp(`^PR ${pr} deploy \\[([a-f0-9]{40})\\]$`);
+  const targetsDeployment = (name: string) => {
+    if (name === oldName) return true;
+    const match = nativeName.exec(name);
+    return !!match && (sha === undefined || sha === match[1]);
+  };
   for (const item of history.data.workflow_runs.filter(item => item.id !== current.data.id)) {
     const past = jobs.safeParse(await read(`actions/runs/${item.id}/jobs?filter=all&per_page=${paginationLimit}`));
     if (!past.success || past.data.total_count !== past.data.jobs.length
-      || past.data.jobs.some(item => item.name === `PR ${pr} deploy`
+      || past.data.jobs.some(item => targetsDeployment(item.name)
         && item.conclusion !== "skipped" && !unstarted.has(item.status))) {
       throw unknown();
     }

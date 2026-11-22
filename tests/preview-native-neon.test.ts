@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { neonConfig } from "@neondatabase/serverless";
+import { nativePreviewEnvironmentId } from "../lib/server/database/native-preview";
 import { NativePilotHttpError, NativePilotStageError, formatNativePilotFailure } from "../scripts/preview/native-pilot-diagnostics";
 import { NeonPreview, NeonPreviewError, type NativeNeonBranch, type NativePeerBranch } from "../scripts/preview/neon";
 
@@ -18,6 +19,8 @@ const peer = { ...candidate, id: "br-native-b", name: `preview/${peerRef}` };
 const db = "neondb";
 const role = "neondb_owner";
 const secret = "fixture-private-provider-error";
+const generation = "2e149af1-e261-4c8e-92c8-1178c00094c8";
+const environmentId = nativePreviewEnvironmentId(8, generation, candidate.id);
 
 function endpoint(branch: typeof template) {
   const id = branch.id.replace(/^br-/, "ep-");
@@ -39,6 +42,7 @@ function scenario(t: TestContext, options: {
   projectName?: string;
   pagination?: Record<string, unknown>;
   endpoints?: Array<ReturnType<typeof endpoint>>;
+  directEndpoints?: Record<string, ReturnType<typeof endpoint>>;
   passwords?: Record<string, string>;
   childOwner?: string;
   nonemptyTemplate?: string;
@@ -53,6 +57,7 @@ function scenario(t: TestContext, options: {
   let computes = options.endpoints ?? branches.map(endpoint);
   const events: string[] = [];
   const passwordReads: string[] = [];
+  const directReads: string[] = [];
   const inspected: string[] = [];
   const verifyCurrent = async () => { events.push("current"); };
   t.mock.method(globalThis, "fetch", async (input: string | URL, init: RequestInit) => {
@@ -83,9 +88,9 @@ function scenario(t: TestContext, options: {
         if (options.ownershipCheckFails === "response") return new Response(secret);
         events.push("marker");
         return Response.json({ fields: ["project", "environment", "environment_id"].map(name => ({ name, dataTypeID: 25 })),
-          rows: [["tyask/mille", "preview", options.ownershipCheckFails === "marker" ? "mille-pr-9" : "mille-pr-8"]] });
+          rows: [["tyask/mille", "preview", options.ownershipCheckFails === "marker" ? "mille-pr-8" : environmentId]] });
       }
-      assert.match(query, /mille-pr-8/);
+      assert.ok(query.includes(environmentId));
       events.push(query.includes("mille_seed") ? "seed" : "migration");
       return Response.json({ fields: [], rows: [] });
     }
@@ -124,6 +129,7 @@ function scenario(t: TestContext, options: {
     }
     const [, kind, id, resource] = path.split("/");
     if (kind === "branches") {
+      if (!resource) directReads.push(path);
       const branch = options.directBranches?.[id] ?? branches.find(item => item.id === id);
       if (!branch) return new Response(null, { status: 404 });
       if (resource === "endpoints") return Response.json({ endpoints: computes.filter(item => item.branch_id === id) });
@@ -139,12 +145,13 @@ function scenario(t: TestContext, options: {
       return Response.json({ branch });
     }
     if (kind === "endpoints") {
-      const endpoint = computes.find(item => item.id === id);
+      directReads.push(path);
+      const endpoint = options.directEndpoints?.[id] ?? computes.find(item => item.id === id);
       return endpoint ? Response.json({ endpoint }) : new Response(null, { status: 404 });
     }
     assert.fail(`Unknown Neon fixture operation ${path}`);
   });
-  return { events, passwordReads, inspected, verifyCurrent };
+  return { events, passwordReads, directReads, inspected, verifyCurrent };
 }
 
 function failureIn(stage: NativePilotStageError["stage"], httpStatus?: number) {
@@ -272,7 +279,7 @@ test("デプロイの READY より後に作成された同名の子を更新・�
   const fixture = scenario(t, { branches: [template, standing, replacement, peer] });
   const service = new NeonPreview(config);
   await assert.rejects(service.findNativeBranch(ref, notBefore, notBefore), /作成時刻/);
-  await assert.rejects(service.prepareNativeBranch(ref, claimed, notBefore, 8, standing.id, expectedPeers, fixture.verifyCurrent, notBefore),
+  await assert.rejects(service.prepareNativeBranch(ref, claimed, notBefore, 8, generation, standing.id, expectedPeers, fixture.verifyCurrent, notBefore),
     /作成時刻/);
   await assert.rejects(service.removeNativeBranch(ref, claimed, notBefore, fixture.verifyCurrent, notBefore), /作成時刻/);
   assert.deepEqual(fixture.passwordReads, []);
@@ -299,12 +306,13 @@ test("不完全な一覧、同名の競合、別の親や endpoint を Native �
   }
 });
 
-test("子の資格情報の分離と現在の PR を確認してから既存 DB 準備を実行する", async t => {
-  const fixture = scenario(t);
+test("専用接続先と現在の PR を照合し、子の接続情報だけで世代を保持して DB を準備する", async t => {
+  const fixture = scenario(t, { passwords: Object.fromEntries([candidate, template, standing, peer].map(item => [item.id, "fixture-shared"])) });
   const service = new NeonPreview(config);
-  await service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, fixture.verifyCurrent);
-  assert.deepEqual(fixture.passwordReads, [candidate.id, template.id, standing.id, peer.id]);
-  assert.deepEqual(fixture.events, ["current", "migration", "marker", "seed"]);
+  await service.prepareNativeBranch(ref, expected, notBefore, 8, generation, standing.id, expectedPeers, fixture.verifyCurrent);
+  await service.prepareNativeBranch(ref, expected, notBefore, 8, generation, standing.id, expectedPeers, fixture.verifyCurrent);
+  assert.deepEqual(fixture.passwordReads, [candidate.id, candidate.id]);
+  assert.deepEqual(fixture.events, ["current", "migration", "marker", "seed", "current", "migration", "marker", "seed"]);
 });
 
 test("照合済みの比較対象が同名の別ブランチや接続先に変わった場合は資格情報と DB に触れない", async t => {
@@ -316,7 +324,7 @@ test("照合済みの比較対象が同名の別ブランチや接続先に変�
     { endpoints: [...otherEndpoints, { ...peerEndpoint, host: `${peerEndpoint.id}.c-1.ap-southeast-1.aws.neon.tech` }] },
   ]) {
     const fixture = scenario(t, variation);
-    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, fixture.verifyCurrent),
+    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, generation, standing.id, expectedPeers, fixture.verifyCurrent),
       failureIn("neon-isolation"));
     assert.deepEqual(fixture.passwordReads, []);
     assert.deepEqual(fixture.events, []);
@@ -324,24 +332,23 @@ test("照合済みの比較対象が同名の別ブランチや接続先に変�
   }
 });
 
-test("共有資格情報、欠けた比較対象、別ロール、古い PR では DB 処理を拒否する", async t => {
+test("別の専用接続先、欠けた比較対象、重複 endpoint、別ロール、古い PR では DB 処理を拒否する", async t => {
   const service = new NeonPreview(config);
-  for (const sharedWith of [template, standing, peer]) {
-    const fixture = scenario(t, { passwords: { [candidate.id]: "fixture%2Dshared", [sharedWith.id]: "fixture-shared" } });
-    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, fixture.verifyCurrent),
-      failureIn("neon-shared-credentials"));
-    assert.deepEqual(fixture.events, []);
-    t.mock.restoreAll();
-  }
-  for (const variation of [{ branches: [template, standing, candidate] }, { childOwner: "different_owner" }]) {
+  const otherEndpoints = [template, standing, peer].map(endpoint);
+  for (const variation of [
+    { branches: [template, standing, candidate] },
+    { childOwner: "different_owner" },
+    { endpoints: [...otherEndpoints, { ...endpoint(candidate), host: `${candidateEndpoint}.c-1.ap-southeast-1.aws.neon.tech` }] },
+    { endpoints: [...otherEndpoints, { ...endpoint(template), branch_id: candidate.id }] },
+  ]) {
     const fixture = scenario(t, variation);
-    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, fixture.verifyCurrent));
+    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, generation, standing.id, expectedPeers, fixture.verifyCurrent));
     assert.deepEqual(fixture.passwordReads, []);
     assert.deepEqual(fixture.events, []);
     t.mock.restoreAll();
   }
   const fixture = scenario(t);
-  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, async () => {
+  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, generation, standing.id, expectedPeers, async () => {
     throw new Error("stale PR");
   }), /stale PR/);
   assert.deepEqual(fixture.events, []);
@@ -350,9 +357,16 @@ test("共有資格情報、欠けた比較対象、別ロール、古い PR で�
 test("Native 診断は分離照合と初期化の失敗を区別する", async t => {
   const service = new NeonPreview(config);
   const missing = scenario(t, { branches: [template, standing, candidate] });
-  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, missing.verifyCurrent),
+  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, generation, standing.id, expectedPeers, missing.verifyCurrent),
     failureIn("neon-isolation"));
   assert.deepEqual(missing.events, []);
+  t.mock.restoreAll();
+
+  const malformed = scenario(t, { passwords: { [candidate.id]: "fixture%0Ainvalid" } });
+  await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, generation, standing.id, expectedPeers, malformed.verifyCurrent),
+    failureIn("neon-isolation"));
+  assert.deepEqual(malformed.passwordReads, [candidate.id]);
+  assert.deepEqual(malformed.events, []);
   t.mock.restoreAll();
 
   for (const [options, status, events] of [
@@ -362,9 +376,9 @@ test("Native 診断は分離照合と初期化の失敗を区別する", async t
     [{ ownershipCheckFails: "marker" }, 200, ["current", "migration", "marker"]],
   ] as const) {
     const initialization = scenario(t, options);
-    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, standing.id, expectedPeers, initialization.verifyCurrent),
+    await assert.rejects(service.prepareNativeBranch(ref, expected, notBefore, 8, generation, standing.id, expectedPeers, initialization.verifyCurrent),
       failureIn("neon-initialize", status));
-    assert.deepEqual(initialization.passwordReads, [candidate.id, template.id, standing.id, peer.id]);
+    assert.deepEqual(initialization.passwordReads, [candidate.id]);
     assert.deepEqual(initialization.events, events);
     t.mock.restoreAll();
   }
@@ -378,6 +392,31 @@ test("Native 子だけを削除し、ブランチと endpoint の不在を再実
   assert.deepEqual(fixture.events, ["current", "delete"]);
   assert.equal(await service.findNativeBranch(ref), null);
   assert.equal((await service.findNativeBranch(peerRef))?.id, peer.id);
+});
+
+test("Native cleanup の復旧時は同名資源と固定 ID の不在を両方確認する", async t => {
+  const service = new NeonPreview(config);
+  const ids = { branchId: candidate.id, endpointId: candidateEndpoint };
+  const others = [template, standing, peer];
+  const absent = scenario(t, { branches: others });
+  await service.confirmNativeBranchAbsent(ref, ids);
+  assert.deepEqual(absent.directReads.sort(), [`/branches/${candidate.id}`, `/endpoints/${candidateEndpoint}`]);
+  assert.deepEqual(absent.events, []);
+  t.mock.restoreAll();
+
+  const cases: Array<[Parameters<typeof scenario>[1], RegExp]> = [
+    [{ branches: [...others, { ...candidate, id: "br-replacement" }] }, /一覧に残っています/],
+    [{ branches: [...others, { ...candidate, name: "renamed" }] }, /一覧に残っています/],
+    [{ branches: others, endpoints: [...others.map(endpoint), endpoint(candidate)] }, /一覧に残っています/],
+    [{ branches: others, directBranches: { [candidate.id]: candidate } }, /直接取得できる/],
+    [{ branches: others, directEndpoints: { [candidateEndpoint]: endpoint(candidate) } }, /直接取得できる/],
+  ];
+  for (const [variation, message] of cases) {
+    const fixture = scenario(t, variation);
+    await assert.rejects(service.confirmNativeBranchAbsent(ref, ids), message);
+    assert.deepEqual(fixture.events, []);
+    t.mock.restoreAll();
+  }
 });
 
 test("Native cleanup は身元が違う資源、孫付きの子、残留した endpoint を成功扱いしない", async t => {

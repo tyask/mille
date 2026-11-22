@@ -8,7 +8,7 @@ import test from "node:test";
 import { PreviewGitHubHttpError, previewGitHubHttpStatus } from "../scripts/preview/github";
 import { executeNativePilot, nativePilotProviders } from "../scripts/preview/native-pilot";
 import { milleRepositoryId } from "../scripts/preview/native-identity";
-import { assertNativePilotFirstCreation } from "../scripts/preview/native-pilot-history";
+import { assertNativePilotApplicationCreation, assertNativePilotFirstCreation } from "../scripts/preview/native-pilot-history";
 import { formatNativePilotFailure, NativePilotStageError } from "../scripts/preview/native-pilot-diagnostics";
 import type { NativePilotDeployment } from "../scripts/preview/native-pilot-vercel";
 import type { PreviewTarget } from "../scripts/preview/target";
@@ -24,11 +24,21 @@ const peerRef = "codex/native-preview-pilot-b";
 const closedAt = "2026-11-25T14:00:00Z";
 const database = { id: "br-test", endpointId: "ep-test", host: "ep-test.ap-southeast-1.aws.neon.tech" };
 const peerDatabase = { id: "br-peer", endpointId: "ep-peer", host: "ep-peer.ap-southeast-1.aws.neon.tech" };
-const deployment: NativePilotDeployment = {
+const deployment = {
   id: "dpl_Fixture", pr, ref, sha: head, generation: "8a481116-21d6-4dfc-a8ba-32e49289ac28",
   requestedAt: 1795600000000, createdAt: 1795600000010, readyAt: 1795600001000,
-  url: "https://mille-test-fumin1.vercel.app", readyState: "READY",
+  url: "https://mille-test-fumin1.vercel.app", readyState: "READY", phase: "provision",
+} satisfies NativePilotDeployment;
+const binding = {
+  branchId: database.id, endpointId: database.endpointId,
+  hostDigest: createHash("sha256").update(database.host).digest("hex"),
 };
+const application = {
+  ...deployment, phase: "application", id: "dpl_App", database: binding,
+  url: "https://mille-app-fumin1.vercel.app",
+} satisfies NativePilotDeployment;
+const previousHead = "d".repeat(40);
+const ready = { ...application, endpointId: database.endpointId };
 const peerDeployment: NativePilotDeployment = {
   ...deployment, id: "dpl_Peer", pr: peer, ref: peerRef, sha: "c".repeat(40),
 };
@@ -51,6 +61,7 @@ test("Native pilot configures the Vercel provider with the existing project cred
 function fixture(target: PreviewTarget, options: {
   markerMode?: string;
   existing?: NativePilotDeployment;
+  applications?: typeof application[];
   child?: typeof database;
   buildEndpointId?: string;
   peerExists?: boolean;
@@ -58,6 +69,7 @@ function fixture(target: PreviewTarget, options: {
 } = {}) {
   const events: string[] = [];
   const verifiedBuilds: NativePilotDeployment[] = [];
+  let records: NativePilotDeployment[] = [...(options.existing ? [options.existing] : []), ...(options.applications ?? [])];
   let created = false;
   const refs = new Map([[pr, ref], [peer, peerRef]]);
   const git = new Map([
@@ -91,12 +103,15 @@ function fixture(target: PreviewTarget, options: {
     target, controlSha: control, pilotPrs: [pr, peer], read,
     standingBranchId: "br-standing", standingEndpointId: "ep-standing",
     async verifyFirstCreation(number) { assert.equal(number, pr); },
+    async verifyApplicationCreation(number, sha) {
+      assert.equal(number, pr);
+      assert.equal(sha, head);
+    },
     vercel: {
       async preflight() { events.push("vercel preflight"); },
-      async find(requested, exactSha) {
-        if (requested.pr === pr) return options.existing ?? null;
-        assert.equal(exactSha, false);
-        return options.peerExists ? peerDeployment : null;
+      async list(requested) {
+        if (requested.pr === pr) return records;
+        return options.peerExists ? [peerDeployment] : [];
       },
       async provision(requested, _generation, verify) {
         assert.deepEqual(requested, { pr, ref, sha: head });
@@ -107,6 +122,7 @@ function fixture(target: PreviewTarget, options: {
       },
       async confirmStatic(current, verify) {
         await verify?.();
+        assert.equal(current.phase, "provision");
         events.push("static");
         verifiedBuilds.push(current);
         const endpointId = current.pr === pr
@@ -114,10 +130,24 @@ function fixture(target: PreviewTarget, options: {
           : options.peerBuildEndpointId ?? peerDatabase.endpointId;
         return { ...current, endpointId };
       },
+      async deployApplication(requested, generation, expected, verify) {
+        await verify();
+        assert.deepEqual(requested, { pr, ref, sha: head });
+        assert.equal(generation, deployment.generation);
+        assert.deepEqual(expected, binding);
+        events.push("application");
+        return application;
+      },
+      async confirmApplication(current, verify) {
+        await verify?.();
+        assert.equal(current.phase, "application");
+        events.push("application ready");
+        return { ...current, endpointId: current.database.endpointId };
+      },
       async remove(current, verify) {
         await verify();
-        events.push("remove deployment");
-        assert.equal(current.id, deployment.id);
+        events.push(`remove ${current.id}`);
+        records = records.filter(item => item.id !== current.id);
       },
     },
     neon: {
@@ -126,12 +156,13 @@ function fixture(target: PreviewTarget, options: {
         if (branchRef === ref) return options.child ?? (created ? database : null);
         return options.peerExists ? peerDatabase : null;
       },
-      async prepareNativeBranch(_ref, exact, start, number, _standing, peers, verify, end) {
+      async prepareNativeBranch(_ref, exact, start, number, generation, _standing, peers, verify, end) {
         await verify();
         assert.deepEqual(exact, database);
         assert.equal(start, deployment.requestedAt);
         assert.equal(end, deployment.readyAt);
         assert.equal(number, pr);
+        assert.equal(generation, deployment.generation);
         assert.deepEqual(peers, options.peerExists ? [{ ref: peerRef, branch: peerDatabase }] : []);
         events.push("prepare");
       },
@@ -142,15 +173,21 @@ function fixture(target: PreviewTarget, options: {
         assert.equal(end, deployment.readyAt);
         events.push("remove branch");
       },
+      async confirmNativeBranchAbsent(reference, expected) {
+        assert.equal(reference, ref);
+        assert.equal(expected.branchId, binding.branchId);
+        assert.equal(expected.endpointId, binding.endpointId);
+        events.push("branch absent");
+      },
     },
   };
   return { input, events, refs, verifiedBuilds };
 }
 
-test("Native pilot prepares a branch only after matching trusted source, receipt, static output and injected endpoint", async () => {
+test("Native pilot publishes the app only after matching trusted source and preparing the attested branch", async () => {
   const { input, events } = fixture(deploy);
-  assert.equal(await executeNativePilot(input), "prepared");
-  assert.deepEqual(events, ["vercel preflight", "neon preflight", "provision", "static", "prepare"]);
+  assert.deepEqual(await executeNativePilot(input), ready);
+  assert.deepEqual(events, ["vercel preflight", "neon preflight", "provision", "static", "prepare", "application", "application ready"]);
 });
 
 test("Native pilot makes no provider change for unsafe source or shared Git ref", async () => {
@@ -182,7 +219,7 @@ test("Native pilot rejects unreconciled branches and mismatched build endpoint I
 
 test("Native pilot checks a peer's actual deployed SHA and endpoint before initializing", async () => {
   const valid = fixture(deploy, { peerExists: true });
-  assert.equal(await executeNativePilot(valid.input), "prepared");
+  assert.deepEqual(await executeNativePilot(valid.input), ready);
   assert.deepEqual(valid.verifiedBuilds.map(item => item.sha), [head, peerDeployment.sha]);
 
   const mismatch = fixture(deploy, { peerExists: true, peerBuildEndpointId: "ep-other" });
@@ -193,13 +230,13 @@ test("Native pilot checks a peer's actual deployed SHA and endpoint before initi
 test("Native pilot keeps evidence until the exact branch is deleted and refuses an unverified endpoint", async () => {
   const valid = fixture(cleanup, { existing: deployment, child: database });
   assert.equal(await executeNativePilot(valid.input), "removed");
-  assert.deepEqual(valid.events.slice(-3), ["static", "remove branch", "remove deployment"]);
+  assert.deepEqual(valid.events.slice(-3), ["static", "remove branch", "remove dpl_Fixture"]);
   for (const existing of [
     { ...deployment, readyState: "BUILDING" as const },
     { ...deployment, readyAt: undefined },
   ]) {
     const unsafe = fixture(cleanup, { existing, child: database });
-    await assert.rejects(executeNativePilot(unsafe.input), /終了|作成期間/);
+    await assert.rejects(executeNativePilot(unsafe.input), /終了|準備完了時刻/);
     assert.ok(!unsafe.events.some(event => event.startsWith("remove")));
   }
   const mismatch = fixture(cleanup, { existing: deployment, child: database, buildEndpointId: "ep-other" });
@@ -211,6 +248,49 @@ test("Native pilot retains its receipt if it cannot directly prove deletion afte
   const alreadyRemoved = fixture(cleanup, { existing: deployment });
   await assert.rejects(executeNativePilot(alreadyRemoved.input), /直接確認できません/);
   assert.ok(!alreadyRemoved.events.some(event => event.startsWith("remove")));
+});
+
+test("Native pilot reuses the first branch and generation across HEADs", async () => {
+  const first = { ...deployment, sha: previousHead };
+  const previous = { ...application, id: "dpl_Previous", sha: previousHead };
+  const update = fixture(deploy, { existing: first, applications: [previous], child: database });
+  assert.deepEqual(await executeNativePilot(update.input), ready);
+  assert.deepEqual(update.events.slice(-4), ["static", "prepare", "application", "application ready"]);
+  assert.ok(!update.events.includes("provision"));
+
+  const repeat = fixture(deploy, { existing: first, applications: [previous, application], child: database });
+  assert.deepEqual(await executeNativePilot(repeat.input), ready);
+  assert.deepEqual(repeat.events.slice(-2), ["static", "application ready"]);
+  assert.ok(!repeat.events.includes("prepare"));
+});
+
+test("Native pilot rejects a different existing application binding before DB or Vercel writes", async () => {
+  const wrong = { ...application, database: { ...binding, branchId: "br-other" } };
+  const { input, events } = fixture(deploy, { existing: deployment, applications: [wrong], child: database });
+  await assert.rejects(executeNativePilot(input), /所有が一致しません/);
+  assert.deepEqual(events, ["vercel preflight", "neon preflight", "static"]);
+});
+
+test("Native pilot retains an owned app anchor until branch and other deployments are absent", async () => {
+  const previous = { ...application, id: "dpl_Previous", sha: previousHead };
+  const normal = fixture(cleanup, { existing: deployment, applications: [previous, application], child: database });
+  assert.equal(await executeNativePilot(normal.input), "removed");
+  assert.deepEqual(normal.events.slice(-5), ["static", "remove dpl_Previous", "remove branch", "remove dpl_Fixture", "remove dpl_App"]);
+
+  const interrupted = fixture(cleanup, { applications: [application] });
+  assert.equal(await executeNativePilot(interrupted.input), "removed");
+  assert.deepEqual(interrupted.events.slice(-2), ["branch absent", "remove dpl_App"]);
+
+  const unsafe = fixture(cleanup, { applications: [application], child: database });
+  await assert.rejects(executeNativePilot(unsafe.input), /初回分岐の所有/);
+  assert.ok(!unsafe.events.some(event => event.startsWith("remove")));
+});
+
+test("Native pilot does not create an app after an unknown previous attempt for the same HEAD", async () => {
+  const { input, events } = fixture(deploy, { existing: deployment, child: database });
+  input.verifyApplicationCreation = async () => { throw new Error("unknown application"); };
+  await assert.rejects(executeNativePilot(input), /unknown application/);
+  assert.deepEqual(events, ["vercel preflight", "neon preflight"]);
 });
 
 test("Native pilot never creates another deployment after an unknown previous creation", async () => {
@@ -329,4 +409,24 @@ test("Native pilot uses complete prior workflow history before issuing a first c
     async () => assert.fail("a retry with no receipt must stop immediately")), /以前の作成結果/);
   await assert.rejects(assertNativePilotFirstCreation(pr, createdAt, actionsEnv,
     async () => ({ ...history, total_count: 103 })), /以前の作成結果/);
+});
+
+test("Native application history reconciles attempts for the same HEAD and permits an updated HEAD", async () => {
+  const environment = { GITHUB_RUN_ID: "500", GITHUB_RUN_NUMBER: "50", GITHUB_RUN_ATTEMPT: "1" };
+  const createdAt = "2026-11-25T13:00:00Z";
+  const history = {
+    total_count: 2, workflow_runs: [{ id: 500, run_number: 50 }, { id: 499, run_number: 49 }],
+  };
+  let jobName = `PR 41 deploy [${previousHead}]`;
+  const read = async (path: string) => {
+    if (path.startsWith("actions/workflows/")) return history;
+    assert.equal(path, "actions/runs/499/jobs?filter=all&per_page=100");
+    return { total_count: 1, jobs: [{ name: jobName, status: "completed", conclusion: "failure" }] };
+  };
+  await assertNativePilotApplicationCreation(pr, head, createdAt, environment, read);
+  await assert.rejects(assertNativePilotFirstCreation(pr, createdAt, environment, read), /以前の作成結果/);
+  jobName = `PR 41 deploy [${head}]`;
+  await assert.rejects(assertNativePilotApplicationCreation(pr, head, createdAt, environment, read), /以前の作成結果/);
+  jobName = "PR 41 deploy";
+  await assert.rejects(assertNativePilotApplicationCreation(pr, head, createdAt, environment, read), /以前の作成結果/);
 });

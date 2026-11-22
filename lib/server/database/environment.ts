@@ -1,3 +1,5 @@
+import { hasNativePreviewDatabaseBinding, nativePreviewApplication } from "./native-preview";
+
 type Environment = Readonly<Record<string, string | undefined>>;
 
 export type DatabaseTarget = "preview" | "production";
@@ -35,6 +37,9 @@ export function hostedDatabaseConfiguration(
 }
 
 export function databaseConfiguration(variables: Environment = process.env): DatabaseConfiguration {
+  if (variables.MILLE_NATIVE_PREVIEW_PHASE !== undefined || hasNativePreviewDatabaseBinding(variables)) {
+    return nativePreviewApplication(variables).configuration;
+  }
   if (variables.MILLE_DB_MODE === "memory") {
     if (!["development", "test"].includes(variables.NODE_ENV ?? "") || variables.AUTH_MODE !== "test"
       || variables.VERCEL !== undefined || variables.VERCEL_ENV !== undefined

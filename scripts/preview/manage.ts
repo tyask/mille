@@ -5,7 +5,7 @@ import { previewContext, previewGitHubHttpStatus } from "./github";
 import { assertPreviewGitDeploymentPolicy } from "./git-policy";
 import { executeNativePilot, nativePilotProviders } from "./native-pilot";
 import { formatNativePilotFailure, NativePilotStageError, nativePilotStage, type NativePilotStage } from "./native-pilot-diagnostics";
-import { assertNativePilotFirstCreation } from "./native-pilot-history";
+import { assertNativePilotApplicationCreation, assertNativePilotFirstCreation } from "./native-pilot-history";
 import { nativePilotPrs } from "./native-pilot-selection";
 import { NeonPreview, NeonPreviewError } from "./neon";
 import { loadPreviewSource } from "./source";
@@ -22,6 +22,17 @@ const configuration = z.object({
   MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: z.string().regex(/^br-[a-z0-9-]+$/),
   MILLE_PR_PREVIEW_MAX_BRANCHES: z.string().regex(/^[1-9][0-9]?$/).transform(Number),
 });
+
+async function publishReady(number: number, sha: string, deployment: { id: string; url: string }, summary?: string) {
+  const { id, url } = deployment;
+  if (!/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(url)) throw new Error("Preview URL が無効です。");
+  if (summary) await appendFile(summary, `PR #${number} (${sha}) Preview [${url}](${url})\n`);
+  console.log(`PR #${number} (${sha}) Preview ${url}`);
+  if (process.env.GITHUB_OUTPUT) {
+    const ready = { number, sha, deployment: { id, url } };
+    await appendFile(process.env.GITHUB_OUTPUT, `ready=${JSON.stringify(ready)}\n`);
+  }
+}
 
 let stage = "実行元と PR の照合";
 async function main() {
@@ -60,7 +71,7 @@ async function main() {
   });
   const summary = process.env.GITHUB_STEP_SUMMARY;
   if (pilots) {
-    stage = "Native Preview の試験用リソース照合・準備・整理";
+    stage = "Native Preview の試験用リソース照合・公開・整理";
     const providers = await nativePilotStage("configuration", () => nativePilotProviders(process.env, {
       token: config.VERCEL_TOKEN,
       teamId: config.MILLE_PR_PREVIEW_VERCEL_TEAM_ID,
@@ -69,9 +80,15 @@ async function main() {
     const outcome = await executeNativePilot({
       target, pilotPrs: pilots, controlSha: context.controlSha, read: context.read, neon, ...providers,
       verifyFirstCreation: (pr, createdAt) => assertNativePilotFirstCreation(pr, createdAt, process.env, context.read),
+      verifyApplicationCreation: (pr, sha, createdAt) =>
+        assertNativePilotApplicationCreation(pr, sha, createdAt, process.env, context.read),
     });
-    const result = outcome === "prepared" ? "試験用 DB を照合・準備しました。" : "試験用資源を整理しました。";
-    const line = `PR #${target.number} (${target.sha}) の Native Preview ${result}`;
+    if (outcome !== "removed") {
+      await check("github-target", verifyCurrent);
+      await publishReady(target.number, target.sha, outcome, summary);
+      return;
+    }
+    const line = `PR #${target.number} (${target.sha}) の Native Preview 試験用資源を整理しました。`;
     if (summary) await appendFile(summary, `${line}\n`);
     console.log(line);
     return;
@@ -100,16 +117,9 @@ async function main() {
   const database = await neon.ensure(target.number, verifyCurrent, migrations);
   stage = "PR 専用 Vercel Preview の準備";
   const deployment = await vercel.deploy(target, database, files, verifyCurrent);
-  const { url } = deployment;
   stage = "現在の PR HEAD と Preview URL の確認";
   await verifyCurrent();
-  if (!/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(url)) throw new Error("Preview URL が無効です。");
-  if (summary) await appendFile(summary, `PR #${target.number} (${target.sha}) Preview [${url}](${url})\n`);
-  console.log(`PR #${target.number} (${target.sha}) Preview ${url}`);
-  if (process.env.GITHUB_OUTPUT) {
-    const ready = { number: target.number, sha: target.sha, deployment };
-    await appendFile(process.env.GITHUB_OUTPUT, `ready=${JSON.stringify(ready)}\n`);
-  }
+  await publishReady(target.number, target.sha, deployment, summary);
 }
 
 main().catch((error: unknown) => {

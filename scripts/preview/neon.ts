@@ -2,10 +2,11 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { setTimeout as delay } from "node:timers/promises";
 import { neon, neonConfig } from "@neondatabase/serverless";
 import { z } from "zod";
+import { nativePreviewEnvironmentId } from "../../lib/server/database/native-preview";
 import type { MigrationSource } from "../db/sql";
 import { preparePreviewDatabase, previewDatabaseEnvironmentId } from "./database";
 import { isNativePreviewTaskBranch } from "./native-identity";
-import { NativePilotHttpError, NativePilotStageError, nativePilotStage } from "./native-pilot-diagnostics";
+import { NativePilotHttpError, nativePilotStage } from "./native-pilot-diagnostics";
 
 const api = "https://console.neon.tech/api/v2";
 const projectName = "mille-preview";
@@ -157,16 +158,6 @@ function isNativeDirectHost(id: string, host: string): boolean {
 
 function sameNativeBranch(left: NativeNeonBranch, right: NativeNeonBranch): boolean {
   return left.id === right.id && left.endpointId === right.endpointId && left.host === right.host;
-}
-
-function nativePassword(connection: string): string {
-  try {
-    const password = decodeURIComponent(new URL(connection).password);
-    if (password && !/[\u0000-\u001f\u007f]/.test(password)) return password;
-  } catch {
-    // Do not expose connection strings or decoder errors.
-  }
-  throw new Error("Neon Native Preview のロール資格情報を照合できません。");
 }
 
 export class NeonPreviewError extends Error {
@@ -448,7 +439,10 @@ export class NeonPreview {
     const params = neonPreviewConnectionQuery(id, endpointId, database, role);
     const { uri } = await this.#request(`/connection_uri?${params}`, connectionUri);
     let parsed: URL;
-    try { parsed = new URL(uri); } catch { throw new Error("Neon 接続情報が無効です。"); }
+    try {
+      parsed = new URL(uri);
+      if (expected && /[\u0000-\u001f\u007f]/.test(decodeURIComponent(parsed.password))) throw new Error();
+    } catch { throw new Error("Neon 接続情報が無効です。"); }
     if (!matchesNeonPreviewConnection(parsed, host, database, role)) {
       throw new Error("Neon 接続情報が専用の接続先と一致しません。");
     }
@@ -549,7 +543,7 @@ export class NeonPreview {
   }
 
   async prepareNativeBranch(
-    ref: string, expected: NativeNeonBranch, notBefore: number, pr: number, standingBranchId: string,
+    ref: string, expected: NativeNeonBranch, notBefore: number, pr: number, generation: string, standingBranchId: string,
     expectedPeers: readonly NativePeerBranch[], verifyCurrent: VerifyCurrent, notAfter?: number,
   ): Promise<void> {
     previewDatabaseEnvironmentId(pr);
@@ -564,6 +558,7 @@ export class NeonPreview {
     const inventory = await this.#nativeBranches();
     const child = await this.#verifiedNativeBranch(inventory, name, notBefore, notAfter);
     if (!child || !sameNativeBranch(child, expected)) throw new Error("Neon Native Preview の専用接続先が一致しません。");
+    const environmentId = nativePreviewEnvironmentId(pr, generation, child.id);
     const { roles, databases } = await this.#postgresResources(child.id);
     if (roles.length !== 1 || roles[0].name !== templateRole || roles[0].protected
       || databases.length !== 1 || databases[0].name !== templateDatabase || databases[0].owner_name !== templateRole) {
@@ -578,20 +573,13 @@ export class NeonPreview {
           return current && sameNativeBranch(current, peer.branch) ? current : null;
         }),
       ]);
-      const otherBranches = [template, standing, ...peers].filter(other => other !== null);
-      const endpoints = new Set([child, ...otherBranches].map(item => item.endpointId));
-      if (otherBranches.length !== peerNames.length + 2 || endpoints.size !== otherBranches.length + 1) {
+      const verifiedBranches = [child, template, standing, ...peers].filter(item => item !== null);
+      if (verifiedBranches.length !== peerNames.length + 3
+        || new Set(verifiedBranches.map(item => item.id)).size !== verifiedBranches.length
+        || new Set(verifiedBranches.map(item => item.endpointId)).size !== verifiedBranches.length) {
         throw new Error("Neon Native Preview の比較対象を確認できません。");
       }
-      const childConnection = await this.#connection(child.id, templateDatabase, templateRole, child);
-      const password = nativePassword(childConnection.connectionString);
-      for (const other of otherBranches) {
-        const otherConnection = await this.#connection(other.id, templateDatabase, templateRole, other);
-        if (nativePassword(otherConnection.connectionString) === password) {
-          throw new NativePilotStageError("neon-shared-credentials", new Error("Neon Native Preview のロール資格情報が共有されています。"));
-        }
-      }
-      return childConnection;
+      return this.#connection(child.id, templateDatabase, templateRole, child);
     });
 
     await nativePilotStage("github-target", verifyCurrent);
@@ -599,7 +587,7 @@ export class NeonPreview {
       observeNativeSqlHttp();
       const observation: { status?: number } = {};
       try {
-        await nativeSqlHttp.run(observation, () => preparePreviewDatabase({ pr, ...connection, initialize: true }));
+        await nativeSqlHttp.run(observation, () => preparePreviewDatabase({ pr, environmentId, ...connection, initialize: true }));
       } catch {
         const message = "Neon Native Preview の DB 照合・migration・seed を確認できません。";
         if (observation.status !== undefined) throw new NativePilotHttpError(message, observation.status);
@@ -644,15 +632,29 @@ export class NeonPreview {
       }
     }
 
+    await this.#confirmNativeBranchAbsent(name, { branchId: expected.id, endpointId: expected.endpointId }, expected.host);
+  }
+
+  async confirmNativeBranchAbsent(ref: string, ids: { branchId: string; endpointId: string }): Promise<void> {
+    const name = nativeBranchName(ref);
+    if (!branchId.safeParse(ids.branchId).success || !endpointIdentifier.safeParse(ids.endpointId).success
+      || ids.branchId === this.#config.parentBranchId) {
+      throw new Error("Neon Native Preview の削除対象が無効です。");
+    }
+    await this.#confirmNativeBranchAbsent(name, ids);
+  }
+
+  async #confirmNativeBranchAbsent(
+    name: string, { branchId, endpointId }: { branchId: string; endpointId: string }, host?: string,
+  ): Promise<void> {
     const [remaining, endpoints] = await Promise.all([this.#nativeBranches(), this.#nativeEndpoints()]);
-    if (remaining.some(item => item.id === expected.id || item.parent_id === expected.id || item.name === name)
-      || endpoints.some(item => item.project_id !== this.#config.projectId || item.id === expected.endpointId
-        || item.branch_id === expected.id || item.host === expected.host)) {
+    if (remaining.some(item => item.id === branchId || item.parent_id === branchId || item.name === name)
+      || endpoints.some(item => item.id === endpointId || item.branch_id === branchId || item.host === host)) {
       throw new Error("Neon Native Preview の専用資源が一覧に残っています。");
     }
     await Promise.all([
-      this.#requireNativeAbsent(`/branches/${expected.id}`, branchDetails),
-      this.#requireNativeAbsent(`/endpoints/${expected.endpointId}`, z.object({ endpoint })),
+      this.#requireNativeAbsent(`/branches/${branchId}`, branchDetails),
+      this.#requireNativeAbsent(`/endpoints/${endpointId}`, z.object({ endpoint })),
     ]);
   }
 

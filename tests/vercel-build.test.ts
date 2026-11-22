@@ -4,6 +4,7 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import type { DatabaseRow, Query } from "../lib/server/database/client";
 import type { DatabaseConfiguration } from "../lib/server/database/environment";
+import { nativePreviewEnvironmentId } from "../lib/server/database/native-preview";
 import { migrateVercelDatabase, runVercelBuild } from "../scripts/build/vercel-build";
 import { migrationSql, registerUserSql, repositoryMigrationSources } from "../scripts/db/sql";
 
@@ -18,6 +19,22 @@ const production = Object.freeze({
 });
 const directConfiguration: DatabaseConfiguration = {
   mode: "hosted", environment: "production", environmentId: "mille-production", host: directHost, url: fixtureUrl(directHost),
+};
+const applicationEndpoint = "ep-build-fixture-123456";
+const applicationBranch = "br-native-build-fixture";
+const applicationGeneration = "1234a678-123b-4abc-9f12-123456789abc";
+const applicationRef = "codex/native-preview-pilot-a";
+const applicationSha = "a".repeat(40);
+const application = {
+  ...production, VERCEL_ENV: "preview", VERCEL_TARGET_ENV: "preview", AUTH_MODE: "test",
+  VERCEL_GIT_REPO_OWNER: "tyask", VERCEL_GIT_REPO_SLUG: "mille", VERCEL_GIT_COMMIT_REF: applicationRef,
+  VERCEL_GIT_COMMIT_SHA: applicationSha, VERCEL_GIT_PULL_REQUEST_ID: "41",
+  MILLE_NATIVE_PREVIEW_PHASE: "application", MILLE_NATIVE_PREVIEW_PR: "41",
+  MILLE_NATIVE_PREVIEW_SOURCE_BRANCH: applicationRef, MILLE_NATIVE_PREVIEW_SOURCE_SHA: applicationSha,
+  MILLE_NATIVE_PREVIEW_GENERATION: applicationGeneration, MILLE_NATIVE_PREVIEW_NEON_BRANCH_ID: applicationBranch,
+  MILLE_NATIVE_PREVIEW_NEON_ENDPOINT_ID: applicationEndpoint,
+  MILLE_NATIVE_PREVIEW_DATABASE_HOST_SHA256: createHash("sha256").update(directHost).digest("hex"),
+  MILLE_NATIVE_PREVIEW_DATABASE_URL: `postgresql://neondb_owner:dummy-password@${pooledHost}/neondb?sslmode=require`,
 };
 
 test("local, Preview and development builds never run the production migration", async () => {
@@ -115,6 +132,56 @@ test("a failed build stops before a database operation and a failed migration re
     async migrate() { steps.push("migration started"); throw new Error("migration failure fixture"); },
   }));
   assert.deepEqual(steps, ["build completed", "migration started"]);
+});
+
+test("a Native application verifies the existing marker before building and records one receipt after success", async t => {
+  const environmentId = nativePreviewEnvironmentId(41, applicationGeneration, applicationBranch);
+  let marker = environmentId;
+  let failedBuild = false;
+  const events: string[] = [];
+  const receipt = `Mille: Native Preview アプリビルド照合 v1 dpl_BuildFixture123 41 ${applicationRef} ${applicationSha} ${applicationGeneration} ${applicationEndpoint}`;
+  t.mock.method(console, "log", (line: string) => { events.push(line); });
+  t.mock.method(globalThis, "fetch", async (input: string | URL, init: RequestInit) => {
+    assert.equal(new URL(input).pathname, "/sql");
+    assert.equal(new Headers(init.headers).get("Neon-Connection-String"), application.MILLE_NATIVE_PREVIEW_DATABASE_URL);
+    assert.deepEqual(JSON.parse(String(init.body)), {
+      query: "SELECT project, environment, environment_id FROM mille_environment WHERE singleton = true", params: [],
+    });
+    events.push("ownership read");
+    return Response.json({
+      fields: ["project", "environment", "environment_id"].map(name => ({ name, dataTypeID: 25 })),
+      rows: [["tyask/mille", "preview", marker]],
+    });
+  });
+  const steps = {
+    async build() {
+      events.push("Next.js build started");
+      await Promise.resolve();
+      if (failedBuild) throw new Error("dummy-password");
+      events.push("Next.js build completed");
+    },
+    migrate() { assert.fail("Native application triggered a migration"); },
+    provision() { assert.fail("Native application generated the preparation page"); },
+  };
+  await runVercelBuild(application, steps);
+  assert.deepEqual(events.splice(0), ["ownership read", "Next.js build started", "Next.js build completed", receipt]);
+
+  marker = "mille-standing-preview";
+  await assert.rejects(runVercelBuild(application, steps), { message: "Native Preview の専用 DB の所有を確認できません。" });
+  assert.deepEqual(events.splice(0), ["ownership read"]);
+
+  marker = environmentId;
+  failedBuild = true;
+  await assert.rejects(runVercelBuild(application, steps), { message: "Next.jsのビルドに失敗しました。" });
+  assert.deepEqual(events.splice(0), ["ownership read", "Next.js build started"]);
+
+  for (const override of [
+    { VERCEL_BUILD_IMAGE: undefined }, { VERCEL_TARGET_ENV: "production" }, { MILLE_NATIVE_PREVIEW_PHASE: undefined },
+    { MILLE_NATIVE_PREVIEW_DATABASE_URL: application.MILLE_NATIVE_PREVIEW_DATABASE_URL.replace(applicationEndpoint, "ep-standing") },
+  ]) {
+    await assert.rejects(runVercelBuild({ ...application, ...override }, steps), /Native Preview/);
+    assert.deepEqual(events, []);
+  }
 });
 
 test("the production build applies pending SQL through the existing guard without initializing or seeding", async t => {

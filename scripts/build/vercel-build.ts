@@ -2,8 +2,9 @@ import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Query } from "../../lib/server/database/client";
+import { createQuery, verifyDatabaseOwnership, type Query } from "../../lib/server/database/client";
 import { databaseConfiguration, type DatabaseConfiguration } from "../../lib/server/database/environment";
+import { hasNativePreviewDatabaseBinding, nativePreviewApplication } from "../../lib/server/database/native-preview";
 import { migrateDatabase } from "../db/migrate";
 import {
   clearNativePreviewProvisioningOutput,
@@ -66,7 +67,10 @@ export function migrateVercelDatabase(configuration: HostedConfiguration, query?
 }
 
 export async function runVercelBuild(environment: BuildEnvironment, steps: BuildSteps): Promise<void> {
-  if (isNativePreviewProvisioning(environment)) {
+  const application = environment.MILLE_NATIVE_PREVIEW_PHASE === "application" || hasNativePreviewDatabaseBinding(environment)
+    ? nativePreviewApplication(environment)
+    : undefined;
+  if (!application && isNativePreviewProvisioning(environment)) {
     if (!steps.provision) throw new Error("Native Previewの準備工程を起動できません。");
     try {
       const endpointId = nativePilotEndpointId(environment);
@@ -86,11 +90,23 @@ export async function runVercelBuild(environment: BuildEnvironment, steps: Build
     }
     return;
   }
-  const configuration = productionConfiguration(environment);
+  const configuration = application ? null : productionConfiguration(environment);
+  if (application) {
+    if (!hostedBuild(environment)) throw new Error("Native Preview のホストビルドを確認できません。");
+    try {
+      await verifyDatabaseOwnership(createQuery(application.configuration), application.configuration);
+    } catch {
+      throw new Error("Native Preview の専用 DB の所有を確認できません。");
+    }
+  }
   try {
     await steps.build();
   } catch {
     throw new Error("Next.jsのビルドに失敗しました。");
+  }
+  if (application) {
+    const { deploymentId, pr, ref, sha, generation, endpointId } = application;
+    console.log(`Mille: Native Preview アプリビルド照合 v1 ${deploymentId} ${pr} ${ref} ${sha} ${generation} ${endpointId}`);
   }
   if (configuration) {
     try {
