@@ -1,0 +1,62 @@
+name: Mille Standing Preview
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact current main SHA for the first standing Preview release
+        type: string
+        required: true
+permissions: {}
+concurrency:
+  group: mille-standing-preview
+  cancel-in-progress: false
+  queue: max
+jobs:
+  release:
+    name: Verify and assign the standing Preview
+    if: github.repository == 'tyask/mille' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    environment: mille-pr-preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      actions: read
+      contents: read
+    container:
+      # Keep the version and digest aligned with Playwright in package-lock.json.
+      image: mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e
+      options: --init --user 1001:1001
+    defaults:
+      run:
+        shell: bash
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: /ms-playwright
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Check the current main, migrate the standing DB and verify the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+          MILLE_STANDING_PREVIEW_SHA: ${{ inputs.sha }}
+          MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID }}
+          MILLE_PR_PREVIEW_VERCEL_TEAM_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_TEAM_ID }}
+        run: node --import tsx scripts/preview/standing.ts
+      - name: Upload the standing Preview receipt
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: mille-standing-preview-${{ inputs.sha }}
+          path: .mille/cloud/standing-preview-proof.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
