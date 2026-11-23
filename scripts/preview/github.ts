@@ -16,6 +16,13 @@ export function previewGitHubHttpStatus(error: unknown): number | undefined {
   return undefined;
 }
 
+export function isTrustedMainWorkflowPath(path: string, workflow: string, sha: string): boolean {
+  const [name, ref, ...extra] = path.split("@");
+  const file = `.github/workflows/${workflow}`;
+  return (name === file || name === `tyask/mille/${file}`) && extra.length === 0
+    && (ref === undefined || ref === "main" || ref === "refs/heads/main" || ref === sha);
+}
+
 export function previewGitHubRequest(token: string): PreviewGitHubRequest {
   return async (path, mutation) => {
     const response = await fetch(`https://api.github.com/repos/tyask/mille/${path}`, {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { PreviewGitHubRequest } from "./github";
+import { isTrustedMainWorkflowPath, type PreviewGitHubRequest } from "./github";
 import { postMergeChecks } from "./post-merge-evidence";
 import {
   acceptanceComplete, githubPages, malformedTaskRefersToIssue, mergedTaskSchema, postMergeNumber, postMergeRepository, postMergeSha,
@@ -45,9 +45,8 @@ async function recordedVerificationPassed(read: PreviewGitHubRequest, result: Po
     head_branch: z.literal("main"), event: z.enum(["push", "workflow_dispatch"]),
     repository: repositoryIdentity, head_repository: repositoryIdentity,
   }).parse(await read(prefix));
-  const file = ".github/workflows/post-merge.yml";
   if (run.id !== runId || run.run_attempt !== attempt || run.head_sha !== task.mergeSha
-    || ![file, `${file}@refs/heads/main`, `${postMergeRepository}/${file}@refs/heads/main`].includes(run.path)) return false;
+    || !isTrustedMainWorkflowPath(run.path, "post-merge.yml", task.mergeSha)) return false;
 
   const finished = { name: z.string(), status: z.string(), conclusion: z.string().nullable() };
   const resultPage = z.object({ total_count: z.int().nonnegative(), jobs: z.array(z.object({

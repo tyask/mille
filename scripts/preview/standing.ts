@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { previewOrigin, scopedProtectionHeaders, verifyBrowser, type BrowserProof } from "../cloud/verify";
+import { isTrustedMainWorkflowPath } from "./github";
 import { milleRepositoryId } from "./native-identity";
 import { identifyStandingDatabase, prepareStandingDatabase, standingDatabaseResourceSchema } from "./standing-database";
 import { StandingAliasError, standingLegacyPreview, standingPreviewAlias, StandingPreviewVercel, standingProductionAliases, StandingProductionPending,
@@ -240,7 +241,7 @@ const mainAncestry = z.object({ status: z.literal("ahead"), base_commit: z.objec
   merge_base_commit: z.object({ sha: shaPattern }), behind_by: z.literal(0), ahead_by: z.int().positive() });
 const runList = z.object({ workflow_runs: z.array(z.object({
   id: z.int().positive(), run_attempt: z.int().positive(), head_branch: z.literal("main"), head_sha: shaPattern,
-  event: z.literal("push"), status: z.string(), conclusion: z.string().nullable(), path: z.literal(".github/workflows/ci.yml"),
+  event: z.literal("push"), status: z.string(), conclusion: z.string().nullable(), path: z.string(),
   repository: z.object({ id: z.literal(milleRepositoryId) }), head_repository: z.object({ id: z.literal(milleRepositoryId) }),
 })) });
 const checkResult = { name: z.string(), status: z.string(), conclusion: z.string().nullable() };
@@ -257,7 +258,9 @@ export async function readStandingMainCi(read: (path: string) => Promise<unknown
   sha = shaPattern.parse(sha);
   const [run] = runList.parse(await read(`actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=${sha}&per_page=10`)).workflow_runs;
   if (!run) throw new StandingMainCiPending();
-  if (run.head_sha !== sha) throw new Error("現 main の CI の SHA が一致しません。");
+  if (run.head_sha !== sha || !isTrustedMainWorkflowPath(run.path, "ci.yml", sha)) {
+    throw new Error("現 main の CI の SHA とワークフローが一致しません。");
+  }
   if (run.status !== "completed") throw new StandingMainCiPending();
   if (run.conclusion !== "success") throw new Error("現 main の CI が成功していません。");
   const { jobs, total_count } = jobList.parse(await read(`actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`));

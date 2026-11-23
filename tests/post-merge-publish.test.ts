@@ -76,7 +76,7 @@ function fixture({ current = task, issueBody = checked, openRelated = false, mal
     if (path === "issues/32/comments?per_page=100&page=1") return comments;
     if (path === "issues/comments/80") return comments[0];
     if (path === "actions/runs/96/attempts/1") {
-      return { id: 96, run_attempt: 1, path: verifiedRun ? ".github/workflows/post-merge.yml" : ".github/workflows/other.yml",
+      return { id: 96, run_attempt: 1, path: ".github/workflows/post-merge.yml@" + (verifiedRun ? "main" : "codex/other"),
         head_sha: current.mergeSha, head_branch: "main", event: "push", repository: repo, head_repository: repo };
     }
     if (path === "actions/runs/96/attempts/1/jobs?per_page=100") {

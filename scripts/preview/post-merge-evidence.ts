@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { z } from "zod";
-import { previewGitHubRequest, type PreviewGitHubRequest } from "./github";
+import { isTrustedMainWorkflowPath, previewGitHubRequest, type PreviewGitHubRequest } from "./github";
 import { isNativePreviewTaskBranch, milleRepositoryId } from "./native-identity";
 import { NativePilotVercel } from "./native-pilot-vercel";
 import { NeonPreview } from "./neon";
@@ -111,12 +111,10 @@ async function readWorkflowRuns(read: ReadGitHub, workflow: Workflow, mergeSha: 
   const { workflow_runs: runs, total_count: totalCount } = runList.parse(await read(
     `actions/workflows/${workflow}/runs?branch=main&head_sha=${mergeSha}&per_page=100`,
   ));
-  const expected = `.github/workflows/${workflow}`;
-  if (totalCount !== runs.length || new Set(runs.map(({ id }) => id)).size !== runs.length || runs.some(run => {
-    const [file, ref, ...rest] = run.path.split("@");
-    return run.head_sha !== mergeSha || (file !== expected && file !== `${repository}/${expected}`)
-      || (ref !== undefined && !["main", "refs/heads/main", mergeSha].includes(ref)) || rest.length > 0;
-  })) failed("provider-mismatch");
+  if (totalCount !== runs.length || new Set(runs.map(({ id }) => id)).size !== runs.length
+    || runs.some(run => run.head_sha !== mergeSha || !isTrustedMainWorkflowPath(run.path, workflow, mergeSha))) {
+    failed("provider-mismatch");
+  }
   return runs.filter(run => run.event === "push" || run.event === "workflow_dispatch").sort((a, b) => b.id - a.id);
 }
 
