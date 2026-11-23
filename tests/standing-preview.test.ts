@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BrowserProof } from "../scripts/cloud/verify";
-import { checkProtectedRuntime, publishFirstStandingPreview } from "../scripts/preview/standing";
+import { checkProtectedRuntime, publishStandingPreview, readStandingMainCi, StandingMainCiPending } from "../scripts/preview/standing";
 
 const sha = "a".repeat(40);
 const release = { id: "dpl_Release", sha, origin: "https://mille-release-fumin1.vercel.app" };
 const fixed = "https://mille-main-preview-fumin1.vercel.app";
 const binding = { uid: "alias_created", alias: "mille-main-preview-fumin1.vercel.app", projectId: "prj_Test", deploymentId: release.id } as const;
+const previous = { id: "dpl_Previous", sha: "b".repeat(40), origin: "https://mille-before-fumin1.vercel.app" };
+const previousBinding = { ...binding, uid: "alias_previous", deploymentId: previous.id };
 const baseline = { productionDeploymentId: "dpl_Production", productionSha: sha, legacyDeploymentId: "dpl_Legacy",
-  productionAliases: { "mille-hazel.vercel.app": "dpl_Production" } };
+  productionAliases: Object.fromEntries(["mille-hazel.vercel.app", "mille-fumin1.vercel.app", "mille-git-main-fumin1.vercel.app"]
+    .map(alias => [alias, "dpl_Production"])) as Record<"mille-hazel.vercel.app" | "mille-fumin1.vercel.app" | "mille-git-main-fumin1.vercel.app", string> };
 const db = { projectId: "billowing-cherry-59956184", branchId: "br-dark-rain-a1cc9tfa",
   endpointId: "ep-bitter-wind-a1atj6vn", host: "ep-bitter-wind-a1atj6vn.ap-southeast-1.aws.neon.tech" };
 
@@ -28,14 +31,24 @@ function browserProof(): BrowserProof {
   };
 }
 
-function setup({ existing = null, badProof = false, aliasUnprotected = false, changedDatabase = false, failedReadback = false }:
-  { existing?: typeof binding | null; badProof?: boolean; aliasUnprotected?: boolean; changedDatabase?: boolean; failedReadback?: boolean } = {}) {
+function setup({ existing = null, badProof = false, aliasUnprotected = false, changedDatabase = false, failedReadback = false,
+  allowFirstAssignment = true, badPreviousSha = false, delayedAlias }: {
+    existing?: { uid: string; alias: typeof binding.alias; projectId: string; deploymentId: string } | null;
+    badProof?: boolean; aliasUnprotected?: boolean; changedDatabase?: boolean; failedReadback?: boolean;
+    allowFirstAssignment?: boolean; badPreviousSha?: boolean; delayedAlias?: "missing" | "previous-sha";
+  } = {}) {
   const writes: string[] = [];
+  const waits: number[] = [];
   const reports: string[] = [];
   let alias = existing;
   let browsed = false;
-  const run = () => publishFirstStandingPreview(sha, {
+  let checkCount = 0;
+  const run = () => publishStandingPreview(sha, {
     verifyCurrent: async () => {},
+    verifyPriorMain: async prior => {
+      assert.equal(prior, previous.sha);
+      if (badPreviousSha) throw new Error("旧 SHA は main の祖先でありません");
+    },
     vercel: {
       preflight: async () => {},
       readBaseline: async () => baseline,
@@ -45,13 +58,18 @@ function setup({ existing = null, badProof = false, aliasUnprotected = false, ch
         writes.push("deploy");
         return release;
       },
-      readDeployment: async (id) => {
+      readDeployment: async (id, expectedSha) => {
+        if (id === previous.id) {
+          assert.ok(expectedSha === undefined || expectedSha === previous.sha);
+          return previous;
+        }
         if (id !== release.id) throw new Error("別デプロイの割り当て");
         return release;
       },
-      assignAlias: async (id, guard, onCreated) => {
+      assignAlias: async (id, guard, onCreated, prior) => {
         await guard();
         assert.equal(id, release.id);
+        assert.deepEqual(prior, existing);
         writes.push("assign");
         alias = binding;
         onCreated?.(binding);
@@ -64,12 +82,20 @@ function setup({ existing = null, badProof = false, aliasUnprotected = false, ch
         writes.push("remove");
         alias = null;
       },
+      restoreAlias: async (expected, old, guard) => {
+        await guard();
+        assert.deepEqual(expected, alias);
+        assert.deepEqual(old, previousBinding);
+        writes.push("restore");
+        alias = { ...old, uid: "alias_restored" };
+        return alias;
+      },
     },
     identifyDatabase: async () => changedDatabase && browsed ? { ...db, endpointId: "ep-other" } : db,
-    prepareDatabase: async (target, guard) => {
+    prepareDatabase: async (target, guard, initial) => {
       assert.deepEqual(target, db);
       await guard();
-      writes.push("migrate");
+      writes.push(initial ? "migrate" : "database-readback");
       return { mode: "hosted", environment: "preview", environmentId: "mille-preview", host: db.host,
         url: "postgresql://fixture:fixture@localhost/neondb" };
     },
@@ -82,16 +108,27 @@ function setup({ existing = null, badProof = false, aliasUnprotected = false, ch
       if (badProof) proof.target.runtimeSha = "b".repeat(40);
       return proof;
     },
-    checkRuntime: async (origin, runtimeSha) => {
+    checkRuntime: async (origin, runtimeSha, expectedPrior) => {
       if (origin === fixed) {
+        if (runtimeSha === previous.sha) {
+          assert.equal(alias?.deploymentId, previous.id);
+          return;
+        }
         assert.equal(runtimeSha, sha);
         assert.equal(alias?.deploymentId, release.id);
         writes.push("fixed");
         if (aliasUnprotected) throw new Error("固定 URL の保護");
+        if (delayedAlias && ++checkCount === 1) {
+          await checkProtectedRuntime(origin, sha, "short-test-token", async (_url, init) => {
+            if (delayedAlias === "missing") return new Response(null, { status: 404, headers: { "x-vercel-error": "DEPLOYMENT_NOT_FOUND" } });
+            if (new Headers(init?.headers).has("x-vercel-trusted-oidc-idp-token")) return Response.json({ app: "mille", sha: previous.sha });
+            return new Response(null, { status: 302, headers: { Location: "https://vercel.com/sso-api" } });
+          }, expectedPrior);
+        }
       }
     },
-  }, stage => reports.push(stage));
-  return { writes, reports, run, binding: () => alias };
+  }, stage => reports.push(stage), { allowFirstAssignment, wait: async duration => { waits.push(duration); } });
+  return { writes, reports, waits, run, binding: () => alias };
 }
 
 test("正式ブラウザの全ケースと実行時 SHA を確認してから初回の固定 URL を割り当てる", async () => {
@@ -135,6 +172,51 @@ test("同じ SHA の既存割り当ての再確認を許し、別デプロイへ
   const other = setup({ existing: { ...binding, deploymentId: "dpl_Other" } });
   await assert.rejects(other.run, /別デプロイ/);
   assert.deepEqual(other.writes, []);
+});
+
+test("main の祖先で保護済みの常設 Preview から、検証を終えた新しい SHA に固定 URL を更新する", async () => {
+  for (const delayedAlias of ["missing", "previous-sha"] as const) {
+    const f = setup({ existing: previousBinding, allowFirstAssignment: false, delayedAlias });
+    const proof = await f.run();
+    assert.equal(proof.release.sha, sha);
+    assert.equal(proof.alias.id, binding.uid);
+    assert.deepEqual(f.waits, [2_000]);
+    assert.deepEqual(f.writes, ["database-readback", "deploy", "browser", "assign", "fixed", "fixed"]);
+    assert.deepEqual(f.binding(), binding);
+  }
+});
+
+test("固定 URL が欠落または main の履歴と一致しない場合は自動変更せず、更新後の確認失敗時は旧デプロイを復元する", async () => {
+  const missing = setup({ allowFirstAssignment: false });
+  await assert.rejects(missing.run, /既存の固定 URL/);
+  assert.deepEqual(missing.writes, []);
+  const badSource = setup({ existing: previousBinding, badPreviousSha: true });
+  await assert.rejects(badSource.run, /main の祖先/);
+  assert.deepEqual(badSource.writes, []);
+  const failed = setup({ existing: previousBinding, aliasUnprotected: true });
+  await assert.rejects(failed.run, /固定 URL の保護/);
+  assert.deepEqual(failed.writes, ["database-readback", "deploy", "browser", "assign", "fixed", "restore"]);
+  assert.deepEqual(failed.waits, []);
+  assert.equal(failed.binding()?.deploymentId, previous.id);
+  assert.ok(failed.reports.includes("restored-alias"));
+});
+
+test("main CI の最新試行の run・実行 job・checkout 完了を照合する", async () => {
+  const repo = { id: 1436928292 };
+  const run = { id: 882, run_attempt: 2, head_branch: "main", head_sha: sha, event: "push", status: "completed",
+    conclusion: "success", path: ".github/workflows/ci.yml", repository: repo, head_repository: repo };
+  const check = { id: 209, run_id: 882, run_attempt: 2, head_sha: sha, name: "check", status: "completed", conclusion: "success",
+    steps: [{ name: "照合したソースとテスト対象を記録", status: "completed", conclusion: "success" }] };
+  const read = (runs: unknown[], job: unknown = check) => async (path: string) => {
+    if (path.startsWith("actions/workflows/ci.yml/runs?")) return { workflow_runs: runs };
+    assert.equal(path, "actions/runs/882/attempts/2/jobs");
+    return { total_count: 1, jobs: [job] };
+  };
+  assert.deepEqual(await readStandingMainCi(read([run]), sha), { runId: 882, attempt: 2, jobId: 209 });
+  await assert.rejects(readStandingMainCi(read([{ ...run, status: "in_progress", conclusion: null }, run]), sha), StandingMainCiPending);
+  await assert.rejects(readStandingMainCi(read([{ ...run, conclusion: "failure" }, run]), sha), /成功していません/);
+  await assert.rejects(readStandingMainCi(read([run], { ...check, head_sha: previous.sha }), sha), /checkout/);
+  await assert.rejects(readStandingMainCi(read([run], { ...check, steps: [] }), sha), /checkout/);
 });
 
 test("固定 URL の protection と実行時 SHA は同一 origin の GET で照合する", async () => {

@@ -89,6 +89,9 @@ test("001・002 と利用者を保持し、003・004 だけを既存ランナー
     if (!sql.startsWith("SELECT")) writes++;
     return query<Row>(sql, params);
   };
+  const readOnly = () => prepareStandingDatabase(apiKey, expected, { request, query: counted, allowInitialMigrations: false });
+  await assert.rejects(readOnly, /既存 DB の所有と移行履歴の照合/);
+  assert.equal(writes, 0);
   const prepare = () => prepareStandingDatabase(apiKey, expected, { request, query: counted,
     verifyCurrent: async () => { exactChecks++; } });
   const result = await prepare();
@@ -101,7 +104,7 @@ test("001・002 と利用者を保持し、003・004 だけを既存ランナー
   assert.deepEqual(after.slice(0, 2), before);
   assert.deepEqual(after.slice(2).map(item => item.name), ["003_meals.sql", "004_meal_api.sql"]);
   assert.deepEqual(await users(), existing);
-  await prepare();
+  await readOnly();
   assert.deepEqual(await history(), after);
   assert.equal(writes, 1);
 });

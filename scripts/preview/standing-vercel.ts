@@ -6,8 +6,10 @@ import { milleRepositoryId } from "./native-identity";
 import { assertPreviewVercelSource, type PreviewSourceFile, VercelPreview } from "./vercel";
 
 export const standingPreviewAlias = "mille-main-preview-fumin1.vercel.app";
-const productionAliases = ["mille-hazel.vercel.app", "mille-fumin1.vercel.app", "mille-git-main-fumin1.vercel.app"];
-const legacy = { id: "dpl_PzqN4fUewyF6MtViekWrhWSb5juw", url: "mille-hypzm5ss8-fumin1.vercel.app" };
+export const standingProductionAliases = ["mille-hazel.vercel.app", "mille-fumin1.vercel.app", "mille-git-main-fumin1.vercel.app"] as const;
+export const standingLegacyPreview = { deploymentId: "dpl_PzqN4fUewyF6MtViekWrhWSb5juw",
+  origin: "https://mille-hypzm5ss8-fumin1.vercel.app", sha: "7d8001aed54f1a1cec97f7071fbb31b4c9d99c2b" } as const;
+const legacyHostname = new URL(standingLegacyPreview.origin).hostname;
 const standingEndpoint = "ep-bitter-wind-a1atj6vn";
 const standingHost = `${standingEndpoint}.ap-southeast-1.aws.neon.tech`;
 const standingHostHash = createHash("sha256").update(standingHost).digest("hex");
@@ -70,6 +72,7 @@ type StandingAliasReceipt = {
   deploymentId: string;
   outcome: "acknowledgment-unknown" | "assignment-unverified" | "conflict-restored" | "conflict-unresolved";
   assignedAliasId?: string;
+  expectedDeploymentId?: string;
   previousDeploymentId?: string;
   displacedDeploymentId?: string;
   observedAlias?: AliasObservation;
@@ -77,9 +80,13 @@ type StandingAliasReceipt = {
 
 export class StandingAliasError extends Error {
   constructor(readonly receipt: StandingAliasReceipt) {
-    super("常設 Preview の固定エイリアスの初回割り当てを完了できません。");
+    super("常設 Preview の固定エイリアスの割り当てを完了できません。");
     this.name = "StandingAliasError";
   }
+}
+
+export class StandingProductionPending extends Error {
+  constructor() { super("最新 main の本番デプロイとエイリアスの反映を待っています。"); }
 }
 
 function parse<T>(schema: z.ZodType<T>, value: unknown, message: string): T {
@@ -134,31 +141,36 @@ export class StandingPreviewVercel {
     return item;
   }
 
-  async readBaseline() {
+  async readBaseline(expectedSha?: string) {
     const project = parse(projectSchema, await this.api(`/v9/projects/${this.config.projectId}`), "Vercel プロジェクトを照合できません。");
     if (project.id !== this.config.projectId || project.accountId !== this.config.teamId) {
       throw new Error("Vercel プロジェクトの所有が一致しません。");
     }
     const productionDeploymentId = project.targets.production.id;
     const [production, previous, ...aliasRecords] = await Promise.all([
-      this.ownedDeployment(productionDeploymentId), this.ownedDeployment(legacy.id),
-      ...productionAliases.map(async (name) => ({ name, value: await this.api(`/v4/aliases/${name}`) })),
+      this.ownedDeployment(productionDeploymentId), this.ownedDeployment(standingLegacyPreview.deploymentId),
+      ...standingProductionAliases.map(async (name) => ({ name, value: await this.api(`/v4/aliases/${name}`) })),
     ]);
-    if (previous.url !== legacy.url || previous.readyState !== "READY" || previous.target === "production" || previous.public) {
+    if (previous.url !== legacyHostname || previous.readyState !== "READY" || previous.target === "production" || previous.public) {
       throw new Error("既存の常設 Preview を照合できません。");
     }
-    if (production.readyState !== "READY" || production.target !== "production") {
+    if (production.target !== "production" || stopped.has(production.readyState)) {
       throw new Error("現用の本番デプロイを照合できません。");
     }
     const { sha: productionSha } = parse(mainGitSource, production.gitSource, "現用の本番デプロイの Git 出典を照合できません。");
     const aliases = aliasRecords.map(({ name, value }) => {
       const alias = parse(binding, value, "現用の本番エイリアスの形式を照合できません。");
-      if (alias.alias !== name || alias.projectId !== project.id || alias.deploymentId !== productionDeploymentId) {
+      if (alias.alias !== name || alias.projectId !== project.id) {
         throw new Error("現用の本番エイリアスの割り当てを照合できません。");
       }
       return [name, alias.deploymentId] as const;
     });
-    return { productionDeploymentId, productionSha, productionAliases: Object.fromEntries(aliases), legacyDeploymentId: previous.id };
+    const ready = production.readyState === "READY" && aliases.every(([, id]) => id === productionDeploymentId);
+    if (expectedSha !== undefined && (!ready || productionSha !== expectedSha)) throw new StandingProductionPending();
+    if (production.readyState !== "READY") throw new Error("現用の本番デプロイを照合できません。");
+    if (!ready) throw new Error("現用の本番エイリアスの割り当てを照合できません。");
+    return { productionDeploymentId, productionSha,
+      productionAliases: Object.fromEntries(aliases) as Record<typeof standingProductionAliases[number], string>, legacyDeploymentId: previous.id };
   }
 
   async readAlias(): Promise<StandingPreviewAlias | null> {
@@ -179,15 +191,15 @@ export class StandingPreviewVercel {
     const item = await this.ownedDeployment(id);
     const { milleStandingPreviewSha: sha } = parse(marker, item.meta, "常設 Preview のデプロイの所有情報が一致しません。");
     if (item.target === "production" || item.customEnvironment != null || item.public || item.gitSource != null
-      || item.url === standingPreviewAlias || item.url === legacy.url || productionAliases.includes(item.url)
+      || item.url === standingPreviewAlias || item.url === legacyHostname || standingProductionAliases.some(alias => alias === item.url)
       || (expectedSha !== undefined && sha !== expectedSha)) {
       throw new Error("常設 Preview の環境、固有 URL または SHA が一致しません。");
     }
     return { id: item.id, origin: `https://${item.url}`, sha, state: item.readyState };
   }
 
-  async readDeployment(id: string, sha: string, endpointId: string): Promise<StandingPreviewDeployment> {
-    parse(shaSchema, sha, "常設 Preview の SHA が無効です。");
+  async readDeployment(id: string, sha: string | undefined, endpointId: string): Promise<StandingPreviewDeployment> {
+    if (sha !== undefined) parse(shaSchema, sha, "常設 Preview の SHA が無効です。");
     if (endpointId !== standingEndpoint) throw new Error("常設 Preview の DB endpoint が一致しません。");
     const item = await this.standingDeployment(id, sha);
     if (item.state !== "READY") throw new Error("常設 Preview の READY を確認できません。");
@@ -282,16 +294,17 @@ export class StandingPreviewVercel {
     return this.readAlias().catch(() => undefined);
   }
 
-  private async restoreAliasConflict(created: StandingPreviewAlias, previousDeploymentId: string): Promise<never> {
+  private async restoreAliasConflict(created: StandingPreviewAlias, previousDeploymentId: string, expectedDeploymentId?: string): Promise<never> {
     let outcome: StandingAliasReceipt["outcome"] = "conflict-unresolved";
     let observed: StandingPreviewAlias | null | undefined;
     let displacedDeploymentId: string | undefined;
     try {
       await this.preflight();
-      const previous = await this.ownedDeployment(previousDeploymentId);
+      const previous = expectedDeploymentId ? await this.standingDeployment(previousDeploymentId) : await this.ownedDeployment(previousDeploymentId);
+      const protectedPreview = "state" in previous ? previous.state === "READY"
+        : previous.readyState === "READY" && previous.target !== "production" && !previous.public && previous.customEnvironment == null;
       observed = await this.observeAlias();
-      if (previous.id !== created.deploymentId && previous.readyState === "READY" && previous.target !== "production"
-        && !previous.public && previous.customEnvironment == null && observed && sameAlias(observed, created)) {
+      if (previous.id !== created.deploymentId && protectedPreview && observed && sameAlias(observed, created)) {
         // Vercel alias writes are unconditional. Re-read immediately before the single compensation attempt.
         const restored = await this.postAlias(previous.id);
         displacedDeploymentId = restored.oldDeploymentId ?? undefined;
@@ -302,29 +315,68 @@ export class StandingPreviewVercel {
       }
     } catch { observed = await this.observeAlias(); }
     throw new StandingAliasError({ alias: standingPreviewAlias, deploymentId: created.deploymentId, assignedAliasId: created.uid,
+      ...(expectedDeploymentId && { expectedDeploymentId }),
       previousDeploymentId, displacedDeploymentId, observedAlias: aliasObservation(observed), outcome });
   }
 
-  async assignAlias(deployment: string, verifyCurrent: VerifyCurrent, onCreated?: (alias: StandingPreviewAlias) => void): Promise<StandingPreviewAlias> {
+  async assignAlias(deployment: string, verifyCurrent: VerifyCurrent, onAssigned?: (alias: StandingPreviewAlias) => void,
+    previous: StandingPreviewAlias | null = null): Promise<StandingPreviewAlias> {
     await this.preflight();
     const item = await this.standingDeployment(deployment);
     if (item.state !== "READY") throw new Error("固定エイリアスを割り当てる READY デプロイを照合できません。");
+    if (previous) {
+      const current = await this.standingDeployment(previous.deploymentId);
+      if (current.state !== "READY" || current.id === item.id) throw new Error("固定エイリアスの更新元を照合できません。");
+    }
     await verifyCurrent();
-    if (await this.readAlias()) throw new Error("固定エイリアスに既存の割り当てがあります。");
+    const before = await this.readAlias();
+    if (previous ? !before || !sameAlias(before, previous) : before) {
+      throw new Error("固定エイリアスの既存の割り当てが一致しません。");
+    }
     const response = await this.postAlias(item.id).catch(() => undefined);
     const attempt = { alias: standingPreviewAlias, deploymentId: item.id } as const;
     if (!response) {
       throw new StandingAliasError({ ...attempt, outcome: "acknowledgment-unknown", observedAlias: aliasObservation(await this.observeAlias()) });
     }
     const created: StandingPreviewAlias = { ...attempt, uid: response.uid, projectId: this.config.projectId };
-    if (response.oldDeploymentId) return this.restoreAliasConflict(created, response.oldDeploymentId);
-    onCreated?.(created);
+    const displaced = response.oldDeploymentId ?? undefined;
+    if (displaced !== previous?.deploymentId) {
+      if (displaced) return this.restoreAliasConflict(created, displaced, previous?.deploymentId);
+      throw new StandingAliasError({ ...attempt, outcome: "conflict-unresolved", assignedAliasId: created.uid,
+        expectedDeploymentId: previous?.deploymentId, observedAlias: aliasObservation(await this.observeAlias()) });
+    }
+    onAssigned?.(created);
     const verified = await this.observeAlias();
     if (!verified || !sameAlias(verified, created)) {
       throw new StandingAliasError({ ...attempt, outcome: "assignment-unverified", assignedAliasId: created.uid,
         observedAlias: aliasObservation(verified) });
     }
     return verified;
+  }
+
+  async restoreAlias(assignedAlias: StandingPreviewAlias, previous: StandingPreviewAlias, verify: VerifyCurrent): Promise<StandingPreviewAlias> {
+    await this.preflight();
+    const previousItem = await this.standingDeployment(previous.deploymentId);
+    if (previousItem.state !== "READY" || previousItem.id === assignedAlias.deploymentId) {
+      throw new Error("復元する常設 Preview を照合できません。");
+    }
+    await verify();
+    const current = await this.readAlias();
+    if (!current || !sameAlias(current, assignedAlias)) throw new Error("復元前に固定エイリアスの割り当てが変わりました。");
+    const restored = await this.postAlias(previousItem.id).catch(() => undefined);
+    const displaced = restored?.oldDeploymentId;
+    if (restored && displaced && displaced !== current.deploymentId) {
+      const justRestored = { ...current, uid: restored.uid, deploymentId: previousItem.id };
+      return this.restoreAliasConflict(justRestored, displaced, current.deploymentId);
+    }
+    const observed = await this.observeAlias();
+    if (restored?.oldDeploymentId !== current.deploymentId || !observed || observed.uid !== restored.uid
+      || observed.deploymentId !== previousItem.id) {
+      throw new StandingAliasError({ alias: standingPreviewAlias, deploymentId: current.deploymentId, assignedAliasId: current.uid,
+        previousDeploymentId: previousItem.id, displacedDeploymentId: restored?.oldDeploymentId ?? undefined,
+        outcome: "conflict-unresolved", observedAlias: aliasObservation(observed) });
+    }
+    return observed;
   }
 
   async removeAlias(knownAlias: StandingPreviewAlias, verifyCurrent: VerifyCurrent): Promise<void> {

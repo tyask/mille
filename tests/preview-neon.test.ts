@@ -24,6 +24,7 @@ const ownership = {
 const role = { branch_id: child.id, name: config.role, protected: false };
 const database = { branch_id: child.id, name: config.database, owner_name: role.name };
 const host = "ep-pr-8.ap-southeast-1.aws.neon.tech";
+const childEndpoint = { id: "ep-pr-8", host, project_id: config.projectId, branch_id: child.id, type: "read_write", disabled: false };
 const uri = `postgresql://${role.name}:fake-password@${host}/${database.name}?sslmode=require`;
 const templateHost = "ep-template.ap-southeast-1.aws.neon.tech";
 const templateUri = `postgresql://neondb_owner:fake-template-password@${templateHost}/neondb?sslmode=require`;
@@ -58,6 +59,7 @@ function mockNeon(t: TestContext, options: {
   unexpectedTemplateDatabase?: boolean;
   nonemptyTemplateDatabase?: string;
   deleteLocked?: boolean;
+  endpointRemains?: boolean;
   createOperations?: readonly Record<string, unknown>[];
   roleOperations?: readonly Record<string, unknown>[];
   polledOperation?: Record<string, unknown>;
@@ -170,7 +172,13 @@ function mockNeon(t: TestContext, options: {
         return Response.json({ databases: databaseExists ? [{ ...database, owner_name: options.owner ?? role.name }] : [] });
       }
       if (path === `${childPath}/endpoints`) {
-        return Response.json({ endpoints: [{ id: "ep-pr-8", host, project_id: config.projectId, branch_id: child.id, type: "read_write", disabled: false }] });
+        return Response.json({ endpoints: [childEndpoint] });
+      }
+      if (path === "/endpoints") return Response.json({ endpoints: branchExists || options.endpointRemains ? [childEndpoint] : [] });
+      if (path === "/endpoints/ep-pr-8") {
+        return branchExists || options.endpointRemains
+          ? Response.json({ endpoint: childEndpoint })
+          : new Response(null, { status: 404 });
       }
       if (path === "/connection_uri") {
         if (url.searchParams.get("branch_id") === parent.id) {
@@ -310,4 +318,13 @@ test("Neon の削除を再試行する前に PR の再オープンを確認す�
   }), /PR reopened/);
   assert.equal(checks, 2);
   assert.deepEqual(fixture.writes, []);
+});
+
+test("Neon のブランチ削除後も専用 endpoint が残ると初回と再試行で確認を失敗させる", async t => {
+  const { writes } = mockNeon(t, { existing: true, endpointRemains: true });
+  const service = new NeonPreview(config);
+  await assert.rejects(service.remove(8), /専用資源を直接取得/);
+  await assert.rejects(service.remove(8), /専用資源を直接取得/);
+  await assert.rejects(service.hasPrPreviewBranches(8, "codex/pr-8"), /専用資源を直接取得/);
+  assert.deepEqual(writes, ["DELETE /branches/br-pr-8"]);
 });

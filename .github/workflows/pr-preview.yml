@@ -231,6 +231,9 @@ jobs:
           MILLE_PR_PREVIEW_NEON_TEMPLATE_ID: ${{ vars.MILLE_PR_PREVIEW_NEON_TEMPLATE_ID }}
           MILLE_PR_PREVIEW_MAX_BRANCHES: ${{ vars.MILLE_PR_PREVIEW_MAX_BRANCHES }}
         run: node --import tsx scripts/preview/manage.ts
+      - name: Confirm cleanup for ${{ matrix.target.sha }}
+        if: matrix.target.operation == 'cleanup' && steps.manage.outputs.cleanup_sha == matrix.target.sha
+        run: 'true'
   notify_result:
     needs: [prepare, notify_start, preview]
     if: >-

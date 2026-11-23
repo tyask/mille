@@ -54,7 +54,11 @@ const inventory = z.object({
   deployments: z.array(z.object({
     projectId: z.string(),
     uid: deploymentId,
-    meta: z.object({ millePreviewPr: z.string().optional() }).optional(),
+    meta: z.object({
+      millePreviewPr: z.string().optional(), milleNativePilotPr: z.string().optional(),
+      milleNativePilotRef: z.string().optional(), githubCommitRef: z.string().optional(), gitCommitRef: z.string().optional(),
+    }).optional(),
+    gitSource: z.object({ ref: z.string().optional() }).nullish(),
   })),
   pagination,
 });
@@ -208,8 +212,7 @@ export class VercelPreview {
     return deployment;
   }
 
-  private async deployments(pr: number): Promise<Deployment[]> {
-    const deployments: Deployment[] = [];
+  private async *inventory() {
     const seen = new Set<string>();
     let until: number | null = null;
     for (let page = 0; page < 100; page++) {
@@ -225,16 +228,35 @@ export class VercelPreview {
           throw new Error("Vercel Deployment の一覧が一致しません。");
         }
         seen.add(item.uid);
-        if (item.meta?.millePreviewPr !== String(pr)) continue;
-        const deployment = await this.deployment(item.uid, pr);
-        if (deployment) deployments.push(deployment);
+        yield item;
       }
       const next: number | null = result.pagination.next;
-      if (next === null) return deployments.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+      if (next === null) return;
       if (until !== null && next >= until) break;
       until = next;
     }
     throw new Error("Vercel Deployment の一覧を最後まで確認できません。");
+  }
+
+  private async deployments(pr: number): Promise<Deployment[]> {
+    const deployments: Deployment[] = [];
+    for await (const item of this.inventory()) {
+      if (item.meta?.millePreviewPr !== String(pr)) continue;
+      const deployment = await this.deployment(item.uid, pr);
+      if (deployment) deployments.push(deployment);
+    }
+    return deployments.sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
+  }
+
+  async hasPrPreviewDeployments(pr: number, ref: string): Promise<boolean> {
+    previewDatabaseEnvironmentId(pr);
+    await this.project();
+    for await (const { meta, gitSource, uid } of this.inventory()) {
+      if (meta?.milleNativePilotPr === String(pr) || [gitSource?.ref, meta?.githubCommitRef,
+        meta?.gitCommitRef, meta?.milleNativePilotRef].includes(ref)) return true;
+      if (meta?.millePreviewPr === String(pr) && await this.deployment(uid, pr)) return true;
+    }
+    return false;
   }
 
   private async ready(id: string, target: { number: number; sha: string }, hostHash: string, verify: VerifyCurrent) {

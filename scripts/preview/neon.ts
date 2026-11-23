@@ -119,7 +119,7 @@ const nativeBranchDetails = z.object({ branch: branch.extend({ created_at: z.iso
 const terminalCursor = z.union([z.literal(""), z.null()]).optional();
 const completeInventory = z.object({ next: terminalCursor, cursor: terminalCursor }).nullish();
 const nativeBranchInventory = z.object({ branches: z.array(branch), pagination: completeInventory });
-const nativeEndpointInventory = z.object({ endpoints: z.array(endpoint), pagination: completeInventory });
+const endpointInventory = z.object({ endpoints: z.array(endpoint), pagination: completeInventory });
 const nativeIdentity = z.object({ id: branchId, endpointId: endpointIdentifier, host: z.string() });
 const connectionUri = z.object({ uri: z.string() });
 
@@ -480,7 +480,7 @@ export class NeonPreview {
       throw new Error("Neon Native Preview の常設接続先が一致しません。");
     }
     const names = new Set(pilotRefs.map(ref => nativeBranchName(ref)));
-    const [inventory, endpoints] = await Promise.all([this.#nativeBranches(), this.#nativeEndpoints()]);
+    const [inventory, endpoints] = await Promise.all([this.#nativeBranches(), this.#projectEndpoints()]);
     if (!inventory.some(item => item.id === template.id) || !inventory.some(item => item.id === standing.id)) {
       throw new Error("Neon Native Preview の分岐元と常設ブランチを一覧で確認できません。");
     }
@@ -503,11 +503,11 @@ export class NeonPreview {
     return branches;
   }
 
-  async #nativeEndpoints() {
-    const { endpoints } = await this.#request("/endpoints", nativeEndpointInventory);
+  async #projectEndpoints() {
+    const { endpoints } = await this.#request("/endpoints", endpointInventory);
     if (new Set(endpoints.map(item => item.id)).size !== endpoints.length
       || endpoints.some(item => item.project_id !== this.#config.projectId)) {
-      throw new Error("Neon Native Preview の接続先一覧を照合できません。");
+      throw new Error("Neon のプロジェクト内の接続先一覧を照合できません。");
     }
     return endpoints;
   }
@@ -596,14 +596,14 @@ export class NeonPreview {
     });
   }
 
-  async #requireNativeAbsent<T>(path: string, schema: z.ZodType<T>): Promise<void> {
+  async #requireResourceAbsent<T>(path: string, schema: z.ZodType<T>): Promise<void> {
     try {
       await this.#request(path, schema);
     } catch (error) {
       if (error instanceof NeonRequestError && error.status === 404) return;
       throw error;
     }
-    throw new Error("Neon Native Preview の専用資源を直接取得できる状態です。");
+    throw new Error("Neon Preview の専用資源を直接取得できる状態です。");
   }
 
   async removeNativeBranch(
@@ -647,14 +647,14 @@ export class NeonPreview {
   async #confirmNativeBranchAbsent(
     name: string, { branchId, endpointId }: { branchId: string; endpointId: string }, host?: string,
   ): Promise<void> {
-    const [remaining, endpoints] = await Promise.all([this.#nativeBranches(), this.#nativeEndpoints()]);
+    const [remaining, endpoints] = await Promise.all([this.#nativeBranches(), this.#projectEndpoints()]);
     if (remaining.some(item => item.id === branchId || item.parent_id === branchId || item.name === name)
       || endpoints.some(item => item.id === endpointId || item.branch_id === branchId || item.host === host)) {
       throw new Error("Neon Native Preview の専用資源が一覧に残っています。");
     }
     await Promise.all([
-      this.#requireNativeAbsent(`/branches/${branchId}`, branchDetails),
-      this.#requireNativeAbsent(`/endpoints/${endpointId}`, z.object({ endpoint })),
+      this.#requireResourceAbsent(`/branches/${branchId}`, branchDetails),
+      this.#requireResourceAbsent(`/endpoints/${endpointId}`, z.object({ endpoint })),
     ]);
   }
 
@@ -669,6 +669,19 @@ export class NeonPreview {
     }
     const { id: endpointId, host } = await this.#writableEndpoint(id);
     return { id, endpointId, host };
+  }
+
+  async #branchesWithNoOrphanedEndpoints() {
+    // Read endpoints first so a concurrently created branch can appear in the later inventory.
+    const endpoints = await this.#projectEndpoints();
+    const branches = await this.#branches();
+    const branchIds = new Set(branches.map(item => item.id));
+    for (const item of endpoints) {
+      if (!branchIds.has(item.branch_id)) {
+        await this.#requireResourceAbsent(`/endpoints/${item.id}`, z.object({ endpoint }));
+      }
+    }
+    return branches;
   }
 
   async ensure(pr: number, verifyCurrent?: VerifyCurrent, migrations?: readonly MigrationSource[]) {
@@ -738,10 +751,20 @@ export class NeonPreview {
     await this.preflight();
     const inventory = await this.#branches();
     const matches = inventory.filter(item => item.name === name);
-    if (!matches.length) return;
+    if (!matches.length) {
+      if ((await this.#branchesWithNoOrphanedEndpoints()).some(item => item.name === name)) {
+        throw new Error("Neon PR 専用ブランチが再照合時に見つかりました。");
+      }
+      return;
+    }
     if (matches.length !== 1) throw new Error("Neon PR 専用ブランチを一意に特定できません。");
     const { id } = await this.#ownedBranch(matches[0].id, name, pr);
     if (inventory.some(item => item.parent_id === id)) throw new Error("Neon PR 専用ブランチに子が存在します。");
+    const { endpoints } = await this.#request(`/branches/${id}/endpoints`, branchEndpoints);
+    if (new Set(endpoints.map(item => item.id)).size !== endpoints.length
+      || endpoints.some(item => item.project_id !== this.#config.projectId || item.branch_id !== id)) {
+      throw new Error("削除対象の Neon PR 専用エンドポイントを照合できません。");
+    }
     const removed = await this.#request(`/branches/${id}`, branchChange, "DELETE", undefined, verifyCurrent);
     this.#assertBranch(removed.branch, name);
     if (removed.branch.id !== id) throw new Error("削除した Neon ブランチを照合できません。");
@@ -751,12 +774,18 @@ export class NeonPreview {
     if (remaining.some(item => item.id === id || item.name === name)) {
       throw new Error("Neon PR 専用ブランチが一覧に残っています。");
     }
-    try {
-      await this.#request(`/branches/${id}`, branchDetails);
-    } catch (error) {
-      if (error instanceof NeonRequestError && error.status === 404) return;
-      throw error;
+    await Promise.all([
+      this.#requireResourceAbsent(`/branches/${id}`, branchDetails),
+      ...endpoints.map(item => this.#requireResourceAbsent(`/endpoints/${item.id}`, z.object({ endpoint }))),
+    ]);
+  }
+
+  async hasPrPreviewBranches(pr: number, ref: string): Promise<boolean> {
+    const names = [previewDatabaseEnvironmentId(pr), nativeBranchName(ref)];
+    const { project } = await this.#request("", z.object({ project: z.object({ id: identifier, name: z.string() }) }));
+    if (project.id !== this.#config.projectId || project.name !== projectName) {
+      throw new Error("Neon の PR 専用プロジェクトが一致しません。");
     }
-    throw new Error("Neon PR 専用ブランチを直接取得できる状態です。");
+    return (await this.#branchesWithNoOrphanedEndpoints()).some(item => names.includes(item.name));
   }
 }
