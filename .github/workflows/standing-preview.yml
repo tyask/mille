@@ -1,9 +1,11 @@
 name: Mille Standing Preview
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       sha:
-        description: Exact current main SHA for the first standing Preview release
+        description: Exact current main SHA for standing Preview verification and release
         type: string
         required: true
 permissions: {}
@@ -14,10 +16,10 @@ concurrency:
 jobs:
   release:
     name: Verify and assign the standing Preview
-    if: github.repository == 'tyask/mille' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    if: github.repository == 'tyask/mille' && github.ref == 'refs/heads/main'
     environment: mille-pr-preview
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     permissions:
       actions: read
       contents: read
@@ -42,12 +44,11 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci --ignore-scripts
-      - name: Check the current main, migrate the standing DB and verify the release
+      - name: Check main, verify the standing DB and publish the verified Preview
         env:
           GH_TOKEN: ${{ github.token }}
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
-          MILLE_STANDING_PREVIEW_SHA: ${{ inputs.sha }}
           MILLE_PR_PREVIEW_VERCEL_PROJECT_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_PROJECT_ID }}
           MILLE_PR_PREVIEW_VERCEL_TEAM_ID: ${{ vars.MILLE_PR_PREVIEW_VERCEL_TEAM_ID }}
         run: node --import tsx scripts/preview/standing.ts
@@ -55,7 +56,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: mille-standing-preview-${{ inputs.sha }}
+          name: mille-standing-preview-${{ github.run_id }}-${{ github.run_attempt }}
           path: .mille/cloud/standing-preview-proof.json
           include-hidden-files: true
           if-no-files-found: error

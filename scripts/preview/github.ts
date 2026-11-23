@@ -16,20 +16,8 @@ export function previewGitHubHttpStatus(error: unknown): number | undefined {
   return undefined;
 }
 
-export async function previewContext() {
-  const { GITHUB_REPOSITORY, GITHUB_REF, GITHUB_WORKFLOW_REF, GITHUB_EVENT_NAME,
-    GITHUB_EVENT_PATH, GITHUB_SHA, GH_TOKEN } = process.env;
-  if (GITHUB_REPOSITORY !== "tyask/mille" || GITHUB_REF !== "refs/heads/main"
-    || GITHUB_WORKFLOW_REF !== "tyask/mille/.github/workflows/pr-preview.yml@refs/heads/main"
-    || (GITHUB_EVENT_NAME !== "workflow_run" && GITHUB_EVENT_NAME !== "push" && GITHUB_EVENT_NAME !== "workflow_dispatch")
-    || !GITHUB_EVENT_PATH || !GITHUB_SHA || !/^[a-f0-9]{40}$/.test(GITHUB_SHA) || !GH_TOKEN) {
-    throw new Error("管理処理の実行元が一致しません。");
-  }
-
-  const controlSha = GITHUB_SHA;
-  const token = GH_TOKEN;
-  const event: unknown = JSON.parse(await readFile(GITHUB_EVENT_PATH, "utf8"));
-  const request: PreviewGitHubRequest = async (path, mutation) => {
+export function previewGitHubRequest(token: string): PreviewGitHubRequest {
+  return async (path, mutation) => {
     const response = await fetch(`https://api.github.com/repos/tyask/mille/${path}`, {
       method: mutation?.method,
       body: mutation ? JSON.stringify(mutation.body) : undefined,
@@ -45,6 +33,22 @@ export async function previewContext() {
     if (!response.ok) throw new PreviewGitHubHttpError(response.status);
     return response.json().catch(() => { throw new PreviewGitHubHttpError(response.status); });
   };
+}
+
+export async function previewContext() {
+  const { GITHUB_REPOSITORY, GITHUB_REF, GITHUB_WORKFLOW_REF, GITHUB_EVENT_NAME,
+    GITHUB_EVENT_PATH, GITHUB_SHA, GH_TOKEN } = process.env;
+  if (GITHUB_REPOSITORY !== "tyask/mille" || GITHUB_REF !== "refs/heads/main"
+    || GITHUB_WORKFLOW_REF !== "tyask/mille/.github/workflows/pr-preview.yml@refs/heads/main"
+    || (GITHUB_EVENT_NAME !== "workflow_run" && GITHUB_EVENT_NAME !== "push" && GITHUB_EVENT_NAME !== "workflow_dispatch")
+    || !GITHUB_EVENT_PATH || !GITHUB_SHA || !/^[a-f0-9]{40}$/.test(GITHUB_SHA) || !GH_TOKEN) {
+    throw new Error("管理処理の実行元が一致しません。");
+  }
+
+  const controlSha = GITHUB_SHA;
+  const token = GH_TOKEN;
+  const event: unknown = JSON.parse(await readFile(GITHUB_EVENT_PATH, "utf8"));
+  const request = previewGitHubRequest(token);
   const read = (path: string) => request(path);
 
   async function targets() {

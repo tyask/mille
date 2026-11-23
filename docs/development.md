@@ -49,6 +49,24 @@ draft PR の本文には、承認済み Issue と Intent へのリンク、変�
 
 Ready に必要な検証の不足、SHA の不一致、更新・再取得の失敗がある場合は、確認済みの項目と未完了の項目を報告する。再開時は両方を再取得し、保存済みの状態を確認して残る操作から再開する。
 
+## マージ後確認
+
+案件を進める PR は、関連 Issue の通常リンクとともに、次の形式でマージ後確認の対象を指定する。Issue 番号とマージに含まれる凍結済み Intent のパスを使う。分割 PR では `completesIssue` を `false` にする。`true` は案件の完了を明示する最終 PR で使う。GitHub の自動クローズ用キーワードによる完了処理は使用しない。
+
+```text
+<!-- mille-task/v1 {"issue":32,"intent":"aidlc/spaces/default/intents/261123-post-merge","completesIssue":false,"manualPostMerge":false} -->
+```
+
+人によるマージ後確認が必要な場合は `manualPostMerge` を `true` にする。対象 PR の自動検証結果が Issue に揃った後、担当者が手動結果と証拠を追記し、残る受入条件を確認して案件を完了する。過去の関連 PR でも手動確認の指定があれば自動完了を保留する。
+
+**Mille Post Merge** は `main` の push を受け、PR HEAD と merge SHA を照合する。merge SHA の main CI、本番デプロイと3エイリアス、[常設 Preview](standing-preview.md#継続更新) の正式証跡と固定 URL、PR 専用資源の削除ジョブと管理 API での不在を確認する。結果を試行ごとの artifact と、Issue の PR 別確認履歴に保存する。新しい `main` が公開された場合、以前の SHA の確認はその状態を記録する。マージ後の確認が失敗した場合は Actions の対象試行を確認し、まだ現在の `main` であれば PR 番号を指定して再実行できる。
+
+```sh
+gh workflow run post-merge.yml --repo tyask/mille --ref main -f pr="<マージ済み PR 番号>"
+```
+
+完了指定の PR と先行する案件 PR の確認が成功し、進行中の関連 PR や手動確認の指定がなく、Issue の受入条件がすべてチェック済みであることを確認した場合に Issue を完了する。 [Cake のマージ後手順](https://github.com/tyask/Cake/blob/5975e5f20d9eb755d991b8725840feab0b778d65/docs/development-workflow.md#L655-L674)
+
 ## Cloud タスクの開始
 
 [Issue #5](https://github.com/tyask/mille/issues/5) の開始手順を使う。

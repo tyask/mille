@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { StandingAliasError, standingPreviewAlias, type StandingPreviewAlias, StandingPreviewVercel } from "../scripts/preview/standing-vercel";
+import { StandingAliasError, standingPreviewAlias, type StandingPreviewAlias,
+  StandingPreviewVercel, StandingProductionPending } from "../scripts/preview/standing-vercel";
 
 const config = { token: "fixture-vercel-token", projectId: "prj_Standing", teamId: "team_Standing" };
 const mainSha = "a".repeat(40);
@@ -87,6 +88,9 @@ test("既存の常設デプロイと GitHub main の本番デプロイ・エイ�
   const alias = `/v4/aliases/${liveAliases[0]}`;
   responses.set(alias, { ...(responses.get(alias) as object), deploymentId: previous });
   await assert.rejects(vercel.readBaseline(), /本番エイリアス/);
+  await assert.rejects(vercel.readBaseline(mainSha), StandingProductionPending);
+  responses.set(alias, { ...(responses.get(alias) as object), projectId: "prj_Unexpected" });
+  await assert.rejects(vercel.readBaseline(mainSha), /本番エイリアス/);
 });
 
 test("常設 Preview を自動エイリアスなしで作成し、同じ SHA の READY を再利用する", async () => {
@@ -158,6 +162,61 @@ test("固定エイリアスだけを初回に作成し、確認済みの UID だ
   await vercel.removeAlias(createdAlias, verify);
   assert.equal(await vercel.readAlias(), null);
   assert.deepEqual(calls.filter(call => call.method === "DELETE"), [{ method: "DELETE", path: `/v2/aliases/${createdAlias.uid}`, body: undefined }]);
+});
+
+test("固定エイリアスの更新と復元は照合済みの前後の参照先に限る", async () => {
+  const prev = { ...createdAlias, deploymentId: "dpl_ManagedPrior", uid: "prior_alias" };
+  const priorPath = `/v2/deployments/${prev.deploymentId}/aliases`;
+  const prevSha = "b".repeat(40);
+  const { vercel, calls, responses, aliasPath } = providers();
+  responses.set(`/v13/deployments/${prev.deploymentId}`, { ...details, id: prev.deploymentId,
+    url: "mille-managed-prior.vercel.app", meta: { ...marker, milleStandingPreviewSha: prevSha } });
+  responses.set(aliasPath, prev);
+  assert.equal((await vercel.readDeployment(prev.deploymentId, undefined, endpointId)).sha, prevSha);
+  await assert.rejects(vercel.assignAlias(deployment, verify, undefined, { ...prev, uid: "other" }), /既存の割り当て/);
+  responses.set(`POST ${assignedPath}`, () => {
+    responses.set(aliasPath, createdAlias);
+    return Response.json({ uid: createdAlias.uid, alias: standingPreviewAlias, oldDeploymentId: prev.deploymentId });
+  });
+  let assigned: StandingPreviewAlias | undefined;
+  assert.deepEqual(await vercel.assignAlias(deployment, verify, alias => { assigned = alias; }, prev), createdAlias);
+  assert.deepEqual(assigned, createdAlias);
+  responses.set(aliasPath, { ...createdAlias, uid: "other" });
+  await assert.rejects(vercel.restoreAlias(createdAlias, prev, verify), /割り当てが変わりました/);
+  const restored = { ...prev, uid: "restored_alias" };
+  responses.set(aliasPath, createdAlias);
+  responses.set(`POST ${priorPath}`, () => {
+    responses.set(aliasPath, restored);
+    return Response.json({ uid: restored.uid, alias: standingPreviewAlias, oldDeploymentId: deployment });
+  });
+  assert.deepEqual(await vercel.restoreAlias(createdAlias, prev, verify), restored);
+  assert.deepEqual(calls.filter(call => call.method !== "GET").map(call => call.path), [assignedPath, priorPath]);
+});
+
+test("継続の割り当てが競合した場合は、実際に押し出した管理済み常設へだけ戻す", async () => {
+  for (const managed of [true, false]) {
+    const expectedBefore = { ...createdAlias, deploymentId: "dpl_ManagedPrior" };
+    const duringWrite = { ...createdAlias, deploymentId: "dpl_Concurrent" };
+    const racedPath = `/v2/deployments/${duringWrite.deploymentId}/aliases`;
+    const { vercel, calls, responses, aliasPath } = providers();
+    responses.set(`/v13/deployments/${expectedBefore.deploymentId}`, { ...details, id: expectedBefore.deploymentId,
+      url: "mille-expected-before.vercel.app", meta: { ...marker, milleStandingPreviewSha: "b".repeat(40) } });
+    responses.set(`/v13/deployments/${duringWrite.deploymentId}`, { ...details, id: duringWrite.deploymentId,
+      url: "mille-during-write.vercel.app", meta: managed ? { ...marker, milleStandingPreviewSha: "c".repeat(40) } : undefined });
+    responses.set(aliasPath, expectedBefore);
+    responses.set(`POST ${assignedPath}`, () => {
+      responses.set(aliasPath, createdAlias);
+      return Response.json({ uid: createdAlias.uid, alias: standingPreviewAlias, oldDeploymentId: duringWrite.deploymentId });
+    });
+    responses.set(`POST ${racedPath}`, () => {
+      responses.set(aliasPath, duringWrite);
+      return Response.json({ uid: duringWrite.uid, alias: standingPreviewAlias, oldDeploymentId: deployment });
+    });
+    await assert.rejects(vercel.assignAlias(deployment, verify, () => assert.fail("通常の更新として扱いました"), expectedBefore),
+      error => error instanceof StandingAliasError && error.receipt.outcome === (managed ? "conflict-restored" : "conflict-unresolved")
+        && error.receipt.expectedDeploymentId === expectedBefore.deploymentId && error.receipt.previousDeploymentId === duringWrite.deploymentId);
+    assert.deepEqual(calls.filter(call => call.method !== "GET").map(call => call.path), managed ? [assignedPath, racedPath] : [assignedPath]);
+  }
 });
 
 test("作成後の読み戻しに失敗しても、取り消しに使う作成済み UID を返す", async () => {

@@ -34,6 +34,11 @@ async function publishReady(number: number, sha: string, deployment: { id: strin
   }
 }
 
+async function publishCleanup(sha: string, verifyCurrent: () => Promise<void>) {
+  await verifyCurrent();
+  if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, `cleanup_sha=${sha}\n`);
+}
+
 let stage = "実行元と PR の照合";
 async function main() {
   const target = previewTargetSchema.parse(JSON.parse(process.env.MILLE_PR_PREVIEW_TARGET ?? ""));
@@ -91,6 +96,7 @@ async function main() {
     const line = `PR #${target.number} (${target.sha}) の Native Preview 試験用資源を整理しました。`;
     if (summary) await appendFile(summary, `${line}\n`);
     console.log(line);
+    await publishCleanup(target.sha, verifyCurrent);
     return;
   }
   const vercel = new VercelPreview({
@@ -105,6 +111,7 @@ async function main() {
     stage = "PR 専用 Neon ブランチの削除";
     await neon.remove(target.number, verifyCurrent);
     if (summary) await appendFile(summary, `PR #${target.number} (${target.sha}) の専用リソースを整理しました。\n`);
+    await publishCleanup(target.sha, verifyCurrent);
     return;
   }
 

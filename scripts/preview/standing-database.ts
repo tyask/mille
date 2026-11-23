@@ -32,7 +32,9 @@ const databaseDetails = z.object({ databases: z.tuple([z.object({ id: z.literal(
 const migrationHistory = z.array(z.object({ name: z.string(), sha256: z.string(), applied_at: z.string().min(1) }));
 
 export type StandingDatabaseIdentity = { projectId: string; branchId: string; endpointId: string; host: string };
-type StandingDatabaseOptions = { request?: typeof fetch; query?: Query; verifyCurrent?: () => Promise<void> };
+export const standingDatabaseResourceSchema = z.strictObject({ projectId: z.literal(projectId), branchId: z.literal(branchId),
+  endpointId: z.literal(endpointId) });
+type StandingDatabaseOptions = { request?: typeof fetch; query?: Query; verifyCurrent?: () => Promise<void>; allowInitialMigrations?: boolean };
 
 async function readNeon<T>(apiKey: string, path: string, schema: z.ZodType<T>, request: typeof fetch): Promise<T> {
   try {
@@ -112,7 +114,8 @@ $mille_standing_preview$;`);
 }
 
 export async function prepareStandingDatabase(
-  apiKey: string, expected: StandingDatabaseIdentity, { request = fetch, query: testQuery, verifyCurrent }: StandingDatabaseOptions = {},
+  apiKey: string, expected: StandingDatabaseIdentity,
+  { request = fetch, query: testQuery, verifyCurrent, allowInitialMigrations = true }: StandingDatabaseOptions = {},
 ) {
   let stage = "承認済み SQL の照合";
   try {
@@ -140,6 +143,7 @@ export async function prepareStandingDatabase(
     stage = "既存 DB の所有と移行履歴の照合";
     await verifyDatabaseOwnership(query, configuration);
     const before = await readHistory(query);
+    if (!allowInitialMigrations && before.length !== allowedMigrations.length) throw new Error();
     stage = "移行前の実行元と接続先の再照合";
     await verifyIdentity();
     await verifyCurrent?.();
