@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./workspaces.css";
+import "./meals.css";
 
 export const metadata: Metadata = {
   title: "Mille — 食卓の、その先へ。",
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#f6f5ee",
+  themeColor: "#FBF6EA",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -5,6 +5,8 @@ import { signOut } from "next-auth/react";
 import type { AppUser } from "@/lib/shared/types";
 import type { IssuedInvitation, JoinedWorkspace, Workspace, WorkspaceState, WorkspaceType } from "@/lib/shared/workspaces";
 import { Brand } from "./brand";
+import { MealApp, type MealNavigationBlock, type MealSelection } from "./meals/meal-app";
+import { readMealLocation, writeMealLocation, type WorkspacePane } from "./meals/meal-location";
 import { WorkspaceIcon as Icon } from "./workspace-icons";
 
 export async function workspaceRequest<T>(url: string, method = "GET", body?: unknown): Promise<T> {
@@ -84,9 +86,19 @@ function InviteDialog({ workspace, busy, error, onClose, mutate }: { workspace: 
   return <Dialog title="メンバーを招待" busy={busy} error={error} onClose={onClose} testId="workspace-invite-dialog"><p className="ws-dialog-description">「{workspace.name}」に、一緒に使う相手を招待します。指定したメールアドレスでログインした方だけが参加できます。</p><form onSubmit={submit}><label className="ws-label" htmlFor="ws-invite-email">相手のメールアドレス</label><input className="ws-input" id="ws-invite-email" data-testid="workspace-invite-email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); setIssued(null); }} required maxLength={254} placeholder="partner@example.com" disabled={busy} autoFocus /><p className="ws-hint">同じ宛先に再発行すると、以前のリンクは無効になります。</p>{!issued && <button className="ws-button ws-button-primary ws-button-full" disabled={busy || !email.trim()} data-testid="workspace-invite-submit"><Icon name="link" />招待リンクを発行</button>}</form>{issued && <div className="ws-invite-result"><p className="ws-success-label"><Icon name="check" />招待リンクを発行しました</p><label className="ws-sr-only" htmlFor="ws-invitation-link">招待リンク</label><input className="ws-input" id="ws-invitation-link" data-testid="workspace-invitation-link" value={issued.url} readOnly onFocus={(event) => event.target.select()} /><button className="ws-button ws-button-primary ws-button-full" type="button" onClick={() => void copy()}><Icon name={copied ? "check" : "copy"} />{copied ? "コピーしました" : "リンクをコピー"}</button><p className="ws-hint">有効期限：{workspaceDate(issued.expiresAt)}（日本時間）</p>{copyError && <p className="ws-inline-error" role="alert">コピーできませんでした。リンクを選択してコピーしてください。</p>}</div>}<div className="ws-quiet-note"><Icon name="mail" /><p>メールは自動送信されません。リンクをコピーして、相手に送ってください。</p></div></Dialog>;
 }
 
-export default function WorkspaceApp({ user, initialState, initialWorkspaceId }: { user: AppUser; initialState: WorkspaceState; initialWorkspaceId?: string }) {
+export default function WorkspaceApp({ user, initialState, initialWorkspaceId, initialLocation }: {
+  user: AppUser;
+  initialState: WorkspaceState;
+  initialWorkspaceId?: string;
+  initialLocation: ReturnType<typeof readMealLocation>;
+}) {
   const [state, setState] = useState(initialState);
-  const [activeId, setActiveId] = useState(initialWorkspaceId || initialState.workspaces[0]?.id || "");
+  const [activeId, setActiveId] = useState(initialState.workspaces.find(workspace => workspace.id === initialWorkspaceId)?.id
+    ?? initialState.workspaces[0]?.id ?? "");
+  const [location, setLocation] = useState(initialLocation);
+  const [mealRefresh, setMealRefresh] = useState(0);
+  const [mealEpoch, setMealEpoch] = useState(0);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -97,27 +109,73 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId }:
   const requestSequence = useRef(0);
   const selectionSequence = useRef(0);
   const mutationPending = useRef(false);
+  const mealBlock = useRef<MealNavigationBlock>(null);
+  const historyIndex = useRef(0);
+  const restoringHistory = useRef(false);
   const active = state.workspaces.find((workspace) => workspace.id === activeId) || state.workspaces[0];
   const storageKey = `mille:workspace:${user.id}`;
+  const settings = location.pane === "settings" || !active;
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      let stored = initialWorkspaceId;
+      let stored = initialState.workspaces.find(workspace => workspace.id === initialWorkspaceId)?.id;
       if (!stored) {
         try { stored = localStorage.getItem(storageKey) || undefined; } catch { /* Optional preference storage. */ }
       }
-      if (stored && initialState.workspaces.some((workspace) => workspace.id === stored)) {
-        setActiveId(stored);
-        try { localStorage.setItem(storageKey, stored); } catch { /* Optional preference storage. */ }
-        if (initialWorkspaceId) {
-          const url = new URL(window.location.href);
-          url.searchParams.delete("workspace");
-          window.history.replaceState(window.history.state, "", `${url.pathname}${url.search}${url.hash}`);
-        }
-      }
+      const preferred = initialState.workspaces.find(workspace => workspace.id === stored) ?? initialState.workspaces[0];
+      if (preferred) rememberWorkspace(storageKey, preferred.id);
+      const previousIndex = window.history.state?.milleMealIndex;
+      historyIndex.current = typeof previousIndex === "number" ? previousIndex : 0;
+      writeMealLocation(preferred?.id ?? "", initialLocation.selection, initialLocation.pane, historyIndex.current, true);
+      setActiveId(preferred?.id ?? "");
+      setPreferencesReady(true);
     });
     return () => cancelAnimationFrame(frame);
-  }, [initialState.workspaces, initialWorkspaceId, storageKey]);
+  }, [initialState.workspaces, initialWorkspaceId, initialLocation, storageKey]);
+
+  useEffect(() => {
+    function onPop(event: PopStateEvent) {
+      if (restoringHistory.current) {
+        restoringHistory.current = false;
+        return;
+      }
+      const nextIndex = event.state?.milleMealIndex;
+      if (!allowsMealNavigation(mealBlock.current)) {
+        if (typeof nextIndex === "number" && nextIndex !== historyIndex.current) {
+          restoringHistory.current = true;
+          window.history.go(historyIndex.current - nextIndex);
+        } else {
+          writeMealLocation(active?.id ?? "", location.selection, location.pane, historyIndex.current, true);
+        }
+        return;
+      }
+      if (typeof nextIndex === "number") historyIndex.current = nextIndex;
+      const params = new URL(window.location.href).searchParams;
+      const next = readMealLocation(key => params.get(key));
+      const requested = state.workspaces.find(workspace => workspace.id === params.get("workspace"));
+      if (requested) {
+        selectionSequence.current += 1;
+        setActiveId(requested.id);
+        rememberWorkspace(storageKey, requested.id);
+      }
+      if (mealBlock.current) setMealEpoch(previous => previous + 1);
+      mealBlock.current = null;
+      setLocation(next);
+      setMobileOpen(false);
+    }
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      if (mealBlock.current) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    }
+    window.addEventListener("popstate", onPop);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [active?.id, location, state.workspaces, storageKey]);
 
   useEffect(() => {
     const mobileViewport = window.matchMedia("(max-width: 700px)");
@@ -136,15 +194,45 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId }:
     return () => { document.removeEventListener("keydown", onKeyDown); if (previousFocus instanceof HTMLElement) previousFocus.focus(); };
   }, [mobileOpen]);
 
-  function selectWorkspace(id: string) { selectionSequence.current += 1; setActiveId(id); setMobileOpen(false); try { localStorage.setItem(storageKey, id); } catch { /* Optional browser preference. */ } }
-  function openDialog(next: DialogState) { if (refreshing || loggingOut) return; setError(""); setNotice(""); setDialog(next); setMobileOpen(false); }
+  function selectWorkspace(id: string) {
+    if (active?.id === id) { setMobileOpen(false); return; }
+    if (!allowsMealNavigation(mealBlock.current)) return;
+    mealBlock.current = null;
+    selectionSequence.current += 1;
+    setActiveId(id);
+    setMobileOpen(false);
+    rememberWorkspace(storageKey, id);
+    writeMealLocation(id, location.selection, location.pane, ++historyIndex.current);
+  }
+  function selectMeal(selection: MealSelection) {
+    if (selection.date === location.selection.date && selection.view === location.selection.view && selection.meal === location.selection.meal) return;
+    setLocation({ ...location, selection });
+    writeMealLocation(active?.id ?? "", selection, location.pane, ++historyIndex.current);
+  }
+  function selectPane(pane: WorkspacePane) {
+    if (pane === location.pane || !allowsMealNavigation(mealBlock.current)) return;
+    mealBlock.current = null;
+    setNotice("");
+    setLocation({ ...location, pane });
+    writeMealLocation(active?.id ?? "", location.selection, pane, ++historyIndex.current);
+  }
+  function openDialog(next: DialogState) { if (refreshing || loggingOut || mealBlock.current === "saving") return; setError(""); setNotice(""); setDialog(next); setMobileOpen(false); }
   function closeDialog() { if (!mutationPending.current) { setDialog(null); } }
   async function reload(preferredId?: string, selectedAtStart = selectionSequence.current) {
     const sequence = ++requestSequence.current;
     const next = await workspaceRequest<WorkspaceState>("/api/workspaces");
     if (sequence !== requestSequence.current) return;
     setState(next);
-    if (preferredId && selectedAtStart === selectionSequence.current && next.workspaces.some((workspace) => workspace.id === preferredId)) selectWorkspace(preferredId);
+    if (selectedAtStart !== selectionSequence.current) return;
+    if (preferredId && next.workspaces.some(workspace => workspace.id === preferredId)) {
+      selectWorkspace(preferredId);
+    } else if (!next.workspaces.some(workspace => workspace.id === active?.id)) {
+      const fallback = next.workspaces[0]?.id ?? "";
+      mealBlock.current = null;
+      setActiveId(fallback);
+      if (fallback) rememberWorkspace(storageKey, fallback);
+      writeMealLocation(fallback, location.selection, location.pane, historyIndex.current, true);
+    }
   }
   const mutate: Mutation = async (operation, success, preferredId) => {
     if (mutationPending.current || refreshing || loggingOut) return undefined;
@@ -156,11 +244,11 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId }:
     catch (cause) { setError(saved ? "保存は完了しましたが、最新情報を取得できませんでした。「更新」で再取得してください。" : cause instanceof Error ? cause.message : "処理できませんでした。もう一度お試しください。"); return saved ? result : undefined; }
     finally { mutationPending.current = false; setBusy(false); }
   };
-  async function refresh() { if (refreshing || mutationPending.current || loggingOut) return; setRefreshing(true); setError(""); setNotice(""); try { await reload(); setNotice("最新の情報に更新しました。"); } catch { setError("最新情報を取得できませんでした。時間をおいて再度お試しください。"); } finally { setRefreshing(false); } }
+  async function refresh() { if (refreshing || mutationPending.current || loggingOut) return; setMealRefresh(value => value + 1); setRefreshing(true); setError(""); setNotice(""); try { await reload(); setNotice("最新の情報に更新しました。"); } catch { setError("最新情報を取得できませんでした。時間をおいて再度お試しください。"); } finally { setRefreshing(false); } }
   async function logout() {
-    if (loggingOut || mutationPending.current) return;
+    if (loggingOut || mutationPending.current || !allowsMealNavigation(mealBlock.current)) return;
     setLoggingOut(true); setError("");
-    try { await signOut({ redirect: false }); try { localStorage.setItem("mille:auth-change", String(Date.now())); } catch { /* Optional browser storage. */ } window.location.replace("/"); }
+    try { await signOut({ redirect: false }); mealBlock.current = null; try { localStorage.setItem("mille:auth-change", String(Date.now())); } catch { /* Optional browser storage. */ } window.location.replace("/"); }
     catch { setError("ログアウトできませんでした。もう一度お試しください。"); setLoggingOut(false); }
   }
 
@@ -168,9 +256,19 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId }:
     {mobileOpen && <button className="ws-sidebar-backdrop" aria-label="メニューを閉じる" onClick={() => setMobileOpen(false)} />}
     <aside className={`ws-sidebar${mobileOpen ? " is-open" : ""}`} aria-label="ワークスペースメニュー" id="ws-sidebar"><Brand compact /><button id="ws-mobile-close" className="ws-icon-button ws-mobile-close" type="button" aria-label="メニューを閉じる" onClick={() => setMobileOpen(false)}><Icon name="close" /></button><div className="ws-sidebar-label">YOUR SPACES<span>{state.workspaces.length}</span></div><nav className="ws-space-nav" aria-label="ワークスペースを切り替え">{state.workspaces.map((workspace) => <button type="button" key={workspace.id} className={`ws-space-nav-item${active?.id === workspace.id ? " is-active" : ""}`} aria-current={active?.id === workspace.id ? "page" : undefined} data-testid="workspace-switch" data-workspace-id={workspace.id} onClick={() => selectWorkspace(workspace.id)}><SpaceIcon type={workspace.type} /><span>{workspace.name}</span>{active?.id === workspace.id && <i aria-hidden="true" />}</button>)}</nav><button className="ws-sidebar-create" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}><Icon name="plus" />ワークスペースを作成</button><div className="ws-sidebar-bottom"><div className="ws-sidebar-note"><Icon name="leaf" /><p>ひとりの食卓も、みんなの食卓も。<br />大切な場所を、ひとつずつ。</p></div><div className="ws-account"><Avatar name={user.name} small /><div><strong>{user.name}</strong><span data-testid="authenticated-user-email" title={user.email}>{user.email}</span></div></div><button className="ws-logout" type="button" onClick={() => void logout()} disabled={busy || refreshing || loggingOut} aria-label="ログアウト"><Icon name="logout" />{loggingOut ? "ログアウト中…" : "ログアウト"}</button></div></aside>
     <div className="ws-main-shell" inert={mobileOpen}><header className="ws-topbar"><button className="ws-mobile-menu" type="button" aria-label="ワークスペースメニューを開く" aria-expanded={mobileOpen} aria-controls="ws-sidebar" onClick={() => setMobileOpen(!mobileOpen)}><Icon name="menu" /><span>mille.</span></button><div className="ws-breadcrumb"><span>mille</span><span aria-hidden="true">/</span><span>ワークスペース</span></div><div className="ws-topbar-right"><span className="ws-private-label"><Icon name="shield" />自分たちだけのスペース</span><button className="ws-refresh" data-testid="workspace-refresh" type="button" aria-label="最新情報に更新" onClick={() => void refresh()} disabled={busy || refreshing || loggingOut}><Icon name="refresh" className={refreshing ? "ws-spin" : ""} /><span>更新</span></button></div></header>
-      <main className="ws-main"><div className="ws-page-heading"><div><p className="ws-eyebrow">A PLACE FOR YOUR EVERYDAY TABLE</p><h1>ワークスペース<span>。</span></h1><p className="ws-page-description">ひとりで、みんなで。毎日の食卓に、ちょうどいい場所を。</p></div><button className="ws-button ws-button-primary ws-create-top" data-testid="workspace-create-open" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}><Icon name="plus" />新しく作成</button></div>
+      <main className={`ws-main${settings ? "" : " meal-workspace-main"}`}>
+        <div className="meal-workspace-header">
+          {settings ? <h1>ワークスペース</h1> : <h1 data-testid="workspace-selected-name" data-workspace-id={active?.id}>{active?.name}</h1>}
+          <nav className="meal-workspace-tabs" aria-label="ワークスペース内の画面">
+            <button className={`meal-button${settings ? "" : " is-selected"}`} type="button" aria-current={settings ? undefined : "page"} disabled={!active} onClick={() => selectPane("meal")}>献立</button>
+            <button className={`meal-button${settings ? " is-selected" : ""}`} type="button" aria-current={settings ? "page" : undefined} onClick={() => selectPane("settings")}>ワークスペース設定</button>
+            {!settings && <button className="meal-button meal-button-secondary" data-testid="workspace-create-open" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}>＋ ワークスペース</button>}
+          </nav>
+        </div>
         <div aria-live="polite" className="ws-feedback-area">{error && !dialog && <div className="ws-feedback ws-feedback-error" role="alert"><span>{error}</span><button className="ws-icon-button" type="button" aria-label="エラーを閉じる" onClick={() => setError("")}><Icon name="close" /></button></div>}{notice && <div className="ws-feedback ws-feedback-success"><Icon name="check" /><span>{notice}</span><button className="ws-icon-button" type="button" aria-label="通知を閉じる" onClick={() => setNotice("")}><Icon name="close" /></button></div>}</div>
         {state.invitations.length > 0 && <section className="ws-incoming" aria-label="届いている招待">{state.invitations.map((invitation) => <article className="ws-incoming-item" key={invitation.id}><span className="ws-incoming-icon"><Icon name="mail" /></span><div><h2>「{invitation.workspaceName}」への招待</h2><p>{invitation.inviterName}さんから · {workspaceDate(invitation.expiresAt)}まで有効</p></div><button className="ws-button ws-button-primary ws-button-small" type="button" disabled={busy || refreshing || loggingOut} onClick={() => void mutate(() => workspaceRequest<JoinedWorkspace>(`/api/invitations/${invitation.id}/join`, "POST", {}), "共有ワークスペースに参加しました。", (result) => result.workspaceId)}>参加する<Icon name="arrow" /></button></article>)}</section>}
+        {settings ? <>
+        <div className="ws-page-heading"><button className="ws-button ws-button-primary" data-testid="workspace-create-open" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}><Icon name="plus" />新しく作成</button></div>
         <section aria-labelledby="ws-list-heading"><div className="ws-section-heading"><h2 id="ws-list-heading">あなたのワークスペース <span>{state.workspaces.length}</span></h2><p>使いたい場所を選択</p></div><div className="ws-cards">{state.workspaces.map((workspace) => <button type="button" key={workspace.id} className={`ws-card${active?.id === workspace.id ? " is-selected" : ""}`} aria-pressed={active?.id === workspace.id} data-testid="workspace-card" data-workspace-id={workspace.id} onClick={() => selectWorkspace(workspace.id)}><span className="ws-card-top"><span className={`ws-space-icon ${workspace.type === "SHARED" ? "is-shared" : ""}`}><SpaceIcon type={workspace.type} /></span><span className="ws-type-badge">{workspace.type === "SHARED" ? "共有用" : "個人用"}</span></span><strong className="ws-card-name">{workspace.name}</strong><span className="ws-card-description">{workspace.type === "SHARED" ? "大切な人と囲む、いつもの食卓" : "自分のペースで、自分らしく"}</span><span className="ws-card-bottom"><span className="ws-avatars">{workspace.members.slice(0, 3).map((member, index) => <Avatar key={member.userId} name={member.name} small index={index} />)}{workspace.members.length > 3 && <span className="ws-avatar ws-avatar-small ws-avatar-more">+{workspace.members.length - 3}</span>}</span><span>{workspace.members.length}人</span><span className="ws-card-selection">{active?.id === workspace.id ? <><Icon name="check" />選択中</> : <Icon name="arrow" />}</span></span></button>)}<button className="ws-card ws-new-card" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}><span className="ws-new-card-icon"><Icon name="plus" /></span><strong>新しい場所をつくる</strong><span>暮らしに合わせて、もうひとつ。</span></button></div></section>
         {active && <section className="ws-details" aria-labelledby="ws-settings-heading"><div className="ws-section-heading"><h2 id="ws-settings-heading">ワークスペースの設定</h2><p>選択中の場所を整える</p></div><div className="ws-banner"><div className="ws-banner-content"><span className="ws-banner-icon"><SpaceIcon type={active.type} /></span><div><p className="ws-banner-eyebrow">{active.type === "SHARED" ? "SHARED WORKSPACE" : "PERSONAL WORKSPACE"}</p><h2 data-testid="workspace-selected-name" data-workspace-id={active.id}>{active.name}</h2><p className="ws-banner-description">{active.type === "SHARED" ? "同じ食卓から、毎日を少しずつ。" : "あなただけの、食卓の小さな拠点。"}</p></div></div><button className="ws-button ws-button-banner" data-testid="workspace-rename-open" type="button" disabled={busy || refreshing || loggingOut} onClick={() => openDialog({ kind: "rename", workspace: active })}><Icon name="edit" />名前を変更</button><div className="ws-banner-decoration" aria-hidden="true"><span /><span /><span /></div></div>
           <section className="ws-panel" aria-labelledby="ws-members-heading"><div className="ws-panel-heading"><div><p className="ws-eyebrow">PEOPLE AROUND THE TABLE</p><h3 id="ws-members-heading">メンバー <span className="ws-count-badge" data-testid="workspace-member-count">{active.members.length}</span></h3></div>{active.type === "SHARED" && <button className="ws-button ws-button-secondary ws-button-small" type="button" disabled={busy || refreshing || loggingOut} onClick={() => openDialog({ kind: "invite", workspace: active })}><Icon name="plus" />メンバーを招待</button>}</div><div className="ws-members" data-testid="workspace-member-list">{active.members.map((member, index) => <div className="ws-member" key={member.userId}><Avatar name={member.name} index={index} /><div className="ws-member-info"><strong>{member.name}{member.userId === user.id && <span className="ws-you">あなた</span>}</strong><span>{member.email}</span></div><span className="ws-role">{member.role === "OWNER" ? "オーナー" : "メンバー"}</span></div>)}</div>
@@ -178,7 +276,8 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId }:
             {active.pendingInvitations.length > 0 && <div className="ws-pending"><h4>招待中</h4>{active.pendingInvitations.map((invitation) => <div className="ws-pending-item" key={invitation.id}><Icon name="mail" /><span>{invitation.email}<small>{workspaceDate(invitation.expiresAt)}まで有効</small></span><span className="ws-pending-badge">参加待ち</span></div>)}</div>}
           </section><section className="ws-danger-zone"><div><h3>ワークスペースの削除</h3><p>この場所と関連するすべてのデータを削除します。</p></div><button className="ws-button ws-button-danger-outline ws-button-small" data-testid="workspace-delete-open" type="button" disabled={busy || refreshing || loggingOut} onClick={() => openDialog({ kind: "delete", workspace: active })}><Icon name="trash" />削除する</button></section><div className="ws-meta"><span>作成日 {workspaceDate(active.createdAt)}</span><span>{active.type === "SHARED" ? "メンバー全員が設定を変更できます" : "自分だけのワークスペース"}</span></div>
         </section>}
-        <footer className="ws-footer"><span>mille.</span><p>日々を味わう、ひとつの場所。</p></footer>
+        </> : active && preferencesReady && <MealApp key={`${active.id}:${mealEpoch}`} workspaceId={active.id} selection={location.selection}
+          refresh={mealRefresh} onSelection={selectMeal} onBlockChange={block => { mealBlock.current = block; }} />}
       </main>
     </div>
     {dialog?.kind === "create" && <CreateDialog busy={busy} error={error} onClose={closeDialog} mutate={mutate} />}
@@ -186,4 +285,12 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId }:
     {dialog?.kind === "delete" && <DeleteDialog workspace={dialog.workspace} busy={busy} error={error} onClose={closeDialog} mutate={mutate} />}
     {dialog?.kind === "invite" && <InviteDialog workspace={dialog.workspace} busy={busy} error={error} onClose={closeDialog} mutate={mutate} />}
   </div>;
+}
+
+function rememberWorkspace(key: string, id: string) {
+  try { localStorage.setItem(key, id); } catch { /* Optional browser preference. */ }
+}
+
+function allowsMealNavigation(block: MealNavigationBlock) {
+  return block === "draft" ? window.confirm("保存していない入力を破棄しますか？") : block !== "saving";
 }

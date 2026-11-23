@@ -2,7 +2,7 @@ import { z } from "zod";
 import { MEAL_TYPES } from "./meal-types";
 
 const databaseText = z.string().refine(
-  value => value.isWellFormed() && !value.includes("\0"),
+  value => !/[\uD800-\uDFFF]/u.test(value) && !value.includes("\0"),
   "入力できない文字が含まれています。",
 );
 
@@ -18,7 +18,7 @@ const recipeUrl = nullableText(2_048).refine(value => {
   if (value === null) return true;
   const authority = /^https?:\/\/([^/?#]+)/i.exec(value)?.[1];
   if (!authority || authority.includes("@") || /[\s\\]/u.test(value)) return false;
-  return Boolean(URL.parse(value)?.hostname);
+  try { return Boolean(new URL(value).hostname); } catch { return false; }
 }, "資格情報を含まないHTTPまたはHTTPSのURLを入力してください。");
 
 const servings = z.number().min(0.01).max(99)
