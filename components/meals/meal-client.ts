@@ -39,6 +39,10 @@ export async function mealRequest<T>(url: string, signal?: AbortSignal, write?: 
     const code = "code" in failure && typeof failure.code === "string" ? failure.code : null;
     throw new MealApiError(message, response.status, code);
   }
+  if (write) {
+    const expected = { POST: 201, PUT: 200, DELETE: 204 }[write.method];
+    if (response.status !== expected) throw new Error("送信結果を確認できませんでした。");
+  }
   if (response.status !== 204 && result === undefined) throw new Error("応答を確認できませんでした。");
   return result as T;
 }

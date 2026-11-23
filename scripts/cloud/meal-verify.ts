@@ -16,6 +16,7 @@ const originalDish = "焦がし玉ねぎのスープ";
 const secondDish = "じゃがいものロースト";
 const revisedDish = "温野菜のロースト";
 const unusedDraft = "更新競合で保持する料理名";
+const replacementDish = "オートミール";
 
 function requireCondition(condition: unknown): asserts condition {
   if (!condition) throw new Error("MEAL_BROWSER_CHECK_FAILED");
@@ -92,10 +93,20 @@ export async function verifyMealReads(entry: MealCase, workspaceId: string, othe
     && other.status === 404 && other.body.code === "NOT_FOUND" && search.status === 404 && search.body.code === "NOT_FOUND");
   checks.push("meal-read-membership-isolation");
 
+  const location = new URL("/", page.url());
+  location.search = new URLSearchParams({ workspace: workspaceId, date: firstDate, view: "week", meal: "DINNER" }).toString();
+  await page.goto(location.href, { waitUntil: "networkidle" });
+  await page.locator(`[data-testid="workspace-selected-name"][data-workspace-id="${workspaceId}"]`).waitFor();
   await page.getByTestId("meal-app").waitFor();
-  await page.getByTestId("meal-view-week").waitFor();
-  const calendarRead = await expectResponse(page, "GET", mealListPath(workspaceId), 200, () => page.getByTestId("meal-view-month").click());
-  requireCondition(calendarRead.headers()["cache-control"]?.includes("no-store"));
+  const [calendarRead] = await Promise.all([
+    page.waitForResponse(response => {
+      const url = new URL(response.url());
+      return response.request().method() === "GET" && url.pathname === mealListPath(workspaceId)
+        && url.searchParams.get("from") === "2026-02-01" && url.searchParams.get("to") === "2026-03-01";
+    }),
+    page.getByTestId("meal-view-month").click(),
+  ]);
+  requireCondition(calendarRead.status() === 200 && calendarRead.headers()["cache-control"]?.includes("no-store"));
   await page.getByTestId("meal-month-date").filter({ visible: true }).first().waitFor();
   await page.getByTestId("meal-view-week").click();
   const day = page.getByTestId("meal-overview-date").or(page.getByTestId("meal-week-date"));
@@ -105,28 +116,32 @@ export async function verifyMealReads(entry: MealCase, workspaceId: string, othe
   checks.push("meal-calendar-week-month", "meal-search-read");
 }
 
-async function createAfterLostResponse(page: Page, path: string) {
+async function retryCommittedCreate(page: Page, path: string, malformedResponse: boolean) {
   type FirstWrite = { status: number; body: string | null; key: string | undefined; meal?: MealDetail };
   let first: FirstWrite | undefined;
   const intercept = (url: URL) => url.pathname === path;
-  const loseResponse = async (route: Route) => {
+  const interruptResponse = async (route: Route) => {
     const request = route.request();
     if (request.method() !== "POST") {
       await route.fallback();
       return;
     }
     try {
-      // The server commits against a disposable local workspace before the browser loses the response.
+      // Commit against a disposable local workspace before altering the browser's response.
       const upstream = await route.fetch({ maxRedirects: 0 });
       first = { status: upstream.status(), body: request.postData(), key: request.headers()["idempotency-key"] };
       if (upstream.status() === 201) first.meal = (await upstream.json() as { meal: MealDetail }).meal;
     } catch {
-      // The case asserts the first server-side commit after the browser reports the lost response.
+      // The case asserts the first server-side commit after the browser offers to retry.
     } finally {
-      await route.abort("connectionreset");
+      if (malformedResponse && first?.meal) {
+        await route.fulfill({ status: 201, json: {} });
+      } else {
+        await route.abort("connectionreset");
+      }
     }
   };
-  await page.route(intercept, loseResponse);
+  await page.route(intercept, interruptResponse);
   const save = page.getByTestId("meal-editor-save");
   const retry = page.getByTestId("meal-retry-save");
   try {
@@ -135,7 +150,7 @@ async function createAfterLostResponse(page: Page, path: string) {
     requireCondition(first?.status === 201 && first.key && first.body && first.meal?.id);
     requireCondition(await page.getByTestId("meal-editor-dish-name").inputValue() === originalDish);
   } finally {
-    await page.unroute(intercept, loseResponse);
+    await page.unroute(intercept, interruptResponse);
   }
   const response = await expectResponse(page, "POST", path, 201, () => retry.click());
   const replayed = await readDetail(response);
@@ -182,6 +197,13 @@ async function cancelDirtyEditor(page: Page) {
     page.getByTestId("meal-editor-cancel").click(),
   ]);
   await page.getByTestId("meal-editor").waitFor({ state: "hidden" });
+}
+
+async function deleteSelectedMeal(page: Page, path: string) {
+  await page.getByTestId("meal-detail-delete").click();
+  await page.getByTestId("meal-delete-dialog").waitFor();
+  await expectResponse(page, "DELETE", path, 204, () => page.getByTestId("meal-delete-confirm").click());
+  await page.getByTestId("meal-detail-add").waitFor();
 }
 
 async function verifySearch(page: Page) {
@@ -251,12 +273,13 @@ export async function verifySharedMeals({ owner, member, workspaceId, personalId
   await ownerPage.getByTestId("meal-editor-date").fill(firstDate);
   await ownerPage.getByTestId("meal-editor-type").selectOption("DINNER");
   await ownerPage.getByTestId("meal-editor-dish-name").fill(originalDish);
-  const initial = await createAfterLostResponse(ownerPage, path);
+  const malformedResponse = await ownerPage.evaluate(() => matchMedia("(pointer: coarse)").matches);
+  const initial = await retryCommittedCreate(ownerPage, path, malformedResponse);
   requireCondition(initial.mealDate === firstDate && initial.mealType === "DINNER"
     && initial.servings === null && initial.dishes.length === 1 && initial.dishes[0].ingredients.length === 0);
   const initialList = await get<{ meals: MealSummary[] }>(ownerPage, rangePath(workspaceId));
   requireCondition(initialList.status === 200 && initialList.body.meals.length === 1 && initialList.body.meals[0].id === initial.id);
-  owner.checks.push("meal-minimal-create-ui", "meal-lost-response-idempotent-retry");
+  owner.checks.push("meal-minimal-create-ui", malformedResponse ? "meal-malformed-response-idempotent-retry" : "meal-lost-response-idempotent-retry");
 
   onStage("meal-reload-and-back", "owner");
   await verifyMealHistory(ownerPage);
@@ -345,13 +368,33 @@ export async function verifySharedMeals({ owner, member, workspaceId, personalId
     && JSON.stringify(unchanged.body.meal.dishes) === JSON.stringify(source.dishes));
   owner.checks.push("meal-single-dish-copy-empty-slot-ui", "meal-copy-preserves-source");
 
+  onStage("meal-edit-replaced-slot", "owner");
+  await readDish(ownerPage, revisedDish);
+  await ownerPage.getByTestId("meal-detail-edit").click();
+  await ownerPage.getByTestId("meal-editor-dish-name").fill(unusedDraft);
+  onStage("meal-replace-edited-slot", "member");
+  await memberPage.reload({ waitUntil: "networkidle" });
+  await chooseSlot(memberPage, secondDate, "BREAKFAST");
+  await readDish(memberPage, revisedDish);
+  await deleteSelectedMeal(memberPage, `${path}/${singleMeal.id}`);
+  await memberPage.getByTestId("meal-detail-add").click();
+  await memberPage.getByTestId("meal-editor-dish-name").fill(replacementDish);
+  const replacementResponse = await expectResponse(memberPage, "POST", path, 201, () => memberPage.getByTestId("meal-editor-save").click());
+  const replacement = await readDetail(replacementResponse);
+  requireCondition(replacement.id !== singleMeal.id && replacement.mealDate === secondDate && replacement.mealType === "BREAKFAST");
+
+  onStage("meal-replaced-slot-conflict", "owner");
+  const removed = await expectResponse(ownerPage, "PUT", `${path}/${singleMeal.id}`, 404, () => ownerPage.getByTestId("meal-editor-save").click());
+  requireCondition((await removed.json() as { code: string }).code === "NOT_FOUND");
+  await ownerPage.getByTestId("meal-conflict").getByRole("heading", { name: replacementDish, exact: true }).waitFor();
+  requireCondition(await ownerPage.getByTestId("meal-editor-dish-name").inputValue() === unusedDraft);
+  await cancelDirtyEditor(ownerPage);
+  owner.checks.push("meal-replaced-slot-retains-input-and-shows-latest");
+
   onStage("meal-shared-delete", "member");
   await memberPage.reload({ waitUntil: "networkidle" });
   await chooseSlot(memberPage, secondDate, "LUNCH");
-  await memberPage.getByTestId("meal-detail-delete").click();
-  await memberPage.getByTestId("meal-delete-dialog").waitFor();
-  await expectResponse(memberPage, "DELETE", `${path}/${copied.id}`, 204, () => memberPage.getByTestId("meal-delete-confirm").click());
-  await memberPage.getByTestId("meal-detail-add").waitFor();
+  await deleteSelectedMeal(memberPage, `${path}/${copied.id}`);
   requireCondition((await get(memberPage, `${path}/${copied.id}`)).status === 404);
   member.checks.push("meal-shared-member-delete-ui");
 

@@ -157,6 +157,8 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
         selectionSequence.current += 1;
         setActiveId(requested.id);
         rememberWorkspace(storageKey, requested.id);
+      } else {
+        writeMealLocation(active?.id ?? "", next.selection, next.pane, historyIndex.current, true);
       }
       if (mealBlock.current) setMealEpoch(previous => previous + 1);
       mealBlock.current = null;
@@ -202,7 +204,7 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
     setActiveId(id);
     setMobileOpen(false);
     rememberWorkspace(storageKey, id);
-    writeMealLocation(id, location.selection, location.pane, ++historyIndex.current);
+    updateWorkspaceLocation(id, ++historyIndex.current);
   }
   function selectMeal(selection: MealSelection) {
     if (selection.date === location.selection.date && selection.view === location.selection.view && selection.meal === location.selection.meal) return;
@@ -231,7 +233,7 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
       mealBlock.current = null;
       setActiveId(fallback);
       if (fallback) rememberWorkspace(storageKey, fallback);
-      writeMealLocation(fallback, location.selection, location.pane, historyIndex.current, true);
+      updateWorkspaceLocation(fallback, historyIndex.current, true);
     }
   }
   const mutate: Mutation = async (operation, success, preferredId) => {
@@ -289,6 +291,12 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
 
 function rememberWorkspace(key: string, id: string) {
   try { localStorage.setItem(key, id); } catch { /* Optional browser preference. */ }
+}
+
+function updateWorkspaceLocation(id: string, index: number, replace = false) {
+  const params = new URL(window.location.href).searchParams;
+  const { selection, pane } = readMealLocation(key => params.get(key));
+  writeMealLocation(id, selection, pane, index, replace);
 }
 
 function allowsMealNavigation(block: MealNavigationBlock) {

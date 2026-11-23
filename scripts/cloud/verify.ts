@@ -363,7 +363,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
             return shell !== null && !shell.hasAttribute("inert");
           });
           await workspaceMutation(page, "/api/workspaces", "GET", () => page.getByTestId("workspace-refresh").click());
-          await openWorkspaceSettings(page);
+          if (proof.target.kind === "local") await openWorkspaceSettings(page);
           await page.getByTestId("workspace-create-open").click();
           await page.getByTestId("workspace-create-dialog").getByRole("button", { name: "キャンセル", exact: true }).click();
           await page.getByTestId("workspace-create-dialog").waitFor({ state: "hidden" });
@@ -371,7 +371,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
           requireCondition(await menu.getAttribute("aria-expanded") === "false"
             && !await page.locator(".ws-main-shell").evaluate(element => element.hasAttribute("inert")));
           await page.getByTestId("workspace-create-open").waitFor();
-          await openMeals(page);
+          if (proof.target.kind === "local") await openMeals(page);
           item.checks.push("mobile-menu-resize-restores-main");
         }
         if (proof.target.kind === "local") {
@@ -406,11 +406,14 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         && !memberState.body.workspaces.some(workspace => workspace.id === ownerPersonal.id));
       for (const entry of loggedIn) entry.item.checks.push("personal-workspace-isolation");
 
-      stage = "meal-read-isolation-and-calendar";
-      currentCase = owner.item;
-      await verifyMealReads({ page: owner.page, checks: owner.item.checks }, ownerPersonal.id, memberPersonal.id);
-      currentCase = member.item;
-      await verifyMealReads({ page: member.page, checks: member.item.checks }, memberPersonal.id, ownerPersonal.id);
+      // The trusted main verifier may be checking an older PR whose UI predates meals.
+      if (proof.target.kind === "local" || formal?.sha === proof.source.before.sha) {
+        stage = "meal-read-isolation-and-calendar";
+        currentCase = owner.item;
+        await verifyMealReads({ page: owner.page, checks: owner.item.checks }, ownerPersonal.id, memberPersonal.id);
+        currentCase = member.item;
+        await verifyMealReads({ page: member.page, checks: member.item.checks }, memberPersonal.id, ownerPersonal.id);
+      }
 
       if (proof.target.kind === "local") {
         currentCase = owner.item;

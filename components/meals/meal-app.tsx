@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { copyMealSchema } from "@/lib/shared/meal-schemas";
 import { MEAL_TYPES, type MealDetail, type MealSummary, type MealType } from "@/lib/shared/meal-types";
 import { MealCalendar } from "./meal-calendar";
-import { formatMealDate, getMealPeriod, MEAL_TYPE_LABELS, type MealView } from "./meal-dates";
+import { formatMealDate, getMealPeriod, isMealDate, MEAL_TYPE_LABELS, type MealView } from "./meal-dates";
 import { MealDetails, MealRecord } from "./meal-detail";
 import { appendCopiedDish, editMealDraft, newMealDraft, type MealDraft, type MealDraftPayload } from "./meal-draft";
 import { MealEditor } from "./meal-editor";
@@ -116,6 +116,7 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
       } catch (error) {
         if (!(error instanceof MealApiError && error.status === 404)) throw error;
       }
+      return readMealSlot(api, action.original.mealDate, action.original.mealType, signal);
     }
     return readMealSlot(api, action.target.date, action.target.type, signal);
   }
@@ -151,21 +152,32 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
     try {
       const result = await mealRequest<{ meal: MealDetail } | undefined>(action.write.url, request.signal, action.write);
       if (request.signal.aborted) return;
+      let target = action.target;
+      if (action.write.method !== "DELETE") {
+        const saved = result?.meal;
+        if (!saved || saved.workspaceId !== workspaceId || typeof saved.mealDate !== "string"
+          || !isMealDate(saved.mealDate) || !MEAL_TYPES.includes(saved.mealType)) {
+          throw new Error("保存された献立を確認できませんでした。");
+        }
+        target = { date: saved.mealDate, type: saved.mealType };
+      }
       dirty.current = false;
       setEditor(null);
       setCopy(null);
       setDeletion(null);
-      choose(result?.meal.mealDate ?? action.target.date, result?.meal.mealType ?? action.target.type);
+      choose(target.date, target.type);
       refreshMeals();
       setNotice(action.label);
     } catch (cause) {
       if (request.signal.aborted) return;
       if (!(cause instanceof MealApiError) || cause.status >= 500) {
+        dirty.current = true;
         setRetry(action);
         setError("保存結果を確認できませんでした。同じ内容で再試行できます。");
-      } else if (cause.code === "VERSION_CONFLICT" || cause.code === "SLOT_OCCUPIED") {
-        const byVersion = cause.code === "VERSION_CONFLICT";
-        const next = { title: cause.message, action, byVersion };
+      } else if (cause.code === "VERSION_CONFLICT" || cause.code === "SLOT_OCCUPIED" || (cause.status === 404 && action.original)) {
+        const byVersion = cause.code !== "SLOT_OCCUPIED";
+        const title = cause.status === 404 ? "元の献立を取得できませんでした。現在の食事枠を確認してください。" : cause.message;
+        const next = { title, action, byVersion };
         try {
           const latest = await latestFor(action, byVersion, request.signal);
           if (!request.signal.aborted) setConflict({ ...next, latest });
@@ -203,13 +215,22 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
   }
 
   function closeDialog() {
-    if (pending.current || (retry && !window.confirm("送信結果の確認を終了しますか？"))) return;
+    if (pending.current) return;
+    if (retry && !window.confirm("送信結果の確認を終了しますか？")) return;
+    if (!retry && dirty.current && !window.confirm("保存していない入力を破棄しますか？")) return;
+    dirty.current = false;
+    onBlockChange(null);
     setCopy(null);
     setDeletion(null);
     setRetry(null);
     setConflict(null);
     setError("");
-    refreshMeals();
+    if (retry || conflict) refreshMeals();
+  }
+
+  function changeCopyTarget(next: CopyTarget) {
+    markDirty();
+    setCopy(next);
   }
 
   async function continueCopy(event: FormEvent) {
@@ -296,8 +317,8 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
     </div>
     {copy && <Modal testId="meal-copy-dialog" title={copy.dishId ? "料理をコピー" : "献立をコピー"} busy={busy} onClose={closeDialog}>
       <form onSubmit={event => void continueCopy(event)}>
-        <label className="meal-field">コピー先の日付<input type="date" data-testid="meal-copy-date" required value={copy.date} disabled={busy || Boolean(retry)} onChange={event => setCopy({ ...copy, date: event.target.value })} /></label>
-        <label className="meal-field">コピー先の食事<select data-testid="meal-copy-type" value={copy.type} disabled={busy || Boolean(retry)} onChange={event => setCopy({ ...copy, type: event.target.value as MealType })}>
+        <label className="meal-field">コピー先の日付<input type="date" data-testid="meal-copy-date" required value={copy.date} disabled={busy || Boolean(retry)} onChange={event => changeCopyTarget({ ...copy, date: event.target.value })} /></label>
+        <label className="meal-field">コピー先の食事<select data-testid="meal-copy-type" value={copy.type} disabled={busy || Boolean(retry)} onChange={event => changeCopyTarget({ ...copy, type: event.target.value as MealType })}>
           {MEAL_TYPES.map(type => <option key={type} value={type}>{MEAL_TYPE_LABELS[type]}</option>)}
         </select></label>
         {!copy.dishId && <details>
