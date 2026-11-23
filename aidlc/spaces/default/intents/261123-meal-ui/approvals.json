@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/68",
+  "recordedAt": "2026-11-23T10:27:26Z",
+  "planApproval": {
+    "reply": "P1cは承認します",
+    "sequence": 1,
+    "scope": "先にチャットで提示した P1c の献立手動記録・閲覧画面と検証計画。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "GitHubから再取得してチャットに全文を提示した、保存済み Issue #68 の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-23T10:18:00Z",
+    "sha256": "d1198bbacef14c901a81b8f36b606ddd988d0554104c337b6a3887ff3fbefd82"
+  }
+}

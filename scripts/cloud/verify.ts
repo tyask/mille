@@ -7,6 +7,7 @@ import type { Browser, BrowserContext, Page } from "playwright";
 import { TEST_USERS } from "../../lib/shared/test-users";
 import type { IssuedInvitation, Workspace, WorkspaceState } from "../../lib/shared/workspaces";
 import { CloudStartupError, cloudPort, isolatedEnvironment, rootDirectory, startCloudServer, type CloudServer } from "./dev";
+import { verifyMealReads, verifySharedMeals } from "./meal-verify";
 
 // Playwright resolves its executable registry on import, before launch({ env }) applies.
 // Keep this process's lookup aligned with setup:cloud and preserve an explicit override.
@@ -119,6 +120,16 @@ async function workspaceMutation<T>(page: Page, path: string, method: string, ac
 async function selectedWorkspace(page: Page, name: string) {
   await page.getByTestId("workspace-selected-name").waitFor();
   await page.waitForFunction(expected => document.querySelector('[data-testid="workspace-selected-name"]')?.textContent?.trim() === expected, name);
+}
+
+async function openWorkspaceSettings(page: Page) {
+  await page.getByRole("button", { name: "ワークスペース設定", exact: true }).click();
+  await page.getByTestId("workspace-create-open").waitFor();
+}
+
+async function openMeals(page: Page) {
+  await page.getByRole("button", { name: "献立", exact: true }).click();
+  await page.getByTestId("meal-app").waitFor();
 }
 
 export async function verifyBrowser(args: readonly string[] = [], formal?: FormalPreview): Promise<BrowserProof> {
@@ -352,6 +363,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
             return shell !== null && !shell.hasAttribute("inert");
           });
           await workspaceMutation(page, "/api/workspaces", "GET", () => page.getByTestId("workspace-refresh").click());
+          if (proof.target.kind === "local") await openWorkspaceSettings(page);
           await page.getByTestId("workspace-create-open").click();
           await page.getByTestId("workspace-create-dialog").getByRole("button", { name: "キャンセル", exact: true }).click();
           await page.getByTestId("workspace-create-dialog").waitFor({ state: "hidden" });
@@ -359,9 +371,10 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
           requireCondition(await menu.getAttribute("aria-expanded") === "false"
             && !await page.locator(".ws-main-shell").evaluate(element => element.hasAttribute("inert")));
           await page.getByTestId("workspace-create-open").waitFor();
+          if (proof.target.kind === "local") await openMeals(page);
           item.checks.push("mobile-menu-resize-restores-main");
         }
-        if (!formal) {
+        if (proof.target.kind === "local") {
           const filename = `${item.name}-home.png`;
           await page.screenshot({ path: resolve(directory, filename), fullPage: true }); item.screenshots.push(filename);
         }
@@ -393,8 +406,19 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         && !memberState.body.workspaces.some(workspace => workspace.id === ownerPersonal.id));
       for (const entry of loggedIn) entry.item.checks.push("personal-workspace-isolation");
 
-      if (!formal) {
+      // The trusted main verifier may be checking an older PR whose UI predates meals.
+      if (proof.target.kind === "local" || formal?.sha === proof.source.before.sha) {
+        stage = "meal-read-isolation-and-calendar";
+        currentCase = owner.item;
+        await verifyMealReads({ page: owner.page, checks: owner.item.checks }, ownerPersonal.id, memberPersonal.id);
+        currentCase = member.item;
+        await verifyMealReads({ page: member.page, checks: member.item.checks }, memberPersonal.id, ownerPersonal.id);
+      }
+
+      if (proof.target.kind === "local") {
+        currentCase = owner.item;
         stage = "workspace-create";
+        await openWorkspaceSettings(owner.page);
         const workspaceName = `QA ${mobile ? "mobile" : "desktop"} ${Date.now()}`;
         await owner.page.getByRole("button", { name: "新しく作成", exact: true }).click();
         await owner.page.getByTestId("workspace-create-dialog").getByLabel("ワークスペース名", { exact: true }).fill(workspaceName);
@@ -412,6 +436,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         await selectedWorkspace(owner.page, workspaceName);
         await owner.page.reload({ waitUntil: "networkidle" });
         await selectedWorkspace(owner.page, workspaceName);
+        await openWorkspaceSettings(owner.page);
         owner.item.checks.push("workspace-switch-ui", "workspace-selection-after-reload");
 
         stage = "workspace-rename-open";
@@ -436,6 +461,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         if (mobile) {
           stage = "workspace-incoming-invitation";
           await member.page.reload({ waitUntil: "networkidle" });
+          await openWorkspaceSettings(member.page);
           const incoming = member.page.getByRole("region", { name: "届いている招待", exact: true }).getByRole("article").filter({ hasText: renamed });
           await incoming.getByRole("heading", { name: `「${renamed}」への招待`, exact: true }).waitFor();
           stage = "workspace-incoming-join";
@@ -461,6 +487,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         }
         await owner.page.reload({ waitUntil: "networkidle" });
         await selectedWorkspace(owner.page, renamed);
+        await openWorkspaceSettings(owner.page);
         const shared = await workspaceRequest<WorkspaceState>(owner.page, "/api/workspaces");
         const sharedWorkspace = shared.body.workspaces.find(workspace => workspace.id === created.id);
         requireCondition(shared.status === 200 && sharedWorkspace?.members.length === 2
@@ -477,7 +504,27 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         requireCondition(unchangedOwner.body.workspaces.find(workspace => workspace.id === ownerPersonal.id)?.name === ownerPersonal.name);
         member.item.checks.push("non-member-workspace-write-denied");
 
+        stage = "meal-open-shared";
+        await openMeals(owner.page);
+        await openMeals(member.page);
+        await verifySharedMeals({
+          owner: { page: owner.page, checks: owner.item.checks },
+          member: { page: member.page, checks: member.item.checks },
+          workspaceId: created.id,
+          personalId: ownerPersonal.id,
+          onStage: (mealStage, actor) => {
+            stage = mealStage;
+            currentCase = actor === "owner" ? owner.item : member.item;
+          },
+        });
+        stage = "meal-screenshot";
+        const mealFilename = `${owner.item.name}-meals.png`;
+        await owner.page.screenshot({ path: resolve(directory, mealFilename), fullPage: true });
+        owner.item.screenshots.push(mealFilename);
+
+        currentCase = member.item;
         stage = "workspace-member-rename";
+        await openWorkspaceSettings(member.page);
         const memberRenamed = `${workspaceName} 共有`;
         await member.page.getByRole("button", { name: "名前を変更", exact: true }).click();
         await member.page.getByTestId("workspace-rename-dialog").getByLabel("ワークスペース名", { exact: true }).fill(memberRenamed);
@@ -501,6 +548,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
           await selectedWorkspace(entry.page, fallback.name);
           requireCondition(await entry.page.getByTestId("workspace-selected-name").getAttribute("data-workspace-id") === fallback.id);
           entry.item.checks.push("workspace-delete-ui-and-fallback");
+          await openWorkspaceSettings(entry.page);
           const filename = `${entry.item.name}-workspaces.png`;
           await entry.page.screenshot({ path: resolve(directory, filename), fullPage: true }); entry.item.screenshots.push(filename);
         }

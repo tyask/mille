@@ -1,0 +1,24 @@
+{
+  "id": "261123-meal-ui",
+  "issue": "https://github.com/tyask/mille/issues/68",
+  "branch": "codex/issue-68-meal-ui",
+  "baseSha": "22c254abcb8285cbf3d050b789fc75539845c7f7",
+  "state": "frozen",
+  "approvedIssueSha256": "d1198bbacef14c901a81b8f36b606ddd988d0554104c337b6a3887ff3fbefd82",
+  "implementationPlanSha256": "efdc54e2f4a0fee1f2c7a33731925e90141962867b13f4b495ba0c1971ac128d",
+  "approvalEvidence": "approvals.json",
+  "postMerge": {
+    "completesIssue": true,
+    "manualPostMerge": false
+  },
+  "frozenAt": "2026-11-23T10:30:55Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "高速検査",
+      "343 テスト",
+      "PC・スマホ × 架空 A/B のブラウザ操作 4件",
+      "自己レビュー"
+    ]
+  }
+}
