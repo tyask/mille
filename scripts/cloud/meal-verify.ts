@@ -135,7 +135,8 @@ async function retryCommittedCreate(page: Page, path: string, malformedResponse:
       // The case asserts the first server-side commit after the browser offers to retry.
     } finally {
       if (malformedResponse && first?.meal) {
-        await route.fulfill({ status: 201, json: {} });
+        const { workspaceId, mealDate, mealType } = first.meal;
+        await route.fulfill({ status: 201, json: { meal: { workspaceId, mealDate, mealType } } });
       } else {
         await route.abort("connectionreset");
       }
@@ -169,7 +170,10 @@ async function verifyMealHistory(page: Page) {
   await page.getByRole("button", { name: "次の月", exact: true }).click();
   await page.waitForURL(url => url.searchParams.get("date")?.startsWith("2026-03-") === true);
   await page.getByTestId("meal-detail-add").waitFor();
+  await page.getByTestId("meal-detail-add").click();
+  await page.getByTestId("meal-editor").waitFor();
   await page.goBack();
+  await page.getByTestId("meal-editor").waitFor({ state: "hidden" });
   await readDish(page, originalDish);
   requireCondition(new URL(page.url()).searchParams.get("date") === firstDate
     && new URL(page.url()).searchParams.get("view") === "month");

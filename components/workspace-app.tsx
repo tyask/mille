@@ -160,7 +160,7 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
       } else {
         writeMealLocation(active?.id ?? "", next.selection, next.pane, historyIndex.current, true);
       }
-      if (mealBlock.current) setMealEpoch(previous => previous + 1);
+      setMealEpoch(previous => previous + 1);
       mealBlock.current = null;
       setLocation(next);
       setMobileOpen(false);

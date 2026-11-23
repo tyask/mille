@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { copyMealSchema } from "@/lib/shared/meal-schemas";
 import { MEAL_TYPES, type MealDetail, type MealSummary, type MealType } from "@/lib/shared/meal-types";
 import { MealCalendar } from "./meal-calendar";
-import { formatMealDate, getMealPeriod, isMealDate, MEAL_TYPE_LABELS, type MealView } from "./meal-dates";
+import { formatMealDate, getMealPeriod, MEAL_TYPE_LABELS, type MealView } from "./meal-dates";
 import { MealDetails, MealRecord } from "./meal-detail";
 import { appendCopiedDish, editMealDraft, newMealDraft, type MealDraft, type MealDraftPayload } from "./meal-draft";
 import { MealEditor } from "./meal-editor";
@@ -152,20 +152,20 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
     try {
       const result = await mealRequest<{ meal: MealDetail } | undefined>(action.write.url, request.signal, action.write);
       if (request.signal.aborted) return;
-      let target = action.target;
       if (action.write.method !== "DELETE") {
         const saved = result?.meal;
-        if (!saved || saved.workspaceId !== workspaceId || typeof saved.mealDate !== "string"
-          || !isMealDate(saved.mealDate) || !MEAL_TYPES.includes(saved.mealType)) {
+        if (!saved || saved.workspaceId !== workspaceId || saved.mealDate !== action.target.date
+          || saved.mealType !== action.target.type || typeof saved.id !== "string" || !saved.id.trim()
+          || !Number.isInteger(saved.version) || saved.version < 1
+          || (action.write.method === "PUT" && saved.id !== action.original?.id)) {
           throw new Error("保存された献立を確認できませんでした。");
         }
-        target = { date: saved.mealDate, type: saved.mealType };
       }
       dirty.current = false;
       setEditor(null);
       setCopy(null);
       setDeletion(null);
-      choose(target.date, target.type);
+      choose(action.target.date, action.target.type);
       refreshMeals();
       setNotice(action.label);
     } catch (cause) {
