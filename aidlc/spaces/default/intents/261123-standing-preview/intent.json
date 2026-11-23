@@ -1,0 +1,27 @@
+{
+  "id": "261123-standing-preview",
+  "issue": "https://github.com/tyask/mille/issues/32",
+  "acceptanceConditions": [
+    "AC-05"
+  ],
+  "phase": "常設 Preview の初回切替",
+  "branch": "codex/issue-32-standing-preview",
+  "baseSha": "3804b54839f5a0c4ac3b1b74478509ec24a80c7a",
+  "referenceSha": "5975e5f20d9eb755d991b8725840feab0b778d65",
+  "state": "frozen",
+  "plan": "plan.md",
+  "planSha256": "cdd007aede7ee702cc538cae3162eb3687394f32410639528807ba77f9f0a2ec",
+  "approvedPlan": "../261121-cake-parity-ci/plan.md",
+  "approvedPlanSha256": "b0377e7832481c600e4ec7fc1a38716274563aa0541161eac765183e17cac58c",
+  "approvedIssueSnapshot": "../261121-cake-parity-ci/issue.md",
+  "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
+  "issueSource": "../261121-cake-parity-ci/issue-source.json",
+  "approvalEvidence": "../261121-cake-parity-ci/approvals.json",
+  "frozenAt": "2026-11-23T02:56:42Z",
+  "preCommitValidation": [
+    "npm run check:fast",
+    "承認済みの対象・SQL ハッシュ・既存常設と固定名の読み取り照合",
+    "関連テスト26件。エイリアス競合、応答不明、Vercel 認証応答を再検証",
+    "git diff --check と処理・証跡を自己レビュー。既存固有 URL の保護と実行時 SHA を読み取りで実測"
+  ]
+}

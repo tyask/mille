@@ -54,6 +54,19 @@ export async function readDevelopmentOidc(environment: Readonly<Record<string, s
 
 const expectedCases = ["desktop-user-a", "desktop-user-b", "mobile-user-a", "mobile-user-b"];
 
+export function readVerifiedBrowserEvidence(controlSha: string, target: { origin: string; sha: string }, result: BrowserProof) {
+  const cases = result.cases.map(({ name, status }) => ({ name, status }));
+  if (!result.success || result.source.before?.sha !== controlSha || result.source.after?.sha !== controlSha
+    || !result.source.unchanged || result.target.kind !== "preview" || result.target.origin !== target.origin
+    || result.target.expectedSha !== target.sha || result.target.runtimeSha !== target.sha
+    || !Object.values(result.resources).every(count => count === 0) || cases.length !== expectedCases.length
+    || !expectedCases.every(name => cases.some(entry => entry.name === name && entry.status === "passed"))
+    || result.cases.some(entry => !entry.checks.includes("runtime-sha") || !entry.checks.includes("runtime-after"))) {
+    throw new Error("正式 Preview のブラウザ証跡を照合できません。");
+  }
+  return { cases, runtimeSha: target.sha, finishedAt: result.finishedAt, durationMs: result.durationMs };
+}
+
 export async function verifyCurrentPreview(
   expectedDeployment: string,
   controlSha: string,
@@ -65,16 +78,7 @@ export async function verifyCurrentPreview(
   const result = await browse(before);
   const after = await status();
   if (!isDeepStrictEqual(before, after)) throw new Error("ブラウザ検証中に正式 Preview が変わりました。");
-  const cases = result.cases.map(({ name, status }) => ({ name, status }));
-  if (!result.success || result.source.before?.sha !== controlSha || result.source.after?.sha !== controlSha
-    || !result.source.unchanged || result.target.kind !== "preview" || result.target.origin !== before.origin
-    || result.target.expectedSha !== before.sha || result.target.runtimeSha !== before.sha
-    || !Object.values(result.resources).every(count => count === 0) || cases.length !== expectedCases.length
-    || !expectedCases.every(name => cases.some(entry => entry.name === name && entry.status === "passed"))
-    || result.cases.some(entry => !entry.checks.includes("runtime-sha") || !entry.checks.includes("runtime-after"))) {
-    throw new Error("正式 Preview のブラウザ証跡を照合できません。");
-  }
-  return { target: after, browser: { cases, runtimeSha: before.sha, finishedAt: result.finishedAt, durationMs: result.durationMs } };
+  return { target: after, browser: readVerifiedBrowserEvidence(controlSha, before, result) };
 }
 
 const mainRef = z.object({ ref: z.literal("refs/heads/main"), object: z.object({ sha }) });
