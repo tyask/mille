@@ -219,6 +219,40 @@ test("継続の割り当てが競合した場合は、実際に押し出した�
   }
 });
 
+test("通常の復元中の競合でも、照合済みの管理対象に限って一度だけ補償する", async () => {
+  for (const scenario of ["managed", "unmanaged", "binding-changed", "second-race", "unknown-response"] as const) {
+    const prior = { ...createdAlias, deploymentId: "dpl_ManagedPrior", uid: "prior_alias" };
+    const concurrent = { ...createdAlias, deploymentId: "dpl_Concurrent", uid: "racing_alias" };
+    const priorPath = `/v2/deployments/${prior.deploymentId}/aliases`;
+    const racedPath = `/v2/deployments/${concurrent.deploymentId}/aliases`;
+    const { vercel, calls, responses, aliasPath } = providers();
+    responses.set(`/v13/deployments/${prior.deploymentId}`, { ...details, id: prior.deploymentId,
+      url: "mille-prior.vercel.app", meta: { ...marker, milleStandingPreviewSha: "b".repeat(40) } });
+    responses.set(`/v13/deployments/${concurrent.deploymentId}`, { ...details, id: concurrent.deploymentId,
+      url: "mille-concurrent.vercel.app", meta: scenario === "unmanaged" ? undefined : { ...marker, milleStandingPreviewSha: "c".repeat(40) } });
+    responses.set(aliasPath, createdAlias);
+    responses.set(`POST ${priorPath}`, () => {
+      responses.set(aliasPath, scenario === "binding-changed" ? { ...prior, uid: "other_alias" } : prior);
+      if (scenario === "unknown-response") return new Response(null, { status: 502 });
+      return Response.json({ uid: prior.uid, alias: standingPreviewAlias, oldDeploymentId: concurrent.deploymentId });
+    });
+    responses.set(`POST ${racedPath}`, () => {
+      responses.set(aliasPath, concurrent);
+      return Response.json({ uid: concurrent.uid, alias: standingPreviewAlias,
+        oldDeploymentId: scenario === "second-race" ? "dpl_Another" : prior.deploymentId });
+    });
+    await assert.rejects(vercel.restoreAlias(createdAlias, prior, verify), error => {
+      assert.ok(error instanceof StandingAliasError);
+      assert.equal(error.receipt.outcome, scenario === "managed" ? "conflict-restored" : "conflict-unresolved");
+      if (scenario === "second-race") assert.equal(error.receipt.displacedDeploymentId, "dpl_Another");
+      return true;
+    });
+    const compensated = scenario === "managed" || scenario === "second-race";
+    assert.deepEqual(calls.filter(call => call.method !== "GET").map(call => call.path), compensated ? [priorPath, racedPath] : [priorPath]);
+    if (compensated) assert.deepEqual(await vercel.readAlias(), concurrent);
+  }
+});
+
 test("作成後の読み戻しに失敗しても、取り消しに使う作成済み UID を返す", async () => {
   const { vercel, calls, responses, aliasPath } = providers();
   let confirmed: StandingPreviewAlias | undefined;

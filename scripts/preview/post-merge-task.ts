@@ -38,6 +38,13 @@ export function readTaskMetadata(body: string | null) {
   return metadata.parse(JSON.parse(match[1]));
 }
 
+export function malformedTaskRefersToIssue(body: string | null, issue: number): boolean {
+  const text = body ?? "";
+  const number = postMergeNumber.parse(issue);
+  return text.includes(metadataPrefix) && (new RegExp(`"issue"\\s*:\\s*${number}(?![0-9])`).test(text)
+    || new RegExp(`https://github\\.com/tyask/mille/issues/${number}(?![0-9])`).test(text));
+}
+
 const pull = z.object({
   number: postMergeNumber,
   body: z.string().nullable(),
@@ -72,14 +79,26 @@ export function sameMergedTask(a: MergedTask, b: MergedTask): boolean {
 }
 
 export async function verifyTaskIntent(read: PreviewGitHubRequest, task: MergedTask) {
+  const path = `${task.metadata.intent}/intent.json`;
   const file = z.object({
-    path: z.string(), type: z.literal("file"), encoding: z.literal("base64"), content: z.string().max(30_000),
-  }).parse(await read(`contents/${task.metadata.intent}/intent.json?ref=${task.mergeSha}`));
-  const intent = z.object({ issue: z.string(), state: z.literal("frozen") })
+    path: z.string(), sha: postMergeSha, type: z.literal("file"), encoding: z.literal("base64"), content: z.string().max(30_000),
+  }).parse(await read(`contents/${path}?ref=${task.mergeSha}`));
+  const intent = z.object({
+    issue: z.string(), branch: z.string(), state: z.literal("frozen"),
+    postMerge: z.strictObject({ completesIssue: z.boolean(), manualPostMerge: z.boolean() }),
+  })
     .parse(JSON.parse(Buffer.from(file.content, "base64").toString("utf8")));
-  if (file.path !== `${task.metadata.intent}/intent.json`
-    || intent.issue !== `https://github.com/${postMergeRepository}/issues/${task.metadata.issue}`) {
-    throw new Error("マージ済みの Intent と Issue を照合できません。");
+  if (file.path !== path || intent.branch !== task.headRef
+    || intent.issue !== `https://github.com/${postMergeRepository}/issues/${task.metadata.issue}`
+    || intent.postMerge.completesIssue !== task.metadata.completesIssue
+    || intent.postMerge.manualPostMerge !== task.metadata.manualPostMerge) {
+    throw new Error("マージ済みの Intent と案件指定が一致しません。");
+  }
+  const files = await githubPages(read, `pulls/${task.number}/files`,
+    z.object({ filename: z.string(), sha: postMergeSha, status: z.string() }));
+  const changed = files.filter(item => item.filename === path);
+  if (changed.length !== 1 || changed[0].status !== "added" || changed[0].sha !== file.sha) {
+    throw new Error("この PR が追加した Intent を照合できません。");
   }
 }
 

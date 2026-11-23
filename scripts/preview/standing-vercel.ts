@@ -364,6 +364,11 @@ export class StandingPreviewVercel {
     const current = await this.readAlias();
     if (!current || !sameAlias(current, assignedAlias)) throw new Error("復元前に固定エイリアスの割り当てが変わりました。");
     const restored = await this.postAlias(previousItem.id).catch(() => undefined);
+    const displaced = restored?.oldDeploymentId;
+    if (restored && displaced && displaced !== current.deploymentId) {
+      const justRestored = { ...current, uid: restored.uid, deploymentId: previousItem.id };
+      return this.restoreAliasConflict(justRestored, displaced, current.deploymentId);
+    }
     const observed = await this.observeAlias();
     if (restored?.oldDeploymentId !== current.deploymentId || !observed || observed.uid !== restored.uid
       || observed.deploymentId !== previousItem.id) {

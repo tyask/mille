@@ -72,7 +72,7 @@ async function verify(env: NodeJS.ProcessEnv, ctx: Context, task: MergedTask) {
     while (true) {
       const fresh = await readMergedTask(read, task.number);
       if (!fresh || !sameMergedTask(fresh, task)) throw new Error("案件 PR が変更されています。");
-      if (await readPostMergeMain(read) !== task.mergeSha) {
+      if (controlSha !== task.mergeSha || await readPostMergeMain(read) !== task.mergeSha) {
         result.status = "superseded";
         break;
       }

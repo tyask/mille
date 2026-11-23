@@ -51,7 +51,7 @@ Ready に必要な検証の不足、SHA の不一致、更新・再取得の失�
 
 ## マージ後確認
 
-案件を進める PR は、関連 Issue の通常リンクとともに、次の形式でマージ後確認の対象を指定する。Issue 番号とマージに含まれる凍結済み Intent のパスを使う。分割 PR では `completesIssue` を `false` にする。`true` は案件の完了を明示する最終 PR で使う。GitHub の自動クローズ用キーワードによる完了処理は使用しない。
+案件を進める PR は、関連 Issue の通常リンクとともに、次の形式でマージ後確認の対象を指定する。Issue 番号と、この PR で追加する凍結済み Intent のパスを使う。分割 PR では `completesIssue` を `false` にする。`true` は案件の完了を明示する最終 PR で使う。`intent.json` の `postMerge` に同じ `completesIssue` と `manualPostMerge` を記録し、レビュー対象に含める。GitHub の自動クローズ用キーワードによる完了処理は使用しない。
 
 ```text
 <!-- mille-task/v1 {"issue":32,"intent":"aidlc/spaces/default/intents/261123-post-merge","completesIssue":false,"manualPostMerge":false} -->
@@ -64,6 +64,8 @@ Ready に必要な検証の不足、SHA の不一致、更新・再取得の失�
 ```sh
 gh workflow run post-merge.yml --repo tyask/mille --ref main -f pr="<マージ済み PR 番号>"
 ```
+
+同じ run からやり直す場合は全ジョブを再実行し、同じ試行で生成した artifact を使う。
 
 完了指定の PR と先行する案件 PR の確認が成功し、進行中の関連 PR や手動確認の指定がなく、Issue の受入条件がすべてチェック済みであることを確認した場合に Issue を完了する。 [Cake のマージ後手順](https://github.com/tyask/Cake/blob/5975e5f20d9eb755d991b8725840feab0b778d65/docs/development-workflow.md#L655-L674)
 

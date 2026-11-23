@@ -4,6 +4,7 @@
   "acceptanceConditions": ["AC-05"],
   "phase": "常設 Preview の継続更新とマージ後照合",
   "branch": "codex/issue-32-post-merge",
+  "postMerge": { "completesIssue": false, "manualPostMerge": false },
   "baseSha": "82a3c72a6cd8b7dd371ec20687113ca713440bb1",
   "referenceSha": "5975e5f20d9eb755d991b8725840feab0b778d65",
   "state": "frozen",
@@ -15,11 +16,12 @@
   "approvedIssueSha256": "fd1dd2dd1445466f76cd9acfbd442839a440236e4a4321f1b05ac76dbaad65db",
   "issueSource": "../261121-cake-parity-ci/issue-source.json",
   "approvalEvidence": "../261121-cake-parity-ci/approvals.json",
-  "frozenAt": "2026-11-23T05:02:54Z",
+  "frozenAt": "2026-11-23T05:07:11Z",
   "preCommitValidation": [
     "npm run check:fast とワークフロー3件の YAML 読み込み",
-    "関連テスト48件。常設切替と復元、CI・本番・常設・資源削除の証拠、Issue の完了条件を照合",
+    "関連テスト52件。常設切替と復元、CI・本番・常設・資源削除の証拠、Issue の完了条件を照合",
     "GitHub の main CI と PR #66 の cleanup 試行の実応答を読み取りで照合",
-    "git diff --check、保護とマージ後の権限分離、エイリアス競合と削除再試行を自己レビュー"
+    "git diff --check、保護とマージ後の権限分離、エイリアス競合と削除再試行を自己レビュー",
+    "初回レビューを反映。追加した Intent と信頼済み run の照合、過去の合格証拠の保持、関連 PR の再照合、エイリアス復元中の競合対処"
   ]
 }

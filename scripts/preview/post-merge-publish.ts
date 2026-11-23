@@ -2,8 +2,8 @@ import { z } from "zod";
 import type { PreviewGitHubRequest } from "./github";
 import { postMergeChecks } from "./post-merge-evidence";
 import {
-  acceptanceComplete, githubPages, mergedTaskSchema, postMergeNumber, postMergeRepository, postMergeSha,
-  readMergedTask, readPostMergeIssue, readPostMergeMain, readTaskMetadata, sameMergedTask, verifyTaskIntent,
+  acceptanceComplete, githubPages, malformedTaskRefersToIssue, mergedTaskSchema, postMergeNumber, postMergeRepository, postMergeSha,
+  readMergedTask, readPostMergeIssue, readPostMergeMain, readTaskMetadata, repositoryIdentity, sameMergedTask, verifyTaskIntent,
   type MergedTask,
 } from "./post-merge-task";
 
@@ -18,7 +18,8 @@ export const postMergeResultSchema = z.strictObject({
   checks: postMergeChecks,
 }).refine(result => {
   const { production, standing, cleanup } = result.checks;
-  return (result.status !== "passed" || Object.values(result.checks).every(check => check.status === "passed"))
+  return (result.status !== "passed" || (result.controlSha === result.task.mergeSha
+    && Object.values(result.checks).every(check => check.status === "passed")))
     && (production.status !== "passed" || production.details.runtimeSha === result.task.mergeSha)
     && (standing.status !== "passed" || standing.details.runtimeSha === result.task.mergeSha)
     && (cleanup.status !== "passed" || cleanup.details.headSha === result.task.headSha);
@@ -34,6 +35,33 @@ const comment = z.object({
 type Comment = z.infer<typeof comment>;
 const pullRow = z.object({ number: postMergeNumber, body: z.string().nullable(), state: z.enum(["open", "closed"]) });
 const closeCandidate = z.object({ number: postMergeNumber, state: z.literal("closed"), merged: z.boolean() });
+const verificationStep = "main CI・本番・常設 Preview・PR 資源削除の照合";
+
+async function recordedVerificationPassed(read: PreviewGitHubRequest, result: PostMergeResult) {
+  const { runId, attempt, task } = result;
+  const prefix = `actions/runs/${runId}/attempts/${attempt}`;
+  const run = z.object({
+    id: postMergeNumber, run_attempt: postMergeNumber, path: z.string(), head_sha: postMergeSha,
+    head_branch: z.literal("main"), event: z.enum(["push", "workflow_dispatch"]),
+    repository: repositoryIdentity, head_repository: repositoryIdentity,
+  }).parse(await read(prefix));
+  const file = ".github/workflows/post-merge.yml";
+  if (run.id !== runId || run.run_attempt !== attempt || run.head_sha !== task.mergeSha
+    || ![file, `${file}@refs/heads/main`, `${postMergeRepository}/${file}@refs/heads/main`].includes(run.path)) return false;
+
+  const finished = { name: z.string(), status: z.string(), conclusion: z.string().nullable() };
+  const resultPage = z.object({ total_count: z.int().nonnegative(), jobs: z.array(z.object({
+    ...finished, run_id: postMergeNumber, head_sha: postMergeSha, steps: z.array(z.object(finished)).nullish(),
+    run_attempt: postMergeNumber.optional(),
+  })).max(100) }).parse(await read(`${prefix}/jobs?per_page=100`));
+  const matching = resultPage.jobs.filter(job => job.name === `PR ${task.number} post-merge verification`);
+  const [job] = matching;
+  const steps = job?.steps?.filter(step => step.name === verificationStep);
+  return resultPage.total_count === resultPage.jobs.length && matching.length === 1 && job.run_id === runId
+    && (job.run_attempt === undefined || job.run_attempt === attempt) && job.head_sha === task.mergeSha
+    && job.status === "completed" && job.conclusion === "success" && steps?.length === 1
+    && steps[0].status === "completed" && steps[0].conclusion === "success";
+}
 
 function byActions(comment: Comment) {
   return comment.user?.id === 41898282 && comment.user.login === "github-actions[bot]" && comment.user.type === "Bot";
@@ -60,7 +88,11 @@ async function relatedWorkComplete(read: PreviewGitHubRequest, task: MergedTask,
   const related = new Set<number>();
   for (const row of rows) {
     let info;
-    try { info = readTaskMetadata(row.body); } catch { continue; }
+    try { info = readTaskMetadata(row.body); }
+    catch {
+      if (malformedTaskRefersToIssue(row.body, task.metadata.issue)) return false;
+      continue;
+    }
     if (info?.issue !== task.metadata.issue) continue;
     if (row.state === "open") return false;
     const pr = closeCandidate.parse(await read(`pulls/${row.number}`));
@@ -70,6 +102,8 @@ async function relatedWorkComplete(read: PreviewGitHubRequest, task: MergedTask,
     const actual = await readMergedTask(read, row.number);
     if (recorded?.status !== "passed" || !actual || actual.metadata.manualPostMerge
       || !sameMergedTask(recorded.task, actual)) return false;
+    if (!(await recordedVerificationPassed(read, recorded))) return false;
+    await verifyTaskIntent(read, actual);
     related.add(row.number);
   }
   return related.has(task.number) && history.every(entry => related.has(entry.task.number));
@@ -122,7 +156,6 @@ export async function publishPostMerge(read: PreviewGitHubRequest, result: PostM
   if (!current || !sameMergedTask(current, task)) throw new Error("PR の案件指定が変更されています。");
   await verifyTaskIntent(read, current);
   const issue = await readPostMergeIssue(read, task.metadata.issue);
-  if (await readPostMergeMain(read) !== task.mergeSha) result = { ...result, status: "superseded" };
 
   const comments = await githubPages(read, `issues/${issue.number}/comments`, comment);
   const owned = comments.filter(item => byActions(item) && item.body.startsWith(markerPrefix));
@@ -132,6 +165,7 @@ export async function publishPostMerge(read: PreviewGitHubRequest, result: PostM
   const previous = history.find(entry => entry.task.number === task.number);
   if (previous && previous.task.mergeSha !== task.mergeSha) throw new Error("同じ PR の merge SHA が一致しません。");
   if (previous && newer(previous, result)) return;
+  if (previous?.status === "passed" && sameMergedTask(previous.task, task) && result.status === "superseded") return;
   const updated = [...history.filter(entry => entry.task.number !== task.number), result];
   const body = renderComment(updated, result);
   if (body.length > 64_000) throw new Error("マージ後確認コメントが GitHub の上限を超えています。");
@@ -149,10 +183,12 @@ export async function publishPostMerge(read: PreviewGitHubRequest, result: PostM
   }
 
   if (result.status !== "passed" || !task.metadata.completesIssue || task.metadata.manualPostMerge
-    || issue.state !== "open" || !acceptanceComplete(issue.body) || !(await relatedWorkComplete(read, task, updated))) return;
+    || issue.state !== "open" || !acceptanceComplete(issue.body) || await readPostMergeMain(read) !== task.mergeSha
+    || !(await relatedWorkComplete(read, task, updated))) return;
   const finalIssue = await readPostMergeIssue(read, issue.number);
   const finalTask = await readMergedTask(read, task.number);
   if (finalIssue.state !== "open" || !acceptanceComplete(finalIssue.body)
-    || !finalTask || !sameMergedTask(finalTask, task) || await readPostMergeMain(read) !== task.mergeSha) return;
+    || !finalTask || !sameMergedTask(finalTask, task) || !(await relatedWorkComplete(read, task, updated))
+    || await readPostMergeMain(read) !== task.mergeSha) return;
   await read(`issues/${issue.number}`, { method: "PATCH", body: { state: "closed", state_reason: "completed" } });
 }
