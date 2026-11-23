@@ -16,10 +16,15 @@ export interface MealWrite {
   json: string;
   key: string;
   createdAt: number;
+  expectedStatuses?: readonly number[];
 }
 
-export function mealWrite(url: string, method: MealWrite["method"], payload: unknown): MealWrite {
-  return { url, method, json: JSON.stringify(payload), key: crypto.randomUUID(), createdAt: Date.now() };
+export function mealWrite(url: string, method: MealWrite["method"], payload: unknown, expectedStatuses?: readonly number[]): MealWrite {
+  return { url, method, json: JSON.stringify(payload), key: crypto.randomUUID(), createdAt: Date.now(), expectedStatuses };
+}
+
+export function mealWriteExpired(write: MealWrite): boolean {
+  return Date.now() - write.createdAt >= 24 * 60 * 60 * 1_000;
 }
 
 export async function mealRequest<T>(url: string, signal?: AbortSignal, write?: MealWrite): Promise<T> {
@@ -40,8 +45,8 @@ export async function mealRequest<T>(url: string, signal?: AbortSignal, write?: 
     throw new MealApiError(message, response.status, code);
   }
   if (write) {
-    const expected = { POST: 201, PUT: 200, DELETE: 204 }[write.method];
-    if (response.status !== expected) throw new Error("送信結果を確認できませんでした。");
+    const expected = write.expectedStatuses ?? [{ POST: 201, PUT: 200, DELETE: 204 }[write.method]];
+    if (!expected.includes(response.status)) throw new Error("送信結果を確認できませんでした。");
   }
   if (response.status !== 204 && result === undefined) throw new Error("応答を確認できませんでした。");
   return result as T;

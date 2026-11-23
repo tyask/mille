@@ -6,7 +6,7 @@ const databaseText = z.string().refine(
   "入力できない文字が含まれています。",
 );
 
-function textWithin(limit: number) {
+export function textWithin(limit: number) {
   return databaseText.transform(value => value.trim())
     .refine(value => Array.from(value).length <= limit, `${limit}文字以内で入力してください。`);
 }

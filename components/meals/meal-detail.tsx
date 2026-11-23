@@ -15,6 +15,8 @@ type MealDetailsProps = {
   onEdit: () => void;
   onDelete: () => void;
   onCopy: (dishId?: string) => void;
+  onRecord: () => void;
+  onSuggest?: () => void;
 };
 
 function DishDetails({ dish, mealServings, onCopy }: { dish: MealDish; mealServings: number | null; onCopy?: () => void }) {
@@ -47,9 +49,10 @@ function DishDetails({ dish, mealServings, onCopy }: { dish: MealDish; mealServi
 }
 
 export function MealRecord({ detail, onCopy }: { detail: MealDetail; onCopy?: (dishId: string) => void }) {
+  const recorded = detail.status === "RECORDED";
   return <>
     <div className="meal-detail-meta">
-      <span className="meal-detail-status is-recorded">記録済み</span>
+      <span className={`meal-detail-status ${recorded ? "is-recorded" : "is-planned"}`} data-testid="meal-detail-status">{recorded ? "記録済み" : "予定"}</span>
       {detail.servings !== null && <span>献立 {detail.servings}人分</span>}
       <span>{detail.updatedBy.name}が <time dateTime={detail.updatedAt}>{updatedAtFormat.format(new Date(detail.updatedAt))}</time> に更新</span>
     </div>
@@ -59,7 +62,7 @@ export function MealRecord({ detail, onCopy }: { detail: MealDetail; onCopy?: (d
   </>;
 }
 
-export function MealDetails({ date, meal, detail, status, onRetry, onAdd, onEdit, onDelete, onCopy }: MealDetailsProps) {
+export function MealDetails({ date, meal, detail, status, onRetry, onAdd, onEdit, onDelete, onCopy, onRecord, onSuggest }: MealDetailsProps) {
   return (
     <section className="meal-detail" data-testid="meal-detail" aria-label={`${MEAL_TYPE_LABELS[meal]}の詳細`}>
       <div className="meal-detail-header">
@@ -77,14 +80,17 @@ export function MealDetails({ date, meal, detail, status, onRetry, onAdd, onEdit
         <div className="meal-detail-empty">
           <p className="meal-detail-status">未記録</p>
           <button type="button" className="meal-button meal-button-primary" data-testid="meal-detail-add" onClick={onAdd}>献立を登録</button>
+          {onSuggest && <button type="button" className="meal-button meal-button-secondary" data-testid="meal-detail-suggest" onClick={onSuggest}>献立を提案</button>}
         </div>
       )}
       {status === "loaded" && detail && (
         <>
-          <MealRecord detail={detail} onCopy={onCopy} />
+          <MealRecord detail={detail} onCopy={detail.status === "RECORDED" ? onCopy : undefined} />
           <div className="meal-detail-actions">
-            <button type="button" className="meal-button meal-button-primary" data-testid="meal-detail-edit" onClick={onEdit}>編集する</button>
-            <button type="button" className="meal-button meal-button-secondary" data-testid="meal-detail-copy" onClick={() => onCopy()}>献立をコピー</button>
+            {detail.status === "PLANNED" && <button type="button" className="meal-button meal-button-primary" data-testid="meal-detail-record" onClick={onRecord}>作った内容を記録</button>}
+            <button type="button" className={`meal-button meal-button-${detail.status === "PLANNED" ? "secondary" : "primary"}`} data-testid="meal-detail-edit" onClick={onEdit}>編集する</button>
+            {detail.status === "RECORDED" && <button type="button" className="meal-button meal-button-secondary" data-testid="meal-detail-copy" onClick={() => onCopy()}>献立をコピー</button>}
+            {detail.status === "PLANNED" && onSuggest && <button type="button" className="meal-button meal-button-secondary" data-testid="meal-detail-suggest" onClick={onSuggest}>別の献立を提案</button>}
             <button type="button" className="meal-button meal-button-danger" data-testid="meal-detail-delete" onClick={onDelete}>削除する</button>
           </div>
         </>

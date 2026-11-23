@@ -23,6 +23,8 @@ const allowedMigrations = [
   ["002_workspaces.sql", "8ea6f940c097035d2c0e54417b60473b449219702f3aa232c24969c522c12eba"],
   ["003_meals.sql", "6a00446fca1293f006ac71df6fa71f3a7b81c31e3009268c9811b5ed674473d4"],
   ["004_meal_api.sql", "b3992b6880d6d5bc86636fdf88d44dccd249dff431df471500742ebaec8eec2b"],
+  ["005_meal_plans.sql", "afc13b2cb48c9e3e37e0c73cae90a0ac7a3c086829e7bd502bce163f8d5cb71a"],
+  ["006_meal_suggestions.sql", "210f984f9444211a81c2c82f120c38c3c9353b0ed7aceb42f5534a2be82cc857"],
 ] as const;
 
 const projectDetails = z.object({ project: z.object({ id: z.literal(projectId), name: z.literal(environmentId),
@@ -87,6 +89,10 @@ async function readHistory(query: Query) {
 
 function migrationWithBaseline(query: Query, approvedSql: string): Query {
   let started = false;
+  const missingPredecessor = allowedMigrations.slice(3).map(([name], index) =>
+    `(EXISTS (SELECT 1 FROM public.schema_migrations WHERE name = ${sqlLiteral(name)})
+      AND NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE name = ${sqlLiteral(allowedMigrations[index + 2][0])}))`
+  ).join(" OR ");
   return async <Row extends DatabaseRow>(sql: string, parameters?: unknown[]): Promise<Row[]> => {
     if (started) return query<Row>(sql, parameters);
     if (sql !== approvedSql || parameters?.length) throw new Error("常設 Preview の承認済み移行と一致しません。");
@@ -103,8 +109,7 @@ BEGIN
       AND sha256 = ${sqlLiteral(allowedMigrations[1][1])}) THEN
     RAISE EXCEPTION 'Mille standing migration baseline mismatch';
   END IF;
-  IF EXISTS (SELECT 1 FROM public.schema_migrations WHERE name = ${sqlLiteral(allowedMigrations[3][0])})
-    AND NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE name = ${sqlLiteral(allowedMigrations[2][0])}) THEN
+  IF ${missingPredecessor} THEN
     RAISE EXCEPTION 'Mille standing migration order mismatch';
   END IF;
   EXECUTE ${sqlLiteral(approvedSql)};

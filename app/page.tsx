@@ -2,7 +2,7 @@ import WorkspaceApp from "@/components/workspace-app";
 import { SessionBoundary } from "@/components/session-boundary";
 import { LoginScreen } from "@/components/login-screen";
 import { readMealLocation } from "@/components/meals/meal-location";
-import { getAuthMode } from "@/lib/server/auth/auth-mode";
+import { getAuthMode, isTestAuthEnabled } from "@/lib/server/auth/auth-mode";
 import { getCurrentUser } from "@/lib/server/auth/current-user";
 import { getWorkspaceState } from "@/lib/server/workspaces";
 
@@ -21,7 +21,10 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
       const value = params[key];
       return typeof value === "string" ? value : undefined;
     });
-    return <SessionBoundary userId={user.id}><WorkspaceApp user={user} initialState={initialState} initialWorkspaceId={initialWorkspaceId} initialLocation={initialLocation} /></SessionBoundary>;
+    return <SessionBoundary userId={user.id}>
+      <WorkspaceApp user={user} initialState={initialState} initialWorkspaceId={initialWorkspaceId}
+        initialLocation={initialLocation} suggestionsEnabled={isTestAuthEnabled()} />
+    </SessionBoundary>;
   }
   const error = typeof params.error === "string" ? params.error : undefined;
   return <LoginScreen mode={getAuthMode()} error={error} />;

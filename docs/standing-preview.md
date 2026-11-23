@@ -19,4 +19,4 @@ Actions の Summary と証跡には `main` SHA、CI 試行、デプロイ・Neon
 
 `main` に更新があると、**Mille Standing Preview** が同じ SHA の本番公開と CI の確認を待ち、常設 Preview を更新します。新しい固有 URL で正式ブラウザ検証の4ケースと実行時 SHA を確認してから、固定 URL `mille-main-preview-fumin1.vercel.app` を切り替えます。更新後は固定 URL の保護と実行時 SHA を照合します。切替後の照合に失敗した場合は、今回の割り当てを確認できた時点で直前の割り当てに戻し、処理を失敗として記録します。シリアル実行中により新しい `main` が到着した場合は、古い SHA の公開を止めます。
 
-初回切替で確保した固有 URL と Neon の常設ブランチを引き続き使用します。継続更新では承認済みの001〜004の履歴を照合し、新しい SQL や履歴差分がある場合は公開前に停止します。本番や CI の到着が遅れた場合や照合に失敗した場合は、Actions で対象 SHA とジョブの結果を確認します。現在の `main` を対象に、初回切替と同じコマンドで再実行できます。 [Mille Standing Preview](https://github.com/tyask/mille/actions/workflows/standing-preview.yml)
+初回切替で確保した固有 URL と Neon の常設ブランチを引き続き使用します。継続更新では承認済みの全 SQL の履歴を照合し、未適用の SQL や履歴差分がある場合は公開前に停止します。P2 では、常設 DB への005・006の適用が承認された後、現在の `main` と常設 DB の接続先を照合し、既存 DB の移行手順で適用します。適用履歴を確認してから、現在の `main` を対象に初回切替と同じコマンドで再実行します。 [既存 DB の移行手順](../scripts/db/README.md#cli-を使う場合) · [Mille Standing Preview](https://github.com/tyask/mille/actions/workflows/standing-preview.yml)

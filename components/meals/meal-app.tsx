@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { copyMealSchema } from "@/lib/shared/meal-schemas";
 import { MEAL_TYPES, type MealDetail, type MealSummary, type MealType } from "@/lib/shared/meal-types";
 import { MealCalendar } from "./meal-calendar";
 import { formatMealDate, getMealPeriod, MEAL_TYPE_LABELS, type MealView } from "./meal-dates";
 import { MealDetails, MealRecord } from "./meal-detail";
+import { MealDialog } from "./meal-dialog";
 import { appendCopiedDish, editMealDraft, newMealDraft, type MealDraft, type MealDraftPayload } from "./meal-draft";
 import { MealEditor } from "./meal-editor";
 import { MealSearchPanel } from "./meal-search-panel";
-import { detailUrl, listUrl, MealApiError, mealRequest, mealWrite, readMealSlot, useMealResource, type MealWrite } from "./meal-client";
+import { detailUrl, listUrl, MealApiError, mealRequest, mealWrite, mealWriteExpired, readMealSlot, useMealResource, type MealWrite } from "./meal-client";
 
 export interface MealSelection { date: string; view: MealView; meal: MealType }
 export type MealNavigationBlock = "draft" | "saving" | null;
@@ -19,36 +20,20 @@ type EditorState = {
   draft: MealDraft;
   original?: MealDetail;
   copied?: { notice: string; confirmServings: boolean };
+  recording?: boolean;
 };
 type CopyTarget = { source: MealDetail; dishId?: string; date: string; type: MealType };
 type Slot = { date: string; type: MealType };
-type Action = { write: MealWrite; label: string; target: Slot; original?: MealDetail };
+type Action = { write: MealWrite; label: string; target: Slot; original?: MealDetail; recording?: boolean };
 type Conflict = { title: string; latest?: MealDetail | null; lookupFailed?: boolean; action: Action; byVersion: boolean };
 
-function Modal({ title, testId, busy, children, onClose }: {
-  title: string;
-  testId: string;
-  busy: boolean;
-  children: ReactNode;
-  onClose: () => void;
-}) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  useEffect(() => { dialog.current?.showModal(); }, []);
-  return <dialog ref={dialog} className="meal-dialog" data-testid={testId} aria-label={title} onCancel={event => {
-    event.preventDefault();
-    if (!busy) onClose();
-  }}>
-    <h2>{title}</h2>
-    {children}
-  </dialog>;
-}
-
-export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockChange }: {
+export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockChange, onSuggest }: {
   workspaceId: string;
   selection: MealSelection;
   refresh: number;
   onSelection: (selection: MealSelection) => void;
   onBlockChange: (block: MealNavigationBlock) => void;
+  onSuggest?: () => void;
 }) {
   const api = `/api/workspaces/${encodeURIComponent(workspaceId)}`;
   const { date, view, meal } = selection;
@@ -78,10 +63,10 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
 
   function refreshMeals() { setRevision(previous => previous + 1); }
 
-  function startEditor(draft: MealDraft, original?: MealDetail, copied?: EditorState["copied"]) {
+  function startEditor(draft: MealDraft, original?: MealDetail, copied?: EditorState["copied"], recording = false) {
     dirty.current = Boolean(copied);
     onBlockChange(copied ? "draft" : null);
-    setEditor({ key: ++editorKey.current, draft, original, copied });
+    setEditor({ key: ++editorKey.current, draft, original, copied, recording });
     setNotice("");
     setError("");
     setConflict(null);
@@ -138,7 +123,7 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
 
   async function save(action: Action) {
     if (pending.current) return;
-    if (Date.now() - action.write.createdAt >= 24 * 60 * 60 * 1_000) {
+    if (mealWriteExpired(action.write)) {
       setRetry(null);
       setError("送信結果を再確認できる期間を過ぎました。最新の献立を確認してください。");
       refreshMeals();
@@ -157,7 +142,8 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
         if (!saved || saved.workspaceId !== workspaceId || saved.mealDate !== action.target.date
           || saved.mealType !== action.target.type || typeof saved.id !== "string" || !saved.id.trim()
           || !Number.isInteger(saved.version) || saved.version < 1
-          || (action.write.method === "PUT" && saved.id !== action.original?.id)) {
+          || ((action.write.method === "PUT" || action.recording) && saved.id !== action.original?.id)
+          || (action.recording && saved.status !== "RECORDED")) {
           throw new Error("保存された献立を確認できませんでした。");
         }
       }
@@ -208,10 +194,17 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
   function submitEditor(payload: MealDraftPayload) {
     if (!editor || retry || conflict?.byVersion) return;
     const original = editor.original;
-    const write = original
-      ? mealWrite(detailUrl(api, original.id), "PUT", { ...payload, expectedVersion: original.version })
-      : mealWrite(`${api}/meals`, "POST", payload);
-    void save({ write, label: "献立を保存しました。", target: { date: payload.mealDate, type: payload.mealType }, original });
+    const { recording } = editor;
+    let write: MealWrite;
+    if (original) {
+      const url = detailUrl(api, original.id);
+      const input = { ...payload, expectedVersion: original.version };
+      write = recording ? mealWrite(`${url}/recordings`, "POST", input, [200]) : mealWrite(url, "PUT", input);
+    } else {
+      write = mealWrite(`${api}/meals`, "POST", payload);
+    }
+    const label = recording ? "作った献立を記録しました。" : "献立を保存しました。";
+    void save({ write, label, target: { date: payload.mealDate, type: payload.mealType }, original, recording });
   }
 
   function closeDialog() {
@@ -289,33 +282,36 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
       </>}
       {conflict.latest === null && <p>現在、この食事枠に記録はありません。</p>}
       {editor && conflict.byVersion && conflict.latest && <button className="meal-button meal-button-secondary" type="button" disabled={busy} onClick={() => {
-        if (conflict.latest && window.confirm("保存していない入力を破棄し、最新版を開きますか？")) startEditor(editMealDraft(conflict.latest), conflict.latest);
+        if (conflict.latest && window.confirm("保存していない入力を破棄し、最新版を開きますか？")) {
+          startEditor(editMealDraft(conflict.latest), conflict.latest, undefined, Boolean(editor.recording && conflict.latest.status === "PLANNED"));
+        }
       }}>最新版から編集し直す</button>}
     </section>}
   </>;
 
   return <section className="meal-app" data-testid="meal-app" aria-label="献立">
     <header className="meal-app-header">
-      <h2>{editor ? editor.original ? "献立を編集" : "献立を登録" : "献立"}</h2>
+      <h2>{editor?.recording ? "作った内容を記録" : editor ? editor.original ? "献立を編集" : "献立を登録" : "献立"}</h2>
       {!editor && <button type="button" data-testid="meal-register" className="meal-button meal-button-primary" onClick={() => startEditor(newMealDraft(date, meal))}>＋ 登録</button>}
     </header>
     {notice && <p role="status" className="meal-feedback">{notice}</p>}
     {editor ? <>
       {feedback}
-      <MealEditor key={editor.key} initial={editor.draft} busy={busy} lockSlot={Boolean(editor.copied && editor.original)}
+      <MealEditor key={editor.key} initial={editor.draft} busy={busy} lockSlot={Boolean(editor.recording || (editor.copied && editor.original))}
         saveDisabled={Boolean(retry || conflict?.byVersion)} fieldsDisabled={Boolean(retry)} onDirty={markDirty} onSave={submitEditor} onCancel={closeEditor}
-        copyNotice={editor.copied?.notice} confirmCopyServings={editor.copied?.confirmServings} />
+        copyNotice={editor.copied?.notice} confirmCopyServings={editor.copied?.confirmServings} saveLabel={editor.recording ? "記録済みにする" : undefined} />
     </> : <div className="meal-main-grid">
         <MealCalendar date={date} view={view} meal={meal} meals={meals} status={list.status} onDate={value => choose(value, meal)}
           onView={value => onSelection({ ...selection, view: value })} onSelect={choose} onRetry={refreshMeals} />
         <MealDetails date={date} meal={meal} detail={detail} status={detailStatus} onRetry={refreshMeals}
           onAdd={() => startEditor(newMealDraft(date, meal))} onEdit={() => { if (detail) startEditor(editMealDraft(detail), detail); }}
-          onDelete={() => { if (detail) setDeletion(detail); }} onCopy={dishId => { if (detail) setCopy({ source: detail, dishId, date, type: meal }); }} />
+          onDelete={() => { if (detail) setDeletion(detail); }} onCopy={dishId => { if (detail?.status === "RECORDED") setCopy({ source: detail, dishId, date, type: meal }); }}
+          onRecord={() => { if (detail?.status === "PLANNED") startEditor(editMealDraft(detail), detail, undefined, true); }} onSuggest={onSuggest} />
     </div>}
     <div hidden={Boolean(editor)}>
       <MealSearchPanel api={api} revision={update} onSelect={item => choose(item.mealDate, item.mealType)} />
     </div>
-    {copy && <Modal testId="meal-copy-dialog" title={copy.dishId ? "料理をコピー" : "献立をコピー"} busy={busy} onClose={closeDialog}>
+    {copy && <MealDialog testId="meal-copy-dialog" title={copy.dishId ? "料理をコピー" : "献立をコピー"} busy={busy} onClose={closeDialog}>
       <form onSubmit={event => void continueCopy(event)}>
         <label className="meal-field">コピー先の日付<input type="date" data-testid="meal-copy-date" required value={copy.date} disabled={busy || Boolean(retry)} onChange={event => changeCopyTarget({ ...copy, date: event.target.value })} /></label>
         <label className="meal-field">コピー先の食事<select data-testid="meal-copy-type" value={copy.type} disabled={busy || Boolean(retry)} onChange={event => changeCopyTarget({ ...copy, type: event.target.value as MealType })}>
@@ -331,14 +327,14 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
           <button data-testid="meal-copy-continue" className="meal-button meal-button-primary" disabled={busy || Boolean(retry || conflict?.byVersion)}>{copy.dishId ? "内容を確認" : "コピーする"}</button>
         </div>
       </form>
-    </Modal>}
-    {deletion && <Modal testId="meal-delete-dialog" title="献立を削除" busy={busy} onClose={closeDialog}>
+    </MealDialog>}
+    {deletion && <MealDialog testId="meal-delete-dialog" title="献立を削除" busy={busy} onClose={closeDialog}>
       <p>{formatMealDate(deletion.mealDate)}の{MEAL_TYPE_LABELS[deletion.mealType]}を削除します。</p>
       {feedback}
       <div className="meal-dialog-actions">
         <button type="button" className="meal-button meal-button-secondary" disabled={busy} onClick={closeDialog}>キャンセル</button>
         <button type="button" data-testid="meal-delete-confirm" className="meal-button meal-button-danger" disabled={busy || Boolean(retry || conflict)} onClick={deleteMeal}>削除する</button>
       </div>
-    </Modal>}
+    </MealDialog>}
   </section>;
 }

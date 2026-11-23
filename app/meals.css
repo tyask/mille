@@ -289,6 +289,7 @@
 }
 
 .meal-marker {
+  display: inline-block;
   width: 7px;
   height: 7px;
   border: 1px solid var(--meal-input-border);
@@ -300,10 +301,24 @@
   border-color: var(--meal-caramel);
 }
 
+.meal-marker.is-planned {
+  background: var(--meal-pastry);
+  border: 1px solid var(--meal-caramel);
+  border-radius: 0;
+  transform: rotate(45deg) scale(.8);
+}
+
 .meal-month-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   margin: 8px 0 0;
   color: var(--meal-muted);
   font-size: .8125rem;
+}
+
+.meal-month-legend span {
+  white-space: nowrap;
 }
 
 .meal-day-slots {
@@ -335,6 +350,11 @@
 }
 
 .meal-slot.is-recorded:not(.is-selected) {
+  background: var(--meal-custard);
+}
+
+.meal-slot.is-planned:not(.is-selected) {
+  border-style: dashed;
   background: var(--meal-custard);
 }
 
@@ -391,6 +411,12 @@
 .meal-detail-status.is-recorded {
   color: var(--meal-chocolate);
   background: var(--meal-pastry);
+}
+
+.meal-detail-status.is-planned {
+  color: var(--meal-caramel-dark);
+  border-color: var(--meal-caramel);
+  border-style: dashed;
 }
 
 .meal-detail-empty,
@@ -812,4 +838,143 @@
   .meal-month-markers {
     gap: 1px;
   }
+}
+
+.suggestion-form,
+.suggestion-results {
+  display: grid;
+  min-width: 0;
+  align-items: start;
+  justify-items: start;
+  gap: 14px;
+  padding: clamp(12px, 2vw, 24px);
+  background: var(--meal-cream);
+  border: 1px solid var(--meal-border);
+  border-radius: 14px;
+}
+
+.suggestion-sample-notice {
+  margin: 0;
+}
+
+.suggestion-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+}
+
+.suggestion-wide-field {
+  grid-column: 1 / -1;
+}
+
+@container meal-layout (min-width: 660px) {
+  .suggestion-fields {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+.suggestion-results h3,
+.suggestion-results h4 {
+  margin: 0;
+}
+
+.suggestion-conditions {
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  margin: 0;
+  font-size: .875rem;
+}
+
+.suggestion-conditions div {
+  display: grid;
+  grid-template-columns: 7em minmax(0, 1fr);
+  gap: 6px;
+}
+
+.suggestion-conditions dt {
+  color: var(--meal-muted);
+}
+
+.suggestion-conditions dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.suggestion-candidates {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 228px), 1fr));
+}
+
+.suggestion-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--meal-border);
+  border-radius: 10px;
+  background: var(--meal-custard);
+}
+
+.suggestion-card h4 {
+  font-size: 1rem;
+}
+
+.suggestion-card .meal-button {
+  margin-top: auto;
+}
+
+.suggestion-time,
+.suggestion-reasons {
+  color: var(--meal-muted);
+  font-size: .875rem;
+}
+
+.suggestion-time,
+.suggestion-dishes,
+.suggestion-reasons {
+  margin: 0;
+}
+
+.suggestion-messages,
+.suggestion-dishes,
+.suggestion-reasons {
+  padding-inline-start: 1.125rem;
+  overflow-wrap: anywhere;
+}
+
+.suggestion-candidate-recipes {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: .875rem;
+}
+
+.suggestion-candidate-recipes p {
+  margin: 4px 0 0;
+}
+
+.suggestion-revise {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  width: min(100%, 36rem);
+}
+
+.suggestion-revise label {
+  width: 100%;
+}
+
+.suggestion-waiting p {
+  margin-bottom: 8px;
 }

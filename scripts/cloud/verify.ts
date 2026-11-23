@@ -7,7 +7,7 @@ import type { Browser, BrowserContext, Page } from "playwright";
 import { TEST_USERS } from "../../lib/shared/test-users";
 import type { IssuedInvitation, Workspace, WorkspaceState } from "../../lib/shared/workspaces";
 import { CloudStartupError, cloudPort, isolatedEnvironment, rootDirectory, startCloudServer, type CloudServer } from "./dev";
-import { verifyMealReads, verifySharedMeals } from "./meal-verify";
+import { verifyMealReads, verifyMealSuggestions, verifySharedMeals } from "./meal-verify";
 
 // Playwright resolves its executable registry on import, before launch({ env }) applies.
 // Keep this process's lookup aligned with setup:cloud and preserve an explicit override.
@@ -507,16 +507,17 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         stage = "meal-open-shared";
         await openMeals(owner.page);
         await openMeals(member.page);
-        await verifySharedMeals({
+        const mealCases = {
           owner: { page: owner.page, checks: owner.item.checks },
           member: { page: member.page, checks: member.item.checks },
           workspaceId: created.id,
-          personalId: ownerPersonal.id,
-          onStage: (mealStage, actor) => {
+          onStage: (mealStage: string, actor: "owner" | "member") => {
             stage = mealStage;
             currentCase = actor === "owner" ? owner.item : member.item;
           },
-        });
+        };
+        await verifySharedMeals({ ...mealCases, personalId: ownerPersonal.id });
+        await verifyMealSuggestions(mealCases);
         stage = "meal-screenshot";
         const mealFilename = `${owner.item.name}-meals.png`;
         await owner.page.screenshot({ path: resolve(directory, mealFilename), fullPage: true });
