@@ -85,19 +85,27 @@ export async function readPreviewTree(directory: string, sha: string) {
   return source;
 }
 
-export async function loadPreviewSource(target: PreviewTarget, token: string) {
-  if (!token || target.operation !== "deploy" || !Number.isSafeInteger(target.number) || target.number < 1
-    || !shaPattern.test(target.sha)) throw new Error("PR ソースの取得対象が無効です。");
-
+async function loadRepositorySource(ref: string, sha: string, mismatch: string, token: string) {
   const directory = await mkdtemp(join(tmpdir(), "mille-preview-"));
   try {
     await git(directory, ["init", "--bare", "--template="]);
-    await git(directory, ["fetch", "--no-tags", "--depth=1", "--no-recurse-submodules", origin,
-      `refs/pull/${target.number}/head`], undefined, token);
+    await git(directory, ["fetch", "--no-tags", "--depth=1", "--no-recurse-submodules", origin, ref], undefined, token);
     const fetched = (await git(directory, ["rev-parse", "FETCH_HEAD"])).toString("ascii").trim();
-    if (fetched !== target.sha) throw new Error("取得した PR ソースの SHA が現在の HEAD と一致しません。");
+    if (fetched !== sha) throw new Error(mismatch);
     return await readPreviewTree(directory, fetched);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+export async function loadPreviewSource(target: PreviewTarget, token: string) {
+  if (!token || target.operation !== "deploy" || !Number.isSafeInteger(target.number) || target.number < 1
+    || !shaPattern.test(target.sha)) throw new Error("PR ソースの取得対象が無効です。");
+  return loadRepositorySource(`refs/pull/${target.number}/head`, target.sha, "取得した PR ソースの SHA が現在の HEAD と一致しません。", token);
+}
+
+/** Call with the verified main ancestor of the currently assigned standing Preview. */
+export async function loadStandingPreviousSource(sha: string, token: string) {
+  if (!token || !shaPattern.test(sha)) throw new Error("常設 Preview の既存配信元が無効です。");
+  return loadRepositorySource(sha, sha, "常設 Preview の既存配信元の SHA が一致しません。", token);
 }

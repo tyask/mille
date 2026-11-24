@@ -14,6 +14,11 @@ const baseline = { productionDeploymentId: "dpl_Production", productionSha: sha,
     .map(alias => [alias, "dpl_Production"])) as Record<"mille-hazel.vercel.app" | "mille-fumin1.vercel.app" | "mille-git-main-fumin1.vercel.app", string> };
 const db = { projectId: "billowing-cherry-59956184", branchId: "br-dark-rain-a1cc9tfa",
   endpointId: "ep-bitter-wind-a1atj6vn", host: "ep-bitter-wind-a1atj6vn.ap-southeast-1.aws.neon.tech" };
+const files = [{ file: "package.json", data: Buffer.from("{}") },
+  { file: "db/migrations/007_fixture.sql", data: Buffer.from("SELECT 7;\n") }];
+const previousFiles = [{ file: "package.json", data: Buffer.from("{}") }];
+const configuration = { mode: "hosted", environment: "preview", environmentId: "mille-preview", host: db.host,
+  url: "postgresql://fixture:fixture@localhost/neondb" } as const;
 
 function browserProof(): BrowserProof {
   const source = { sha, clean: true, branch: "main" };
@@ -32,42 +37,66 @@ function browserProof(): BrowserProof {
 }
 
 function setup({ existing = null, badProof = false, aliasUnprotected = false, changedDatabase = false, failedReadback = false,
-  allowFirstAssignment = true, badPreviousSha = false, delayedAlias }: {
+  allowFirstAssignment = true, badPreviousSha = false, delayedAlias, failAt }: {
     existing?: { uid: string; alias: typeof binding.alias; projectId: string; deploymentId: string } | null;
     badProof?: boolean; aliasUnprotected?: boolean; changedDatabase?: boolean; failedReadback?: boolean;
     allowFirstAssignment?: boolean; badPreviousSha?: boolean; delayedAlias?: "missing" | "previous-sha";
+    failAt?: "previous-source" | "open" | "build" | "staged-readback" | "staged-ref-drift" | "migrate" | "before-browser" | "before-publish";
   } = {}) {
   const writes: string[] = [];
   const waits: number[] = [];
   const reports: string[] = [];
+  const historyChecks: string[] = [];
+  const migrationReports: string[][] = [];
+  const previousSourceReads: string[] = [];
+  const previousRuntimeChecks = new Set<string>();
   let alias = existing;
+  let previousMainVerified = false;
+  let opened = false;
+  let deployed = false;
+  let stagedReadback = false;
   let browsed = false;
   let checkCount = 0;
   const run = () => publishStandingPreview(sha, {
-    verifyCurrent: async () => {},
+    verifyCurrent: async () => {
+      if (stagedReadback && failAt === "staged-ref-drift") throw new Error("main が変わりました");
+    },
     verifyPriorMain: async prior => {
       assert.equal(prior, previous.sha);
       if (badPreviousSha) throw new Error("旧 SHA は main の祖先でありません");
+      previousMainVerified = true;
     },
     vercel: {
       preflight: async () => {},
       readBaseline: async () => baseline,
       readAlias: async () => alias,
-      deploy: async (_input, guard) => {
+      deploy: async (input, guard) => {
         await guard();
+        assert.equal(opened, true);
+        assert.deepEqual(input, { sha, database: configuration, endpointId: db.endpointId, files });
         writes.push("deploy");
+        if (failAt === "build") throw new Error("Vercel ビルド失敗");
+        deployed = true;
         return release;
       },
-      readDeployment: async (id, expectedSha) => {
+      readDeployment: async (id, expectedSha, endpointId) => {
+        assert.equal(endpointId, db.endpointId);
         if (id === previous.id) {
           assert.ok(expectedSha === undefined || expectedSha === previous.sha);
           return previous;
         }
         if (id !== release.id) throw new Error("別デプロイの割り当て");
+        assert.ok(expectedSha === undefined || expectedSha === sha);
+        if (deployed && !browsed) {
+          assert.equal(expectedSha, sha);
+          if (failAt === "staged-readback") return { ...release, sha: previous.sha };
+          stagedReadback = true;
+        }
         return release;
       },
       assignAlias: async (id, guard, onCreated, prior) => {
         await guard();
+        assert.ok(historyChecks.includes("before-publish"));
         assert.equal(id, release.id);
         assert.deepEqual(prior, existing);
         writes.push("assign");
@@ -92,16 +121,47 @@ function setup({ existing = null, badProof = false, aliasUnprotected = false, ch
       },
     },
     identifyDatabase: async () => changedDatabase && browsed ? { ...db, endpointId: "ep-other" } : db,
-    prepareDatabase: async (target, guard, initial) => {
+    openDatabase: async (target, sources, priorSources) => {
       assert.deepEqual(target, db);
-      await guard();
-      writes.push(initial ? "migrate" : "database-readback");
-      return { mode: "hosted", environment: "preview", environmentId: "mille-preview", host: db.host,
-        url: "postgresql://fixture:fixture@localhost/neondb" };
+      assert.deepEqual(sources, files);
+      if (existing?.deploymentId === previous.id) {
+        assert.deepEqual(previousSourceReads, [previous.sha]);
+        assert.deepEqual(priorSources, previousFiles);
+      } else {
+        assert.deepEqual(previousSourceReads, []);
+        assert.equal(priorSources, existing?.deploymentId === release.id ? sources : undefined);
+      }
+      if (failAt === "open") throw new Error("常設 DB の事前照合失敗");
+      opened = true;
+      return {
+        configuration,
+        migrate: async guard => {
+          await guard();
+          assert.equal(stagedReadback, true);
+          writes.push("migrate");
+          if (failAt === "migrate") throw new Error("常設 DB の移行失敗");
+          return ["007_fixture.sql"];
+        },
+        verify: async () => {
+          const stage = browsed ? "before-publish" : "before-browser";
+          historyChecks.push(stage);
+          if (failAt === stage) throw new Error("常設 DB の移行履歴不一致");
+        },
+      };
     },
-    readSource: async () => [{ file: "package.json", data: Buffer.from("{}") }],
+    readSource: async () => files,
+    readPreviousSource: async prior => {
+      assert.equal(prior, previous.sha);
+      assert.equal(previousMainVerified, true);
+      assert.ok(previousRuntimeChecks.has(previous.origin) && previousRuntimeChecks.has(fixed));
+      assert.equal(opened, false);
+      previousSourceReads.push(prior);
+      if (failAt === "previous-source") throw new Error("旧デプロイのソース照合失敗");
+      return previousFiles;
+    },
     browse: async target => {
       assert.deepEqual(target, release);
+      assert.ok(historyChecks.includes("before-browser"));
       browsed = true;
       writes.push("browser");
       const proof = browserProof();
@@ -109,6 +169,7 @@ function setup({ existing = null, badProof = false, aliasUnprotected = false, ch
       return proof;
     },
     checkRuntime: async (origin, runtimeSha, expectedPrior) => {
+      if (runtimeSha === previous.sha) previousRuntimeChecks.add(origin);
       if (origin === fixed) {
         if (runtimeSha === previous.sha) {
           assert.equal(alias?.deploymentId, previous.id);
@@ -127,37 +188,63 @@ function setup({ existing = null, badProof = false, aliasUnprotected = false, ch
         }
       }
     },
-  }, stage => reports.push(stage), { allowFirstAssignment, wait: async duration => { waits.push(duration); } });
-  return { writes, reports, waits, run, binding: () => alias };
+  }, stage => reports.push(stage), {
+    allowFirstAssignment,
+    wait: async duration => { waits.push(duration); },
+    onMigrationsApplied: names => { migrationReports.push([...names]); },
+  });
+  return { writes, reports, waits, historyChecks, migrationReports, previousSourceReads, run, binding: () => alias };
 }
 
-test("正式ブラウザの全ケースと実行時 SHA を確認してから初回の固定 URL を割り当てる", async () => {
+test("ビルドとデプロイ照合後に移行し、履歴・正式ブラウザを確認して固定 URL を割り当てる", async () => {
   const f = setup();
   const proof = await f.run();
   assert.equal(proof.controlSha, sha);
   assert.equal(proof.browser.cases.length, 4);
   assert.equal(proof.alias.id, binding.uid);
   assert.ok(!JSON.stringify(proof).includes("postgresql"));
-  assert.deepEqual(f.writes, ["migrate", "deploy", "browser", "assign", "fixed"]);
+  assert.deepEqual(f.writes, ["deploy", "migrate", "browser", "assign", "fixed"]);
+  assert.deepEqual(f.historyChecks, ["before-browser", "before-publish"]);
+  assert.deepEqual(f.migrationReports, [["007_fixture.sql"]]);
 });
 
-test("証跡の SHA の不一致、またはブラウザ検証中の DB 変更で固定 URL を割り当てない", async () => {
+test("旧ソース、ビルド、デプロイ、移行、履歴の照合に失敗すると既存の固定 URL を保持する", async () => {
+  const failures = [
+    { failAt: "previous-source", error: /旧デプロイのソース照合失敗/, writes: [] },
+    { failAt: "open", error: /事前照合失敗/, writes: [] },
+    { failAt: "build", error: /ビルド失敗/, writes: ["deploy"] },
+    { failAt: "staged-readback", error: /デプロイが変わりました/, writes: ["deploy"] },
+    { failAt: "staged-ref-drift", error: /main が変わりました/, writes: ["deploy"] },
+    { failAt: "migrate", error: /DB の移行失敗/, writes: ["deploy", "migrate"] },
+    { failAt: "before-browser", error: /移行履歴不一致/, writes: ["deploy", "migrate"] },
+    { failAt: "before-publish", error: /移行履歴不一致/, writes: ["deploy", "migrate", "browser"] },
+  ] as const;
+  for (const { failAt, error, writes } of failures) {
+    const f = setup({ existing: previousBinding, failAt });
+    await assert.rejects(f.run, error);
+    assert.deepEqual(f.writes, writes, failAt);
+    assert.deepEqual(f.binding(), previousBinding, failAt);
+  }
+});
+
+test("証跡の SHA の不一致、またはブラウザ検証中の DB 変更で既存の固定 URL を保持する", async () => {
   for (const options of [{ badProof: true }, { changedDatabase: true }]) {
-    const f = setup(options);
+    const f = setup({ ...options, existing: previousBinding });
     await assert.rejects(f.run, /ブラウザ証跡|照合先が変わりました/);
-    assert.deepEqual(f.writes, ["migrate", "deploy", "browser"]);
+    assert.deepEqual(f.writes, ["deploy", "migrate", "browser"]);
+    assert.deepEqual(f.binding(), previousBinding);
   }
 });
 
 test("公開後の確認失敗で今回作成した割り当てのみを戻す", async () => {
   const failed = setup({ aliasUnprotected: true });
   await assert.rejects(failed.run, /固定 URL の保護/);
-  assert.deepEqual(failed.writes, ["migrate", "deploy", "browser", "assign", "fixed", "remove"]);
+  assert.deepEqual(failed.writes, ["deploy", "migrate", "browser", "assign", "fixed", "remove"]);
   assert.ok(failed.reports.includes("restored-alias"));
   assert.equal(failed.binding(), null);
   const readback = setup({ failedReadback: true });
   await assert.rejects(readback.run, /割り当ての再取得/);
-  assert.deepEqual(readback.writes, ["migrate", "deploy", "browser", "assign", "remove"]);
+  assert.deepEqual(readback.writes, ["deploy", "migrate", "browser", "assign", "remove"]);
   assert.equal(readback.binding(), null);
   const existing = setup({ existing: binding, aliasUnprotected: true });
   await assert.rejects(existing.run, /固定 URL の保護/);
@@ -165,10 +252,17 @@ test("公開後の確認失敗で今回作成した割り当てのみを戻す",
   assert.deepEqual(existing.binding(), binding);
 });
 
-test("同じ SHA の既存割り当ての再確認を許し、別デプロイへの既存割り当てを保持する", async () => {
+test("同じ SHA の既存割り当ては履歴を再確認し、移行とデプロイを繰り返さない", async () => {
   const existing = setup({ existing: binding });
   await existing.run();
   assert.deepEqual(existing.writes, ["browser", "fixed"]);
+  assert.deepEqual(existing.historyChecks, ["before-browser", "before-publish"]);
+  assert.deepEqual(existing.migrationReports, [[]]);
+  assert.deepEqual(existing.previousSourceReads, []);
+  const incomplete = setup({ existing: binding, failAt: "before-browser" });
+  await assert.rejects(incomplete.run, /移行履歴不一致/);
+  assert.deepEqual(incomplete.writes, []);
+  assert.deepEqual(incomplete.binding(), binding);
   const other = setup({ existing: { ...binding, deploymentId: "dpl_Other" } });
   await assert.rejects(other.run, /別デプロイ/);
   assert.deepEqual(other.writes, []);
@@ -181,7 +275,8 @@ test("main の祖先で保護済みの常設 Preview から、検証を終えた
     assert.equal(proof.release.sha, sha);
     assert.equal(proof.alias.id, binding.uid);
     assert.deepEqual(f.waits, [2_000]);
-    assert.deepEqual(f.writes, ["database-readback", "deploy", "browser", "assign", "fixed", "fixed"]);
+    assert.deepEqual(f.writes, ["deploy", "migrate", "browser", "assign", "fixed", "fixed"]);
+    assert.deepEqual(f.previousSourceReads, [previous.sha]);
     assert.deepEqual(f.binding(), binding);
   }
 });
@@ -193,9 +288,10 @@ test("固定 URL が欠落または main の履歴と一致しない場合は自
   const badSource = setup({ existing: previousBinding, badPreviousSha: true });
   await assert.rejects(badSource.run, /main の祖先/);
   assert.deepEqual(badSource.writes, []);
+  assert.deepEqual(badSource.previousSourceReads, []);
   const failed = setup({ existing: previousBinding, aliasUnprotected: true });
   await assert.rejects(failed.run, /固定 URL の保護/);
-  assert.deepEqual(failed.writes, ["database-readback", "deploy", "browser", "assign", "fixed", "restore"]);
+  assert.deepEqual(failed.writes, ["deploy", "migrate", "browser", "assign", "fixed", "restore"]);
   assert.deepEqual(failed.waits, []);
   assert.equal(failed.binding()?.deploymentId, previous.id);
   assert.ok(failed.reports.includes("restored-alias"));

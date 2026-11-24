@@ -6,7 +6,7 @@ import { TEST_USERS } from "../../lib/shared/test-users";
 export function sqlLiteral(value: string): string { return `'${value.replaceAll("'", "''")}'`; }
 
 /** PostgreSQL scans a dollar-quoted body before parsing its inner string literals. */
-function proceduralBlock(label: string, body: string): string {
+export function proceduralBlock(label: string, body: string): string {
   let suffix = 0;
   let delimiter = `$${label}$`;
   while (body.includes(delimiter)) delimiter = `$${label}_${++suffix}$`;

@@ -6,12 +6,13 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { previewOrigin, scopedProtectionHeaders, verifyBrowser, type BrowserProof } from "../cloud/verify";
+import { migrationSourcesFromFiles, previewMigrationSources } from "./database";
 import { isTrustedMainWorkflowPath } from "./github";
 import { milleRepositoryId } from "./native-identity";
-import { identifyStandingDatabase, prepareStandingDatabase, standingDatabaseResourceSchema } from "./standing-database";
+import { identifyStandingDatabase, openStandingDatabase, standingDatabaseResourceSchema } from "./standing-database";
 import { StandingAliasError, standingLegacyPreview, standingPreviewAlias, StandingPreviewVercel, standingProductionAliases, StandingProductionPending,
   type StandingPreviewAlias } from "./standing-vercel";
-import { readPreviewTree } from "./source";
+import { loadStandingPreviousSource, readPreviewTree } from "./source";
 import { readDevelopmentOidc, readVerifiedBrowserEvidence } from "./verify";
 
 const repository = "tyask/mille";
@@ -40,14 +41,16 @@ export const standingPreviewReceiptSchema = z.strictObject({
 type CheckCurrent = () => Promise<void>;
 type Database = Awaited<ReturnType<typeof identifyStandingDatabase>>;
 type Release = Awaited<ReturnType<StandingPreviewVercel["readDeployment"]>>;
-type Stage = "prerequisites" | "preflight" | "migration" | "deploy" | "browser" | "publish" | "restore-alias" | "restored-alias";
+type SourceFiles = Awaited<ReturnType<typeof readPreviewTree>>;
+type Stage = "prerequisites" | "preflight" | "database" | "migration" | "deploy" | "browser" | "publish" | "restore-alias" | "restored-alias";
 type Operations = {
   verifyCurrent: CheckCurrent;
   verifyPriorMain: (priorSha: string) => Promise<void>;
   vercel: Pick<StandingPreviewVercel, "preflight" | "readBaseline" | "readAlias" | "deploy" | "readDeployment" | "assignAlias" | "removeAlias" | "restoreAlias">;
   identifyDatabase: () => Promise<Database>;
-  prepareDatabase: (database: Database, verifyCurrent: CheckCurrent, initial: boolean) => ReturnType<typeof prepareStandingDatabase>;
-  readSource: () => ReturnType<typeof readPreviewTree>;
+  openDatabase: (database: Database, files: SourceFiles, previousFiles?: SourceFiles) => ReturnType<typeof openStandingDatabase>;
+  readSource: () => Promise<SourceFiles>;
+  readPreviousSource: (sha: string) => Promise<SourceFiles>;
   browse: (release: Release) => Promise<BrowserProof>;
   checkRuntime: (origin: string, sha: string, previousSha?: string) => Promise<void>;
 };
@@ -112,8 +115,12 @@ async function verifyPublishedRuntime(checkRuntime: () => Promise<void>, verifyB
 
 export async function publishStandingPreview(sha: string, operations: Operations,
   report: (stage: Stage, binding?: StandingPreviewAlias) => void = () => {},
-  { allowFirstAssignment = false, wait = delay }: { allowFirstAssignment?: boolean; wait?: (duration: number) => Promise<void> } = {}) {
-  const { verifyCurrent, verifyPriorMain, vercel, identifyDatabase, prepareDatabase, readSource, browse, checkRuntime } = operations;
+  { allowFirstAssignment = false, wait = delay, onMigrationsApplied }: {
+    allowFirstAssignment?: boolean;
+    wait?: (duration: number) => Promise<void>;
+    onMigrationsApplied?: (names: readonly string[]) => void;
+  } = {}) {
+  const { verifyCurrent, verifyPriorMain, vercel, identifyDatabase, openDatabase, readSource, readPreviousSource, browse, checkRuntime } = operations;
   report("preflight");
   await verifyCurrent();
   const [initialBaseline, database, originalAlias] = await Promise.all([
@@ -141,30 +148,39 @@ export async function publishStandingPreview(sha: string, operations: Operations
     await checkRuntime(previous.origin, previous.sha);
     await checkRuntime(fixedOrigin, previous.sha);
   }
-  let release: Release;
-  if (previous?.sha === sha) {
-    release = previous;
-  } else {
-    const files = await readSource();
-    report("migration");
-    await checkBeforePublish();
-    const configuration = await prepareDatabase(database, checkBeforePublish, !originalAlias);
-    report("deploy");
-    release = await vercel.deploy({ sha, database: configuration, endpointId: database.endpointId, files }, checkBeforePublish);
-  }
+  report("database");
+  await checkBeforePublish();
+  const files = await readSource();
+  const published = previous?.sha === sha ? previous : null;
+  const previousFiles = published ? files : previous ? await readPreviousSource(previous.sha) : undefined;
+  const releaseDatabase = await openDatabase(database, files, previousFiles);
+  if (!published) report("deploy");
+  const release = published ?? await vercel.deploy({
+    sha, database: releaseDatabase.configuration, endpointId: database.endpointId, files,
+  }, checkBeforePublish);
 
   if (release.sha !== sha || release.origin === fixedOrigin || release.origin === standingLegacyPreview.origin
     || Object.hasOwn(initialBaseline.productionAliases, new URL(release.origin).hostname)) {
     throw new Error("常設 Preview の固有 URL が一致しません。");
   }
-  report("browser");
-  await checkBeforePublish();
-  const browser = readVerifiedBrowserEvidence(sha, release, await browse(release));
   const checkRelease = async (expected: Release) => {
     if (!isDeepStrictEqual(expected, await vercel.readDeployment(expected.id, expected.sha, database.endpointId))) {
       throw new Error("常設 Preview のデプロイが変わりました。");
     }
   };
+  if (!published) {
+    report("migration");
+    const applied = await releaseDatabase.migrate(async () => {
+      await checkRelease(release);
+      await checkBeforePublish();
+    });
+    onMigrationsApplied?.(applied);
+  }
+  report("browser");
+  await releaseDatabase.verify();
+  await checkBeforePublish();
+  if (published) onMigrationsApplied?.([]);
+  const browser = readVerifiedBrowserEvidence(sha, release, await browse(release));
   await checkRelease(release);
   await checkRuntime(standingLegacyPreview.origin, standingLegacyPreview.sha);
   await checkBeforePublish();
@@ -175,10 +191,13 @@ export async function publishStandingPreview(sha: string, operations: Operations
   try {
     if (alias?.deploymentId !== release.id) {
       alias = await vercel.assignAlias(release.id, async () => {
+        await releaseDatabase.verify();
         await checkRelease(release);
         if (previous) await checkRelease(previous);
         await checkBeforePublish();
       }, assigned => { assignedAlias = assigned; }, originalAlias);
+    } else {
+      await releaseDatabase.verify();
     }
     const verifyBinding = async () => {
       await checkBaseline();
@@ -325,26 +344,33 @@ async function main() {
   });
   await mkdir(".mille/cloud", { recursive: true, mode: 0o700 });
   let phase: Stage = "prerequisites";
+  let appliedMigrations: readonly string[] = [];
   try {
     const ci = await waitForPrerequisites(read, vercel, sha, verifyCurrent);
     const result = await publishStandingPreview(sha, {
       verifyCurrent, verifyPriorMain,
       vercel,
       identifyDatabase: () => identifyStandingDatabase(env.NEON_API_KEY),
-      prepareDatabase: (identity, verify, initial) => prepareStandingDatabase(env.NEON_API_KEY, identity,
-        { verifyCurrent: verify, allowInitialMigrations: initial }),
+      openDatabase: (identity, files, previousFiles) => openStandingDatabase(env.NEON_API_KEY, identity, previewMigrationSources(files), {
+        previousSources: previousFiles && migrationSourcesFromFiles(previousFiles),
+      }),
       readSource: () => readPreviewTree(process.cwd(), sha),
+      readPreviousSource: previousSha => loadStandingPreviousSource(previousSha, env.GH_TOKEN),
       browse: async target => verifyBrowser([], { origin: target.origin, sha: target.sha, token: await readDevelopmentOidc(env) }),
       checkRuntime: async (origin, sha, previousSha) => checkProtectedRuntime(origin, sha, await readDevelopmentOidc(env), fetch, previousSha),
     }, (stage, binding) => {
       phase = stage;
       console.log(`常設 Preview の工程 ${stage}${binding ? ` ${JSON.stringify(binding)}` : ""}`);
-    }, { allowFirstAssignment: manual });
+    }, { allowFirstAssignment: manual, onMigrationsApplied: names => {
+      appliedMigrations = names;
+      console.log(`常設 Preview DB の追加移行 ${names.length}件 ${JSON.stringify(names)}`);
+    } });
     const receipt = JSON.stringify(standingPreviewReceiptSchema.parse({ protocol: "mille-standing-preview/v1", runId: env.GITHUB_RUN_ID,
       runAttempt: env.GITHUB_RUN_ATTEMPT, ci, ...result }));
     await writeFile(".mille/cloud/standing-preview-proof.json", `${receipt}\n`, { mode: 0o600 });
     if (process.env.GITHUB_STEP_SUMMARY) {
-      await appendFile(process.env.GITHUB_STEP_SUMMARY, `常設 Preview 更新\n\n\`\`\`json\n${receipt}\n\`\`\`\n`);
+      const migrations = appliedMigrations.length ? appliedMigrations.map(name => `\`${name}\``).join("、") : "なし";
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, `常設 Preview 更新\n\n追加移行 ${appliedMigrations.length}件（${migrations}）\n\n\`\`\`json\n${receipt}\n\`\`\`\n`);
     }
   } catch (error) {
     if (error instanceof StandingAliasError) console.error(`固定 URL の照合結果 ${JSON.stringify(error.receipt)}`);

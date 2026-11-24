@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { createQuery, verifyDatabaseOwnership, type DatabaseRow, type Query } from "../../lib/server/database/client";
-import { hostedDatabaseConfiguration } from "../../lib/server/database/environment";
+import { hostedDatabaseConfiguration, type DatabaseConfiguration } from "../../lib/server/database/environment";
 import { migrateDatabase } from "../db/migrate";
-import { migrationSql, repositoryMigrationSources, sqlLiteral } from "../db/sql";
+import { migrationFileName, migrationSql, ownershipGuard, proceduralBlock, sqlLiteral, type MigrationSource } from "../db/sql";
 import {
   matchesNeonPreviewConnection, neonPreviewBranchDetails, neonPreviewBranchEndpoints,
   neonPreviewConnectionQuery, neonPreviewConnectionUri,
@@ -18,7 +18,7 @@ const role = "neondb_owner";
 const environmentId = "mille-preview";
 const projectPath = `/projects/${projectId}`;
 const branchPath = `${projectPath}/branches/${branchId}`;
-const allowedMigrations = [
+const migrationBaseline = [
   ["001_auth.sql", "83d6209b267f389e166ad3b5364420f5bbb3c3a6ada1e2c549c144bdb4ce0126"],
   ["002_workspaces.sql", "8ea6f940c097035d2c0e54417b60473b449219702f3aa232c24969c522c12eba"],
   ["003_meals.sql", "6a00446fca1293f006ac71df6fa71f3a7b81c31e3009268c9811b5ed674473d4"],
@@ -32,11 +32,13 @@ const projectDetails = z.object({ project: z.object({ id: z.literal(projectId), 
 const databaseDetails = z.object({ databases: z.tuple([z.object({ id: z.literal(42166654), branch_id: z.literal(branchId), name: z.literal(database),
   owner_name: z.literal(role) })]) });
 const migrationHistory = z.array(z.object({ name: z.string(), sha256: z.string(), applied_at: z.string().min(1) }));
+type MigrationHistory = z.infer<typeof migrationHistory>;
+type CheckedMigration = MigrationSource & { sha256: string };
 
 export type StandingDatabaseIdentity = { projectId: string; branchId: string; endpointId: string; host: string };
 export const standingDatabaseResourceSchema = z.strictObject({ projectId: z.literal(projectId), branchId: z.literal(branchId),
   endpointId: z.literal(endpointId) });
-type StandingDatabaseOptions = { request?: typeof fetch; query?: Query; verifyCurrent?: () => Promise<void>; allowInitialMigrations?: boolean };
+type StandingDatabaseOptions = { request?: typeof fetch; query?: Query; previousSources?: readonly MigrationSource[] };
 
 async function readNeon<T>(apiKey: string, path: string, schema: z.ZodType<T>, request: typeof fetch): Promise<T> {
   try {
@@ -78,57 +80,88 @@ function sameStandingDatabase(left: StandingDatabaseIdentity, right: StandingDat
     && left.endpointId === right.endpointId && left.host === right.host;
 }
 
-async function readHistory(query: Query) {
+function checkSources(sources: readonly MigrationSource[]): CheckedMigration[] {
+  const migrations = sources.map(({ name, source }) => ({ name, source, sha256: createHash("sha256").update(source).digest("hex") }));
+  if (migrations.length < migrationBaseline.length || migrations.some(({ name }, index) =>
+    !migrationFileName.test(name) || Number(name.slice(0, 3)) !== index + 1)
+    || migrationBaseline.some(([name, sha256], index) => migrations[index].name !== name || migrations[index].sha256 !== sha256)) {
+    throw new Error("常設 Preview の移行 SQL が一致しません。");
+  }
+  return migrations;
+}
+
+function requiredHistoryLength(migrations: readonly CheckedMigration[], previousSources: readonly MigrationSource[] | undefined) {
+  if (previousSources === undefined) return 2;
+  if (previousSources.length < 2 || previousSources.length > migrations.length
+    || migrations.slice(0, previousSources.length).some(({ name, source }, index) =>
+      name !== previousSources[index]?.name || source !== previousSources[index]?.source)) {
+    throw new Error("従来の常設 Preview と移行 SQL が一致しません。");
+  }
+  return previousSources.length;
+}
+
+async function readHistory(query: Query, migrations: readonly CheckedMigration[], minimumLength: number) {
   const history = migrationHistory.parse(await query("SELECT name, sha256, applied_at::text FROM public.schema_migrations ORDER BY name"));
-  if (history.length < 2 || history.length > allowedMigrations.length || history.some(({ name, sha256 }, index) =>
-    name !== allowedMigrations[index][0] || sha256 !== allowedMigrations[index][1])) {
+  if (history.length < minimumLength || history.length > migrations.length || history.some(({ name, sha256 }, index) =>
+    name !== migrations[index].name || sha256 !== migrations[index].sha256)) {
     throw new Error("常設 Preview の移行履歴が一致しません。");
   }
   return history;
 }
 
-function migrationWithBaseline(query: Query, approvedSql: string): Query {
+function requirePreservedHistory(before: MigrationHistory, after: MigrationHistory) {
+  if (after.length < before.length || before.some(({ applied_at }, index) => applied_at !== after[index].applied_at)) {
+    throw new Error("常設 Preview の適用済み移行履歴が変わりました。");
+  }
+}
+
+function migrationWithBaseline(query: Query, configuration: DatabaseConfiguration, migrations: readonly CheckedMigration[],
+  before: MigrationHistory): Query {
   let started = false;
-  const missingPredecessor = allowedMigrations.slice(3).map(([name], index) =>
-    `(EXISTS (SELECT 1 FROM public.schema_migrations WHERE name = ${sqlLiteral(name)})
-      AND NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE name = ${sqlLiteral(allowedMigrations[index + 2][0])}))`
-  ).join(" OR ");
+  const approvedSql = migrationSql(configuration, false, migrations);
+  const checkedRows = before.map(({ name, sha256, applied_at }) =>
+    `(${sqlLiteral(name)}, ${sqlLiteral(sha256)}, ${sqlLiteral(applied_at)}::timestamptz)`).join(",\n      ");
+  const changedAppliedHistory = `EXISTS (SELECT 1 FROM (VALUES
+      ${checkedRows}
+    ) AS expected(name, sha256, applied_at)
+      WHERE NOT EXISTS (SELECT 1 FROM public.schema_migrations AS actual
+        WHERE actual.name = expected.name AND actual.sha256 = expected.sha256 AND actual.applied_at = expected.applied_at))`;
+  const releaseRows = migrations.map(({ name, sha256 }) =>
+    `(${sqlLiteral(name)}, ${sqlLiteral(sha256)})`).join(",\n      ");
+  // Check the applied ledger on both sides of the migration while holding the transaction lock.
+  const guardedSql = proceduralBlock("mille_standing_preview", `BEGIN
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('mille:schema'));
+  LOCK TABLE public.schema_migrations IN SHARE ROW EXCLUSIVE MODE;
+  IF (SELECT count(*) FROM public.schema_migrations) <> ${before.length} OR ${changedAppliedHistory} THEN
+    RAISE EXCEPTION 'Mille standing migration baseline mismatch';
+  END IF;
+  EXECUTE ${sqlLiteral(approvedSql)};
+  ${ownershipGuard(configuration)}
+  IF (SELECT count(*) FROM public.schema_migrations) <> ${migrations.length} OR ${changedAppliedHistory}
+    OR EXISTS (SELECT 1 FROM (VALUES
+      ${releaseRows}
+    ) AS expected(name, sha256)
+      WHERE NOT EXISTS (SELECT 1 FROM public.schema_migrations AS actual
+        WHERE actual.name = expected.name AND actual.sha256 = expected.sha256)) THEN
+    RAISE EXCEPTION 'Mille standing migration result mismatch';
+  END IF;
+END;`);
   return async <Row extends DatabaseRow>(sql: string, parameters?: unknown[]): Promise<Row[]> => {
     if (started) return query<Row>(sql, parameters);
     if (sql !== approvedSql || parameters?.length) throw new Error("常設 Preview の承認済み移行と一致しません。");
     started = true;
-    // Hold the existing migration lock across the baseline guard and the migration itself.
-    // A concurrent change cannot cause the runner to treat a missing 002 as pending.
-    return query<Row>(`DO $mille_standing_preview$
-BEGIN
-  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('mille:schema'));
-  LOCK TABLE public.schema_migrations IN SHARE ROW EXCLUSIVE MODE;
-  IF NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE name = ${sqlLiteral(allowedMigrations[0][0])}
-      AND sha256 = ${sqlLiteral(allowedMigrations[0][1])})
-    OR NOT EXISTS (SELECT 1 FROM public.schema_migrations WHERE name = ${sqlLiteral(allowedMigrations[1][0])}
-      AND sha256 = ${sqlLiteral(allowedMigrations[1][1])}) THEN
-    RAISE EXCEPTION 'Mille standing migration baseline mismatch';
-  END IF;
-  IF ${missingPredecessor} THEN
-    RAISE EXCEPTION 'Mille standing migration order mismatch';
-  END IF;
-  EXECUTE ${sqlLiteral(approvedSql)};
-END;
-$mille_standing_preview$;`);
+    return query<Row>(guardedSql);
   };
 }
 
-export async function prepareStandingDatabase(
-  apiKey: string, expected: StandingDatabaseIdentity,
-  { request = fetch, query: testQuery, verifyCurrent, allowInitialMigrations = true }: StandingDatabaseOptions = {},
+export async function openStandingDatabase(
+  apiKey: string, expected: StandingDatabaseIdentity, sources: readonly MigrationSource[],
+  { request = fetch, query: testQuery, previousSources }: StandingDatabaseOptions = {},
 ) {
   let stage = "承認済み SQL の照合";
   try {
-    const sources = repositoryMigrationSources();
-    if (sources.length !== allowedMigrations.length || sources.some(({ name, source }, index) =>
-      name !== allowedMigrations[index][0] || createHash("sha256").update(source).digest("hex") !== allowedMigrations[index][1])) {
-      throw new Error();
-    }
+    const migrations = checkSources(sources);
+    const minimumHistoryLength = requiredHistoryLength(migrations, previousSources);
     stage = "Neon の常設接続先の照合";
     const verifyIdentity = async () => {
       if (!sameStandingDatabase(expected, await identifyStandingDatabase(apiKey, request))) throw new Error();
@@ -146,27 +179,57 @@ export async function prepareStandingDatabase(
     const query = testQuery ?? createQuery(configuration);
 
     stage = "既存 DB の所有と移行履歴の照合";
-    await verifyDatabaseOwnership(query, configuration);
-    const before = await readHistory(query);
-    if (!allowInitialMigrations && before.length !== allowedMigrations.length) throw new Error();
-    stage = "移行前の実行元と接続先の再照合";
-    await verifyIdentity();
-    await verifyCurrent?.();
-    if (before.length < allowedMigrations.length) {
-      stage = "承認済み移行の適用";
-      const sql = migrationSql(configuration, false, sources);
-      await migrateDatabase(configuration, { initialize: false, query: migrationWithBaseline(query, sql) });
-    }
-    stage = "移行後の所有と移行履歴の照合";
-    await verifyDatabaseOwnership(query, configuration);
-    const after = await readHistory(query);
-    if (after.length !== allowedMigrations.length || before.some(({ applied_at }, index) => applied_at !== after[index].applied_at)) {
-      throw new Error();
-    }
-    stage = "移行後の実行元と接続先の再照合";
-    await verifyIdentity();
-    await verifyCurrent?.();
-    return configuration;
+    const readOwnedHistory = async () => {
+      await verifyDatabaseOwnership(query, configuration);
+      return readHistory(query, migrations, minimumHistoryLength);
+    };
+    let observed = await readOwnedHistory();
+    const refresh = async () => {
+      await verifyIdentity();
+      const current = await readOwnedHistory();
+      requirePreservedHistory(observed, current);
+      return current;
+    };
+    const verifyComplete = async () => {
+      const current = await refresh();
+      if (current.length !== migrations.length) throw new Error("常設 Preview の移行履歴が不足しています。");
+      return current;
+    };
+
+    return {
+      configuration,
+      async migrate(verifyCurrent: () => Promise<void>): Promise<string[]> {
+        let phase = "移行前の実行元と接続先の再照合";
+        try {
+          const before = await refresh();
+          const pending = migrations.slice(before.length);
+          if (!pending.length) {
+            await verifyCurrent();
+            observed = before;
+            return [];
+          }
+          const guardedQuery = migrationWithBaseline(query, configuration, migrations, before);
+          await verifyCurrent();
+          phase = "承認済み移行の適用";
+          await migrateDatabase(configuration, { query: guardedQuery, sources: migrations });
+          phase = "移行後の所有と移行履歴の照合";
+          const after = await verifyComplete();
+          requirePreservedHistory(before, after);
+          await verifyCurrent();
+          observed = after;
+          return pending.map(({ name }) => name);
+        } catch {
+          throw new Error(`常設 Preview DB は「${phase}」で停止しました。`);
+        }
+      },
+      async verify(): Promise<void> {
+        try {
+          observed = await verifyComplete();
+        } catch {
+          throw new Error("常設 Preview DB の所有と移行履歴を再照合できません。");
+        }
+      },
+    };
   } catch {
     throw new Error(`常設 Preview DB は「${stage}」で停止しました。`);
   }
