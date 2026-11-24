@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import { signOut } from "next-auth/react";
 import dynamic from "next/dynamic";
 import type { MealDetail } from "@/lib/shared/meal-types";
+import type { SuggestionMode } from "@/lib/shared/suggestion-types";
 import type { AppUser } from "@/lib/shared/types";
 import type { IssuedInvitation, JoinedWorkspace, Workspace, WorkspaceState, WorkspaceType } from "@/lib/shared/workspaces";
 import { Brand } from "./brand";
@@ -97,7 +98,7 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
   initialState: WorkspaceState;
   initialWorkspaceId?: string;
   initialLocation: ReturnType<typeof readMealLocation>;
-  suggestionMode: "sample" | "gateway" | null;
+  suggestionMode: SuggestionMode | null;
 }) {
   const suggestionsEnabled = suggestionMode !== null;
   const [state, setState] = useState(initialState);
@@ -299,7 +300,7 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
         </section>}
         </> : active && preferencesReady && (suggestions
           ? <SuggestionPanel key={`${active.id}:${mealEpoch}`} workspaceId={active.id} selection={location.selection}
-            sample={suggestionMode === "sample"}
+            mode={suggestionMode}
             onAdopt={showAdoptedMeal} onBlockChange={block => { mealBlock.current = block; }} />
           : <MealApp key={`${active.id}:${mealEpoch}`} workspaceId={active.id} selection={location.selection}
             refresh={mealRefresh} onSelection={selectMeal} onBlockChange={block => { mealBlock.current = block; }}

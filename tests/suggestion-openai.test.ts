@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  createGatewayRecommendationProvider, GATEWAY_RECOMMENDATION_MODEL, GATEWAY_RECOMMENDATION_PROMPT_VERSION,
-  type GatewayRecommendationMetrics,
-} from "../lib/server/suggestion-gateway";
+  createOpenAIRecommendationProvider, OPENAI_RECOMMENDATION_MODEL, OPENAI_RECOMMENDATION_PROMPT_VERSION,
+  type OpenAIRecommendationMetrics,
+} from "../lib/server/suggestion-openai";
 import type { RecommendationContext } from "../lib/server/suggestion-provider";
 
 const context: RecommendationContext = {
@@ -25,77 +25,80 @@ const rawCandidate = {
   }],
   reasons: ["希望の食材を使う和食です。"],
 };
-const verifiedGateway = {
-  enabledZeroDataRetention: true,
-  routing: {
-    finalProvider: "openai",
-    modelAttempts: [{
-      providerAttempts: [{ provider: "openai", credentialType: "system", inferenceEndpoint: { scope: "zone", geoRegion: "jp" } }],
-    }],
-  },
-  generationId: "gen_test123",
-  cost: "0.0012",
-};
+const mockApiKey = "sk-proj-mock-preview-key";
+const requestId = "req_test123";
 
 function completion({
   content = JSON.stringify({ candidates: [rawCandidate, { ...rawCandidate, title: "豆腐の別献立" }] }),
   finishReason = "stop",
-  gateway = verifiedGateway,
-  model = GATEWAY_RECOMMENDATION_MODEL,
-}: { content?: string; finishReason?: string; gateway?: unknown; model?: string } = {}) {
+  model = OPENAI_RECOMMENDATION_MODEL,
+  refusal = null,
+  requestHeader = requestId,
+  cachedTokens = 5,
+}: {
+  content?: string;
+  finishReason?: string;
+  model?: string;
+  refusal?: string | null;
+  requestHeader?: string;
+  cachedTokens?: number;
+} = {}) {
   return Response.json({
     model,
+    service_tier: "default",
     choices: [{
       finish_reason: finishReason,
-      message: { content, refusal: null, provider_metadata: { gateway } },
+      message: { content, refusal },
     }],
-    usage: { prompt_tokens: 100, completion_tokens: 200 },
-  });
+    usage: { prompt_tokens: 100, completion_tokens: 200, prompt_tokens_details: { cached_tokens: cachedTokens } },
+  }, { headers: { "x-request-id": requestHeader } });
 }
 
-function testProvider(fetch: typeof globalThis.fetch, tokens = "preview.oidc.token") {
-  const events: GatewayRecommendationMetrics[] = [];
-  const provider = createGatewayRecommendationProvider({
-    getOidcToken: () => tokens,
+function testProvider(fetch: typeof globalThis.fetch, apiKey = mockApiKey) {
+  const events: OpenAIRecommendationMetrics[] = [];
+  const provider = createOpenAIRecommendationProvider({
+    getApiKey: () => apiKey,
     fetch,
     log: event => events.push(event),
   });
   return { provider, events };
 }
 
-test("Gateway pins the model, provider, Japan, and ZDR, and returns validated candidate data", async () => {
+test("OpenAI sends a standard direct request and returns validated candidate data", async () => {
   const controller = new AbortController();
   let requests = 0;
   const { provider, events } = testProvider(async (url, init) => {
     requests++;
-    assert.equal(url, "https://ai-gateway.vercel.sh/v1/chat/completions");
+    assert.equal(url, "https://api.openai.com/v1/chat/completions");
     assert.equal(init?.method, "POST");
     assert.equal(init?.redirect, "error");
     assert.equal(init?.cache, "no-store");
     assert.equal(init?.signal, controller.signal);
-    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer preview.oidc.token");
+    assert.deepEqual(Object.fromEntries(new Headers(init?.headers)), {
+      authorization: `Bearer ${mockApiKey}`, "content-type": "application/json",
+    });
     const body = JSON.parse(String(init?.body));
-    assert.equal(body.model, GATEWAY_RECOMMENDATION_MODEL);
+    assert.equal(body.model, OPENAI_RECOMMENDATION_MODEL);
     assert.equal(body.max_completion_tokens, 2_000);
     assert.equal(body.stream, false);
     assert.equal(body.store, false);
+    assert.equal(body.service_tier, "default");
     assert.equal(body.response_format.type, "json_schema");
     assert.equal(body.response_format.json_schema.strict, true);
     assert.deepEqual(body.response_format.json_schema.schema.required, ["candidates"]);
     assert.equal(body.response_format.json_schema.schema.additionalProperties, false);
-    assert.deepEqual(body.providerOptions, {
-      gateway: { only: ["openai"], inferenceRegion: { scope: "zone", geoRegion: "jp" }, zeroDataRetention: true },
-    });
-    assert.equal(body.tools, undefined);
-    assert.equal(body.models, undefined);
+    assert.deepEqual(Object.keys(body).sort(), [
+      "max_completion_tokens", "messages", "model", "reasoning_effort",
+      "response_format", "service_tier", "store", "stream",
+    ]);
     assert.equal(body.messages[0].role, "system");
     assert.equal(body.messages[1].role, "user");
     assert.deepEqual(JSON.parse(body.messages[1].content), context);
     return completion();
   });
 
-  assert.equal(provider.model, GATEWAY_RECOMMENDATION_MODEL);
-  assert.equal(provider.promptVersion, GATEWAY_RECOMMENDATION_PROMPT_VERSION);
+  assert.equal(provider.model, OPENAI_RECOMMENDATION_MODEL);
+  assert.equal(provider.promptVersion, OPENAI_RECOMMENDATION_PROMPT_VERSION);
   assert.deepEqual(await provider.generate(context, controller.signal), [
     { ...rawCandidate, dishes: [{ ...rawCandidate.dishes[0], servings: null, recipeUrl: null }] },
     { ...rawCandidate, title: "豆腐の別献立", dishes: [{ ...rawCandidate.dishes[0], servings: null, recipeUrl: null }] },
@@ -104,13 +107,13 @@ test("Gateway pins the model, provider, Japan, and ZDR, and returns validated ca
   const [{ elapsedMs, ...event }] = events;
   assert.ok(elapsedMs >= 0);
   assert.deepEqual(event, {
-    model: GATEWAY_RECOMMENDATION_MODEL, promptVersion: GATEWAY_RECOMMENDATION_PROMPT_VERSION,
-    result: "success", provider: "openai", credentialType: "system", region: "jp", zeroDataRetention: true, httpStatus: 200,
-    generationId: "gen_test123", costUsd: "0.0012", inputTokens: 100, outputTokens: 200,
+    model: OPENAI_RECOMMENDATION_MODEL, promptVersion: OPENAI_RECOMMENDATION_PROMPT_VERSION,
+    result: "success", requestId, responseModel: OPENAI_RECOMMENDATION_MODEL, serviceTier: "default",
+    httpStatus: 200, inputTokens: 100, outputTokens: 200, cachedInputTokens: 5,
   });
 });
 
-test("Gateway bounds the allowlisted input and sends only concise candidate summaries", async () => {
+test("OpenAI bounds the allowlisted input and sends only concise candidate summaries", async () => {
   const conditions = { ...context.conditions, privateEmail: "private@example.invalid" };
   const candidate = {
     id: "private-candidate-id",
@@ -154,31 +157,14 @@ test("Gateway bounds the allowlisted input and sends only concise candidate summ
   assert.ok(await provider.generate(extended));
 });
 
-test("Gateway rejects unverified routing and malformed output while retaining safe usage", async () => {
-  const wrongRegion = {
-    ...verifiedGateway,
-    routing: {
-      ...verifiedGateway.routing,
-      modelAttempts: [{
-        providerAttempts: [{ provider: "openai", credentialType: "system", inferenceEndpoint: { scope: "zone", geoRegion: "us" } }],
-      }],
-    },
-  };
-  const byok = {
-    ...verifiedGateway,
-    routing: {
-      ...verifiedGateway.routing,
-      modelAttempts: [{ providerAttempts: [{ ...verifiedGateway.routing.modelAttempts[0].providerAttempts[0], credentialType: "byok" }] }],
-    },
-  };
+test("OpenAI rejects unexpected models, refused requests, and malformed output while retaining safe usage", async () => {
   const scenarios = [
-    { response: completion({ gateway: wrongRegion }), verified: false },
-    { response: completion({ gateway: byok }), verified: false },
-    { response: completion({ gateway: { ...verifiedGateway, enabledZeroDataRetention: false } }), verified: false },
-    { response: completion({ gateway: undefined, model: "unknown-model" }), verified: false },
+    { response: completion({ model: "unknown-model" }), verified: false },
+    { response: completion({ model: "openai/gpt-6-luna" }), verified: false },
     { response: completion({ content: "<unvalidated provider output>" }), verified: true },
     { response: completion({ content: JSON.stringify({ candidates: [rawCandidate] }) }), verified: true },
     { response: completion({ finishReason: "length" }), verified: true },
+    { response: completion({ refusal: "private-refusal" }), verified: true },
   ];
   for (const { response, verified } of scenarios) {
     const { provider, events } = testProvider(async () => response);
@@ -186,12 +172,23 @@ test("Gateway rejects unverified routing and malformed output while retaining sa
     assert.equal(events[0].result, "invalid_output");
     assert.equal(events[0].inputTokens, 100);
     assert.equal(events[0].outputTokens, 200);
-    assert.equal(events[0].region, verified ? "jp" : undefined);
-    assert.doesNotMatch(JSON.stringify(events), /unvalidated|unknown-model|豆腐/u);
+    assert.equal(events[0].requestId, requestId);
+    assert.equal(events[0].responseModel, verified ? OPENAI_RECOMMENDATION_MODEL : undefined);
+    assert.doesNotMatch(JSON.stringify(events), /unvalidated|unknown-model|private-refusal|豆腐/u);
   }
 });
 
-test("Gateway bounds the response and keeps remote errors and credentials out of logs", async () => {
+test("OpenAI records only sanitized request and usage metadata", async () => {
+  const { provider, events } = testProvider(async () =>
+    completion({ requestHeader: "private@example.invalid", cachedTokens: 101 }));
+  assert.ok(await provider.generate(context));
+  assert.equal(events[0].requestId, undefined);
+  assert.equal(events[0].cachedInputTokens, undefined);
+  assert.equal(events[0].inputTokens, 100);
+  assert.doesNotMatch(JSON.stringify(events), /private@example\.invalid/u);
+});
+
+test("OpenAI bounds the response and keeps remote errors and credentials out of logs", async () => {
   let requests = 0;
   const oversized = testProvider(async () => {
     requests++;
@@ -202,23 +199,24 @@ test("Gateway bounds the response and keeps remote errors and credentials out of
 
   const unauthorized = testProvider(async () => {
     requests++;
-    return new Response("private-provider-message", { status: 403 });
+    return new Response("private-provider-message", { status: 401, headers: { "x-request-id": requestId } });
   });
   await assert.rejects(unauthorized.provider.generate(context), { message: "献立提案サービスに接続できません。" });
   assert.equal(unauthorized.events[0].result, "unavailable");
-  assert.equal(unauthorized.events[0].httpStatus, 403);
-  assert.doesNotMatch(JSON.stringify(unauthorized.events), /private-provider-message|preview\.oidc\.token/u);
+  assert.equal(unauthorized.events[0].httpStatus, 401);
+  assert.equal(unauthorized.events[0].requestId, requestId);
+  assert.doesNotMatch(JSON.stringify(unauthorized.events), /private-provider-message|sk-proj-mock-preview-key/u);
 
-  const invalidToken = testProvider(async () => {
+  const invalidKey = testProvider(async () => {
     requests++;
     return completion();
-  }, "private-invalid-token");
-  await assert.rejects(invalidToken.provider.generate(context), { message: "献立提案サービスに接続できません。" });
-  assert.doesNotMatch(JSON.stringify(invalidToken.events), /private-invalid-token/u);
+  }, "private-invalid-key");
+  await assert.rejects(invalidKey.provider.generate(context), { message: "献立提案サービスに接続できません。" });
+  assert.doesNotMatch(JSON.stringify(invalidKey.events), /private-invalid-key/u);
   assert.equal(requests, 2);
 });
 
-test("Gateway propagates cancellation and does not retry an aborted request", async () => {
+test("OpenAI propagates cancellation and does not retry an aborted request", async () => {
   const controller = new AbortController();
   let requests = 0;
   const { provider, events } = testProvider(async (_url, init) => {
@@ -237,9 +235,9 @@ test("Gateway propagates cancellation and does not retry an aborted request", as
   assert.equal(requests, 1);
 });
 
-test("Gateway preserves a validated result if metrics logging fails", async () => {
-  const provider = createGatewayRecommendationProvider({
-    getOidcToken: () => "preview.oidc.token",
+test("OpenAI preserves a validated result if metrics logging fails", async () => {
+  const provider = createOpenAIRecommendationProvider({
+    getApiKey: () => mockApiKey,
     fetch: async () => completion(),
     log: () => { throw new Error("log unavailable"); },
   });

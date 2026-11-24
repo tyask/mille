@@ -2,10 +2,12 @@ import { z } from "zod";
 import { recommendationOutputSchema } from "../shared/suggestion-schemas";
 import type { RecommendationContext, RecommendationProvider } from "./suggestion-provider";
 
-export const GATEWAY_RECOMMENDATION_MODEL = "openai/gpt-6-luna";
-export const GATEWAY_RECOMMENDATION_PROMPT_VERSION = "gateway-ja-1";
+export const OPENAI_RECOMMENDATION_MODEL = "gpt-6-luna";
+export const OPENAI_RECOMMENDATION_PROMPT_VERSION = "openai-ja-1";
 
-const endpoint = "https://ai-gateway.vercel.sh/v1/chat/completions";
+const endpoint = "https://api.openai.com/v1/chat/completions";
+const requestIdPattern = /^req_[A-Za-z0-9_-]{1,96}$/u;
+const apiKeyPattern = /^sk-[A-Za-z0-9_-]{1,4093}$/u;
 const outputTokenLimit = 2_000;
 const responseByteLimit = 64 * 1024;
 const prompt = [
@@ -17,7 +19,7 @@ const prompt = [
 ].join("\n");
 
 const boundedText = (limit: number) => z.string().min(1).max(limit);
-const gatewayOutputSchema = z.strictObject({
+const outputSchema = z.strictObject({
   candidates: z.array(z.strictObject({
     title: boundedText(120),
     estimatedMinutes: z.number().int().min(1).max(240).nullable(),
@@ -33,59 +35,46 @@ const gatewayOutputSchema = z.strictObject({
     reasons: z.array(boundedText(160)).min(1).max(2),
   })).min(2).max(3),
 });
-const gatewayJsonSchema = z.toJSONSchema(gatewayOutputSchema, { target: "draft-7" });
-delete gatewayJsonSchema.$schema;
+const outputJsonSchema = z.toJSONSchema(outputSchema, { target: "draft-7" });
+delete outputJsonSchema.$schema;
 
 const completionSchema = z.object({
-  model: z.string().regex(/^(?:openai\/)?gpt-6-luna(?:-\d{4}-\d{2}-\d{2})?$/u),
+  model: z.string().regex(/^gpt-6-luna(?:-\d{4}-\d{2}-\d{2})?$/u),
+  service_tier: z.enum(["auto", "default", "flex", "scale", "priority", "fast"]).optional().catch(undefined),
   choices: z.tuple([z.object({
     finish_reason: z.unknown(),
     message: z.object({
       content: z.unknown(),
       refusal: z.unknown(),
-      provider_metadata: z.object({ gateway: z.unknown() }),
     }),
   })]),
 });
-const gatewayMetadataSchema = z.object({
-  enabledZeroDataRetention: z.literal(true),
-  routing: z.object({
-    finalProvider: z.literal("openai"),
-    modelAttempts: z.tuple([z.object({
-      providerAttempts: z.tuple([z.object({
-        provider: z.literal("openai"),
-        credentialType: z.literal("system"),
-        inferenceEndpoint: z.object({ scope: z.literal("zone"), geoRegion: z.literal("jp") }),
-      })]),
-    })]),
-  }),
-  generationId: z.string().regex(/^gen_[\w-]{1,96}$/u).optional().catch(undefined),
-  cost: z.string().regex(/^\d{1,6}(?:\.\d{1,18})?$/u).optional().catch(undefined),
-});
 const usageSchema = z.object({
-  usage: z.object({ prompt_tokens: z.int().nonnegative(), completion_tokens: z.int().nonnegative() }),
+  usage: z.object({
+    prompt_tokens: z.int().nonnegative(),
+    completion_tokens: z.int().nonnegative(),
+    prompt_tokens_details: z.object({ cached_tokens: z.int().nonnegative() }).nullish().catch(undefined),
+  }),
 });
 
-export interface GatewayRecommendationMetrics {
-  model: typeof GATEWAY_RECOMMENDATION_MODEL;
-  promptVersion: typeof GATEWAY_RECOMMENDATION_PROMPT_VERSION;
+export interface OpenAIRecommendationMetrics {
+  model: typeof OPENAI_RECOMMENDATION_MODEL;
+  promptVersion: typeof OPENAI_RECOMMENDATION_PROMPT_VERSION;
   elapsedMs: number;
   result: "success" | "invalid_output" | "unavailable" | "timeout";
   httpStatus?: number;
-  provider?: "openai";
-  credentialType?: "system";
-  region?: "jp";
-  zeroDataRetention?: true;
+  requestId?: string;
+  responseModel?: string;
+  serviceTier?: z.output<typeof completionSchema>["service_tier"];
   inputTokens?: number;
   outputTokens?: number;
-  generationId?: string;
-  costUsd?: string;
+  cachedInputTokens?: number;
 }
 
-interface GatewayRecommendationOptions {
-  getOidcToken: () => string | Promise<string>;
+interface OpenAIRecommendationOptions {
+  getApiKey: () => string | Promise<string>;
   fetch?: typeof fetch;
-  log?: (event: GatewayRecommendationMetrics) => void;
+  log?: (event: OpenAIRecommendationMetrics) => void;
 }
 
 function truncate(text: string, maxCharacters: number) {
@@ -114,10 +103,12 @@ function promptInput({ conditions, recentDishes, previousCandidates, messages }:
   };
 }
 
-function gatewayRequest(context: RecommendationContext) {
+function recommendationRequest(context: RecommendationContext) {
   return {
-    model: GATEWAY_RECOMMENDATION_MODEL,
+    model: OPENAI_RECOMMENDATION_MODEL,
     stream: false,
+    service_tier: "default",
+    // ZDR はプロジェクトに適用される別の設定です。
     store: false,
     max_completion_tokens: outputTokenLimit,
     reasoning_effort: "none",
@@ -127,14 +118,7 @@ function gatewayRequest(context: RecommendationContext) {
     ],
     response_format: {
       type: "json_schema",
-      json_schema: { name: "mille_meal_suggestions", strict: true, schema: gatewayJsonSchema },
-    },
-    providerOptions: {
-      gateway: {
-        only: ["openai"],
-        inferenceRegion: { scope: "zone", geoRegion: "jp" },
-        zeroDataRetention: true,
-      },
+      json_schema: { name: "mille_meal_suggestions", strict: true, schema: outputJsonSchema },
     },
   };
 }
@@ -147,7 +131,7 @@ function parseJson(text: string): unknown {
   }
 }
 
-async function readGatewayJson(response: Response): Promise<unknown> {
+async function readResponseJson(response: Response): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) return undefined;
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -167,69 +151,67 @@ async function readGatewayJson(response: Response): Promise<unknown> {
   }
 }
 
-function parseGatewayOutput(value: unknown, event: GatewayRecommendationMetrics) {
+function parseRecommendationOutput(value: unknown, event: OpenAIRecommendationMetrics) {
   const usage = usageSchema.safeParse(value);
   if (usage.success) {
-    event.inputTokens = usage.data.usage.prompt_tokens;
-    event.outputTokens = usage.data.usage.completion_tokens;
+    const { prompt_tokens, completion_tokens, prompt_tokens_details } = usage.data.usage;
+    event.inputTokens = prompt_tokens;
+    event.outputTokens = completion_tokens;
+    const cachedTokens = prompt_tokens_details?.cached_tokens;
+    if (cachedTokens !== undefined && cachedTokens <= prompt_tokens) event.cachedInputTokens = cachedTokens;
   }
   const completion = completionSchema.safeParse(value);
   if (!completion.success) return undefined;
 
+  event.responseModel = completion.data.model;
+  if (completion.data.service_tier) event.serviceTier = completion.data.service_tier;
   const [{ finish_reason, message }] = completion.data.choices;
-  const gateway = gatewayMetadataSchema.safeParse(message.provider_metadata.gateway);
-  if (!gateway.success) return undefined;
-  event.provider = "openai";
-  event.credentialType = "system";
-  event.region = "jp";
-  event.zeroDataRetention = true;
-  event.generationId = gateway.data.generationId;
-  event.costUsd = gateway.data.cost;
-
   if (finish_reason !== "stop" || message.refusal || typeof message.content !== "string") return undefined;
-  const output = gatewayOutputSchema.safeParse(parseJson(message.content));
+  const output = outputSchema.safeParse(parseJson(message.content));
   if (!output.success) return undefined;
   const candidates = recommendationOutputSchema.safeParse(output.data.candidates);
   return candidates.success ? candidates.data : undefined;
 }
 
-export function createGatewayRecommendationProvider({
-  getOidcToken,
+export function createOpenAIRecommendationProvider({
+  getApiKey,
   fetch: request = fetch,
-  log = event => console.info("mille.suggestion.gateway", event),
-}: GatewayRecommendationOptions): RecommendationProvider {
+  log = event => console.info("mille.suggestion.openai", event),
+}: OpenAIRecommendationOptions): RecommendationProvider {
   return {
-    model: GATEWAY_RECOMMENDATION_MODEL,
-    promptVersion: GATEWAY_RECOMMENDATION_PROMPT_VERSION,
+    model: OPENAI_RECOMMENDATION_MODEL,
+    promptVersion: OPENAI_RECOMMENDATION_PROMPT_VERSION,
     async generate(context, signal) {
       const started = performance.now();
-      const event: GatewayRecommendationMetrics = {
-        model: GATEWAY_RECOMMENDATION_MODEL,
-        promptVersion: GATEWAY_RECOMMENDATION_PROMPT_VERSION,
+      const event: OpenAIRecommendationMetrics = {
+        model: OPENAI_RECOMMENDATION_MODEL,
+        promptVersion: OPENAI_RECOMMENDATION_PROMPT_VERSION,
         elapsedMs: 0,
         result: "unavailable",
       };
       try {
         signal?.throwIfAborted();
-        const token = await getOidcToken();
+        const apiKey = await getApiKey();
         signal?.throwIfAborted();
-        if (token.length > 32_768 || !/^[\w-]+\.[\w-]+\.[\w-]+$/u.test(token)) throw new Error();
+        if (!apiKeyPattern.test(apiKey)) throw new Error();
         const response = await request(endpoint, {
           method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
           cache: "no-store",
           redirect: "error",
-          body: JSON.stringify(gatewayRequest(context)),
+          body: JSON.stringify(recommendationRequest(context)),
           signal,
         });
         event.httpStatus = response.status;
+        const requestId = response.headers.get("x-request-id");
+        if (requestId && requestIdPattern.test(requestId)) event.requestId = requestId;
         if (!response.ok) {
           void response.body?.cancel().catch(() => {});
           throw new Error();
         }
-        const value = await readGatewayJson(response);
+        const value = await readResponseJson(response);
         signal?.throwIfAborted();
-        const result = parseGatewayOutput(value, event);
+        const result = parseRecommendationOutput(value, event);
         event.result = result ? "success" : "invalid_output";
         return result;
       } catch {

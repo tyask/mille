@@ -5,7 +5,7 @@ import { isTestAuthEnabled, type AuthEnvironment } from "./auth/auth-mode";
 import { verifiedDatabaseQuery, type Query } from "./database/client";
 import { databaseConfiguration, type DatabaseConfiguration } from "./database/environment";
 
-export type GatewayPreviewTarget = {
+export type SuggestionPreviewTarget = {
   environmentId: string;
   sourceSha: string;
   deploymentId: string;
@@ -15,12 +15,12 @@ export function canUseSuggestions(user: AppUser, environment: AuthEnvironment = 
   return user.isEnabled && user.isTest && matchesTestIdentity(user) && isTestAuthEnabled(environment);
 }
 
-export function gatewayPreviewTarget(
+export function suggestionPreviewTarget(
   configuration: DatabaseConfiguration, environment: AuthEnvironment = process.env,
-): GatewayPreviewTarget | null {
+): SuggestionPreviewTarget | null {
   const sourceSha = environment.MILLE_SOURCE_SHA ?? "";
   const deploymentId = environment.VERCEL_DEPLOYMENT_ID ?? "";
-  if (environment.VERCEL !== "1" || environment.VERCEL_ENV !== "preview" || environment.AUTH_MODE !== "test"
+  if (!environment.OPENAI_API_KEY || environment.VERCEL !== "1" || environment.VERCEL_ENV !== "preview" || environment.AUTH_MODE !== "test"
     || (environment.VERCEL_TARGET_ENV !== undefined && environment.VERCEL_TARGET_ENV !== "preview")
     || configuration.mode !== "hosted" || configuration.environment !== "preview"
     || !/^mille-pr-[1-9][0-9]*$/.test(configuration.environmentId)
@@ -30,14 +30,14 @@ export function gatewayPreviewTarget(
 
 const enabledTarget = "id = true AND enabled AND environment_id = $1 AND source_sha = $2 AND deployment_id = $3";
 
-export async function gatewayPreviewEnabled(query: Query, target: GatewayPreviewTarget): Promise<boolean> {
+export async function suggestionPreviewEnabled(query: Query, target: SuggestionPreviewTarget): Promise<boolean> {
   const { environmentId, sourceSha, deploymentId } = target;
   const rows = await query(`SELECT 1 FROM mille_suggestion_gateway_preview WHERE ${enabledTarget}`,
     [environmentId, sourceSha, deploymentId]);
   return rows.length === 1;
 }
 
-export async function reserveGatewayRequest(query: Query, target: GatewayPreviewTarget): Promise<boolean> {
+export async function reserveSuggestionRequest(query: Query, target: SuggestionPreviewTarget): Promise<boolean> {
   const { environmentId, sourceSha, deploymentId } = target;
   const rows = await query(`UPDATE mille_suggestion_gateway_preview SET request_count = request_count + 1
     WHERE ${enabledTarget} AND request_count < 10 RETURNING request_count`, [environmentId, sourceSha, deploymentId]);
@@ -46,8 +46,8 @@ export async function reserveGatewayRequest(query: Query, target: GatewayPreview
 
 export async function getSuggestionMode(user: AppUser): Promise<SuggestionMode | null> {
   if (!canUseSuggestions(user)) return null;
-  const target = gatewayPreviewTarget(databaseConfiguration());
+  const target = suggestionPreviewTarget(databaseConfiguration());
   if (!target) return "sample";
   const { query } = await verifiedDatabaseQuery();
-  return await gatewayPreviewEnabled(query, target) ? "gateway" : "sample";
+  return await suggestionPreviewEnabled(query, target) ? "openai" : "sample";
 }

@@ -64,7 +64,7 @@ function suggestionsUnavailable() {
 
 function requestedSuggestionMode(request: Request): SuggestionMode {
   const mode = request.headers.get(suggestionModeHeader) ?? "sample";
-  if (mode !== "sample" && mode !== "gateway") throw new DomainError(400, "提案の試験設定を確認してください。");
+  if (mode !== "sample" && mode !== "openai") throw new DomainError(400, "提案の試験設定を確認してください。");
   return mode;
 }
 

@@ -4,7 +4,7 @@ import { PGlite } from "@electric-sql/pglite";
 import type { DatabaseRow, Query } from "../lib/server/database/client";
 import type { DatabaseConfiguration } from "../lib/server/database/environment";
 import {
-  canUseSuggestions, gatewayPreviewEnabled, gatewayPreviewTarget, reserveGatewayRequest,
+  canUseSuggestions, suggestionPreviewEnabled, suggestionPreviewTarget, reserveSuggestionRequest,
 } from "../lib/server/suggestion-preview";
 import { sampleRecommendationProvider } from "../lib/server/suggestion-provider";
 import { createSuggestionService, SuggestionDomainError } from "../lib/server/suggestions";
@@ -19,15 +19,16 @@ const target = { environmentId: preview.environmentId, sourceSha: "a".repeat(40)
 const binding = [target.environmentId, target.sourceSha, target.deploymentId];
 const environment = {
   VERCEL: "1", VERCEL_ENV: "preview", AUTH_MODE: "test", MILLE_SOURCE_SHA: target.sourceSha,
+  OPENAI_API_KEY: "sk-preview-fixture",
   MILLE_PREVIEW_DATABASE_URL: preview.url, MILLE_PREVIEW_DATABASE_HOST: preview.host,
   MILLE_PREVIEW_ENVIRONMENT_ID: preview.environmentId, VERCEL_DEPLOYMENT_ID: target.deploymentId,
 };
 
-async function openPreview(t: TestContext, beforeGateway = false) {
+async function openPreview(t: TestContext, beforeTrial = false) {
   const database = new PGlite();
   t.after(() => database.close());
   const migrations = repositoryMigrationSources();
-  const initialMigrations = beforeGateway
+  const initialMigrations = beforeTrial
     ? migrations.filter(({ name }) => name < "007_suggestion_gateway_preview.sql")
     : migrations;
   await database.exec(migrationSql(preview, true, initialMigrations));
@@ -46,20 +47,20 @@ test("only the dedicated test-auth preview and authenticated fixture identities 
   assert.equal(canUseSuggestions(TEST_USERS[0], { ...environment, AUTH_MODE: "google" }), false);
   assert.equal(canUseSuggestions(TEST_USERS[0], { ...environment, MILLE_PREVIEW_DATABASE_HOST: "other.neon.tech" }), false);
 
-  assert.deepEqual(gatewayPreviewTarget(preview, environment), target);
-  assert.deepEqual(gatewayPreviewTarget(preview, { ...environment, VERCEL_TARGET_ENV: "preview" }), target);
+  assert.deepEqual(suggestionPreviewTarget(preview, environment), target);
+  assert.deepEqual(suggestionPreviewTarget(preview, { ...environment, VERCEL_TARGET_ENV: "preview" }), target);
   for (const override of [
-    { VERCEL: undefined }, { VERCEL_ENV: "production" }, { VERCEL_TARGET_ENV: "production" }, { AUTH_MODE: "google" },
+    { OPENAI_API_KEY: undefined }, { OPENAI_API_KEY: "" }, { VERCEL: undefined }, { VERCEL_ENV: "production" }, { VERCEL_TARGET_ENV: "production" }, { AUTH_MODE: "google" },
     { MILLE_SOURCE_SHA: "A".repeat(40) }, { VERCEL_DEPLOYMENT_ID: "dpl_" },
-  ]) assert.equal(gatewayPreviewTarget(preview, { ...environment, ...override }), null);
-  assert.equal(gatewayPreviewTarget({ ...preview, environment: "production" }, environment), null);
-  assert.equal(gatewayPreviewTarget({ ...preview, environmentId: "mille-preview" }, environment), null);
-  assert.equal(gatewayPreviewTarget({ ...preview, environmentId: "mille-pr-074" }, environment), null);
-  assert.equal(gatewayPreviewTarget({ mode: "memory", url: "", token: "", environment: "development",
+  ]) assert.equal(suggestionPreviewTarget(preview, { ...environment, ...override }), null);
+  assert.equal(suggestionPreviewTarget({ ...preview, environment: "production" }, environment), null);
+  assert.equal(suggestionPreviewTarget({ ...preview, environmentId: "mille-preview" }, environment), null);
+  assert.equal(suggestionPreviewTarget({ ...preview, environmentId: "mille-pr-074" }, environment), null);
+  assert.equal(suggestionPreviewTarget({ mode: "memory", url: "", token: "", environment: "development",
     environmentId: "local-memory" }, environment), null);
 });
 
-test("the gateway preview migration adds an empty singleton with strict target and budget constraints", async t => {
+test("the proposal preview migration adds an empty singleton with strict target and budget constraints", async t => {
   const database = await openPreview(t, true);
   const table = () => database.query<{ name: string | null }>(
     "SELECT to_regclass('public.mille_suggestion_gateway_preview')::text AS name",
@@ -91,26 +92,26 @@ test("the gateway preview migration adds an empty singleton with strict target a
   }
 });
 
-test("only a matching enabled preview can reserve up to ten gateway requests", async t => {
+test("only a matching enabled preview can reserve up to ten real suggestion requests", async t => {
   const database = await openPreview(t);
   const query: Query = async <Row extends DatabaseRow>(statement: string, parameters?: unknown[]) =>
     (await database.query<Row>(statement, parameters)).rows;
 
-  assert.equal(await gatewayPreviewEnabled(query, target), false);
-  assert.equal(await reserveGatewayRequest(query, target), false);
+  assert.equal(await suggestionPreviewEnabled(query, target), false);
+  assert.equal(await reserveSuggestionRequest(query, target), false);
   await database.query(`INSERT INTO mille_suggestion_gateway_preview (environment_id, source_sha, deployment_id)
     VALUES ($1, $2, $3)`, binding);
-  assert.equal(await gatewayPreviewEnabled(query, target), false);
-  assert.equal(await reserveGatewayRequest(query, target), false);
+  assert.equal(await suggestionPreviewEnabled(query, target), false);
+  assert.equal(await reserveSuggestionRequest(query, target), false);
   await database.query("UPDATE mille_suggestion_gateway_preview SET enabled = true WHERE id = true");
-  assert.equal(await gatewayPreviewEnabled(query, target), true);
+  assert.equal(await suggestionPreviewEnabled(query, target), true);
   for (const mismatch of [
     { ...target, environmentId: "mille-pr-75" },
     { ...target, sourceSha: "b".repeat(40) },
     { ...target, deploymentId: "dpl_OtherFixture" },
   ]) {
-    assert.equal(await gatewayPreviewEnabled(query, mismatch), false);
-    assert.equal(await reserveGatewayRequest(query, mismatch), false);
+    assert.equal(await suggestionPreviewEnabled(query, mismatch), false);
+    assert.equal(await reserveSuggestionRequest(query, mismatch), false);
   }
 
   const [owner, outsider] = TEST_USERS;
@@ -124,7 +125,7 @@ test("only a matching enabled preview can reserve up to ten gateway requests", a
     .create(workspaceId, conditions, "owner-create");
   const outsiderService = createSuggestionService(query, outsider, {
     async generate(context, signal) {
-      await reserveGatewayRequest(query, target);
+      await reserveSuggestionRequest(query, target);
       return sampleRecommendationProvider.generate(context, signal);
     },
   });
@@ -134,9 +135,9 @@ test("only a matching enabled preview can reserve up to ten gateway requests", a
     "outsider-revise"), notFound);
   assert.deepEqual(await query("SELECT request_count FROM mille_suggestion_gateway_preview"), [{ request_count: 0 }]);
 
-  const results = await Promise.all(Array.from({ length: 16 }, () => reserveGatewayRequest(query, target)));
+  const results = await Promise.all(Array.from({ length: 16 }, () => reserveSuggestionRequest(query, target)));
   assert.equal(results.filter(reserved => reserved).length, 10);
-  assert.equal(await reserveGatewayRequest(query, target), false);
+  assert.equal(await reserveSuggestionRequest(query, target), false);
   assert.deepEqual((await database.query("SELECT request_count FROM mille_suggestion_gateway_preview")).rows,
     [{ request_count: 10 }]);
 });

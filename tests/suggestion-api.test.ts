@@ -46,7 +46,7 @@ test("suggestion HTTP authenticates mutations, validates inputs and retains the 
   };
   const api = createMealHandlers({ ...dependencies, getSuggestions: async (_user, mode) => {
     requestedModes.push(mode);
-    if (mode === "gateway") throw new SuggestionDomainError(409, "MODE_CHANGED", "画面を再読み込みしてください。");
+    if (mode === "openai") throw new SuggestionDomainError(409, "MODE_CHANGED", "画面を再読み込みしてください。");
     return service;
   } });
   const create = (value: Request) => api.createSuggestion(value, "workspace-1");
@@ -69,16 +69,18 @@ test("suggestion HTTP authenticates mutations, validates inputs and retains the 
   assert.equal(calls, 1);
   assert.deepEqual(requestedModes, ["sample"]);
 
-  const gateway = new Headers({ Origin: origin, "Content-Type": "application/json", "Idempotency-Key": sendKey,
-    [suggestionModeHeader]: "gateway" });
-  const modeChanged = await create(request(conditions, gateway));
+  const previewHeaders = new Headers({ Origin: origin, "Content-Type": "application/json", "Idempotency-Key": sendKey,
+    [suggestionModeHeader]: "openai" });
+  const modeChanged = await create(request(conditions, previewHeaders));
   assert.equal(modeChanged.status, 409);
   assert.equal((await modeChanged.json()).code, "MODE_CHANGED");
-  assert.deepEqual(requestedModes, ["sample", "gateway"]);
+  assert.deepEqual(requestedModes, ["sample", "openai"]);
   assert.equal(calls, 1);
-  gateway.set(suggestionModeHeader, "unexpected");
-  assert.equal((await create(request(conditions, gateway))).status, 400);
-  assert.deepEqual(requestedModes, ["sample", "gateway"]);
+  for (const mode of ["gateway", "unexpected"]) {
+    previewHeaders.set(suggestionModeHeader, mode);
+    assert.equal((await create(request(conditions, previewHeaders))).status, 400);
+  }
+  assert.deepEqual(requestedModes, ["sample", "openai"]);
 
   const conflict = await api.reviseSuggestion(request({ expectedVersion: 1, message: "時短で" }), "workspace-1", suggestion.id);
   assert.equal(conflict.status, 409);

@@ -107,10 +107,11 @@ gh workflow run pr-preview.yml --repo tyask/mille --ref main \
 
 ### 献立提案の実モデル検証
 
-[Issue #74](https://github.com/tyask/mille/issues/74) の実モデル検証は、対象 PR の固有 URL で架空ユーザーと架空の献立を使って行います。通常の `verify` は従来の4ケースです。
+[Issue #74](https://github.com/tyask/mille/issues/74) の実モデル検証では、対象 PR の固有 URL で架空ユーザーと架空の献立を使い、標準のグローバル接続 `https://api.openai.com/v1/chat/completions` で GPT-6 Luna（`gpt-6-luna`）を試します。通常の `verify` では PC・スマホ × 架空 A/B の4ケースを確認します。
 
-1. 現在の PR HEAD で `status` と `verify` を成功させます。証跡の PR 番号、完全 HEAD、デプロイ ID、保護付き固有 URL、Neon の専用ブランチと endpoint を照合します。Vercel の `fumin1` の AI Gateway で ZDR の利用資格、利用可能なクレジット、予算、自動チャージの設定を確認し、対象モデルの日本推論単価を照合します。対象モデルを書き換えるチームルールと、ZDR 経路で使われる OpenAI の BYOK がどちらもないことを確認します。既存のクレジットで実行できる場合に進み、新規課金が必要なら別途承認を受けます。 [料金](https://vercel.com/docs/ai-gateway/pricing) · [モデル](https://vercel.com/ai-gateway/models/openai/gpt-6-luna#providers) · [ルーティングルール](https://vercel.com/docs/ai-gateway/models-and-providers/routing-rules#how-rules-apply) · [ZDR と BYOK](https://vercel.com/docs/ai-gateway/security-and-compliance/zdr#byok)
-2. GitHub で PR が開いており HEAD が同じことを再取得します。Neon の正規コネクタで照合した project、branch、endpoint と DB `mille_pr` を明示して接続します。`mille_environment` の `tyask/mille / preview / mille-pr-<PR番号>` と適用済みの `007_suggestion_gateway_preview.sql` を確認し、下の SQL で対象を有効にします。返る1行の識別子・`enabled`・`request_count` を確認します。新規行の件数は0、同じ対象の再開時は直前の件数を引き継ぎます。別の HEAD やデプロイの行がある場合は中断します。
+1. OpenAI API の対象組織とプロジェクトで、`gpt-6-luna` の利用可否、有効な Zero Data Retention（ZDR）設定、既存のクレジット残高を確認します。リクエストには `store: false` を指定します。標準単価と最大10回の試算を照合し、新規課金、永続資格情報の発行、権限拡大が必要なら別途承認を受けます。 [GPT-6 Luna と単価](https://developers.openai.com/api/docs/models/gpt-6-luna) · [ZDR の設定](https://developers.openai.com/api/docs/guides/your-data#configuring-data-retention-controls)
+2. 対象の PR 番号と完全 HEAD を照合できる、承認済みの資格情報経路を使います。`OPENAI_API_KEY` は対象の専用デプロイのサーバー実行時に限って渡します。正式 Preview の管理ジョブには現時点でこの経路がありません。信頼済み `main` の管理手順に変更が必要な場合は別途承認を受け、経路を用意するまでは通常の正式検証を行います。プロジェクト共通やブランチ単位の Preview 環境変数で継承設定の検査を迂回することや、Deployment Protection を緩和することは試験の対象外です。 [Vercel の実行時環境変数](https://vercel.com/docs/cli/deploy#env)
+3. 試験対象のデプロイで `status` と `verify` を成功させます。PR 番号、完全 HEAD、デプロイ ID、保護付き固有 URL、Neon の専用ブランチと endpoint を証跡で照合し、GitHub で PR が開いており HEAD が同じことを再取得します。Neon の正規コネクタで照合した project、branch、endpoint と DB `mille_pr` を明示し、`mille_environment` の `tyask/mille / preview / mille-pr-<PR番号>` と適用済みの `007_suggestion_gateway_preview.sql` を確認します。下の SQL で対象を有効にし、返る1行の識別子・`enabled`・`request_count` を確認します。新規行の件数は0、同じ対象の再開時は直前の件数を引き継ぎます。別の HEAD やデプロイの行がある場合は中断します。
 
 ```sql
 INSERT INTO public.mille_suggestion_gateway_preview AS gate
@@ -125,8 +126,8 @@ WHERE gate.environment_id = EXCLUDED.environment_id AND gate.source_sha = EXCLUD
 RETURNING environment_id, source_sha, deployment_id, enabled, request_count;
 ```
 
-3. Vercel にログイン済みのブラウザで固有 URL を開き、架空ユーザー A または B でログインします。自動ブラウザを使う場合は、同じプロジェクトの短期 Development OIDC をこの origin に限って送ります。提案画面の AI 表示を確認し、例として「豆腐としめじ、4人分、35分以内の和食」で複数の日本語候補を作り、「副菜は火を使わないものに変更」を追加します。候補を空き枠に採用し、「作った内容を記録」で実績化します。初回と追加要望の2回を基本とし、試験期間の予約件数は最大10回です。
-4. Vercel Runtime Logs で同じデプロイの `mille.suggestion.gateway` を照合し、成否、モデル、OpenAI の提供経路、資格情報種別 `system`、推論地域 `jp`、ZDR、所要時間、トークン数、費用を記録します。費用がログにない場合は AI Gateway Logs の対象リクエストで照合します。入力・出力本文や資格情報は証跡に含めません。試験成否にかかわらず、同じ専用 DB で下の SQL を実行して無効化し、1行を再取得して件数と `enabled = false` を確認します。PR に対象の完全 HEAD、デプロイ ID、操作結果と計測値を記録します。 [AI Gateway Logs](https://vercel.com/docs/ai-gateway/observability-and-spend/logs)
+4. Vercel にログイン済みのブラウザで固有 URL を開き、架空ユーザー A または B でログインします。自動ブラウザを使う場合は、同じプロジェクトの短期 Development OIDC をこの origin に限って送ります。提案画面の AI 表示を確認し、例として「豆腐としめじ、4人分、35分以内の和食」で複数の日本語候補を作り、「副菜は火を使わないものに変更」を追加します。候補を空き枠に採用し、「作った内容を記録」で実績化します。初回と追加要望の2回を基本とし、試験期間の予約件数は最大10回です。
+5. Vercel Runtime Logs で同じデプロイの `mille.suggestion.openai` を照合し、成否、モデル、OpenAI のリクエスト ID、所要時間、トークン数を記録します。OpenAI の Usage Dashboard で試験のプロジェクトと UTC 時間帯を照合し、利用量と費用を確認します。反映待ちや他の利用を含む集計は、トークン単価による試算と区別します。入力・出力本文や資格情報は証跡に含めません。試験の成否にかかわらず、同じ専用 DB で下の SQL を実行して無効化し、1行を再取得して件数と `enabled = false` を確認します。PR に対象の完全 HEAD、デプロイ ID、操作結果と計測値を記録します。 [OpenAI の利用量と費用](https://help.openai.com/en/articles/10478918-reviewing-api-usage-and-costs)
 
 ```sql
 UPDATE public.mille_suggestion_gateway_preview

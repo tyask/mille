@@ -9,8 +9,8 @@ import type {
 } from "../shared/suggestion-types";
 import type { AppUser } from "../shared/types";
 import { verifiedDatabaseQuery, type Query } from "./database/client";
-import { createGatewayRecommendationProvider } from "./suggestion-gateway";
-import { canUseSuggestions, gatewayPreviewEnabled, gatewayPreviewTarget, reserveGatewayRequest } from "./suggestion-preview";
+import { createOpenAIRecommendationProvider } from "./suggestion-openai";
+import { canUseSuggestions, suggestionPreviewEnabled, suggestionPreviewTarget, reserveSuggestionRequest } from "./suggestion-preview";
 import { sampleRecommendationProvider, type RecommendationProvider } from "./suggestion-provider";
 import { DomainError } from "./workspaces";
 
@@ -135,25 +135,22 @@ export async function getSuggestionService(user: AppUser, expectedMode?: Suggest
   const { query, configuration } = await verifiedDatabaseQuery();
   if (expectedMode === undefined) return createSuggestionService(query, user, sampleRecommendationProvider);
 
-  const target = gatewayPreviewTarget(configuration);
-  const activeTarget = target && await gatewayPreviewEnabled(query, target) ? target : null;
-  if (expectedMode !== (activeTarget ? "gateway" : "sample")) {
+  const target = suggestionPreviewTarget(configuration);
+  const activeTarget = target && await suggestionPreviewEnabled(query, target) ? target : null;
+  if (expectedMode !== (activeTarget ? "openai" : "sample")) {
     throw new SuggestionDomainError(409, "MODE_CHANGED", "提案の試験設定が変わりました。画面を再読み込みしてください。");
   }
   if (!activeTarget) return createSuggestionService(query, user, sampleRecommendationProvider);
 
-  const provider = createGatewayRecommendationProvider({
-    getOidcToken: async () => {
-      const { headers } = await import("next/headers");
-      return (await headers()).get("x-vercel-oidc-token") ?? "";
-    },
+  const provider = createOpenAIRecommendationProvider({
+    getApiKey: () => process.env.OPENAI_API_KEY ?? "",
     fetch: async (input, options) => {
       options?.signal?.throwIfAborted();
-      if (!await reserveGatewayRequest(query, activeTarget)) throw new Error("Gateway Preview の試験枠を利用できません。");
+      if (!await reserveSuggestionRequest(query, activeTarget)) throw new Error("OpenAI Preview の試験枠を利用できません。");
       options?.signal?.throwIfAborted();
       return fetch(input, options);
     },
-    log: event => console.info("mille.suggestion.gateway", JSON.stringify(event)),
+    log: event => console.info("mille.suggestion.openai", JSON.stringify(event)),
   });
   return createSuggestionService(query, user, provider);
 }
