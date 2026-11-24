@@ -3,7 +3,7 @@ import test from "node:test";
 import { createMealHandlers } from "../lib/server/meal-http";
 import type { MealRepository } from "../lib/server/meals";
 import { SuggestionDomainError, type SuggestionService } from "../lib/server/suggestions";
-import type { Suggestion, SuggestionConditions } from "../lib/shared/suggestion-types";
+import { suggestionModeHeader, type Suggestion, type SuggestionConditions, type SuggestionMode } from "../lib/shared/suggestion-types";
 import { TEST_USERS } from "../lib/shared/test-users";
 
 const origin = "https://mille.example.test";
@@ -26,6 +26,7 @@ function request(body?: unknown, headers?: HeadersInit) {
 
 test("suggestion HTTP authenticates mutations, validates inputs and retains the generation result status", async () => {
   let calls = 0;
+  const requestedModes: (SuggestionMode | undefined)[] = [];
   const service: SuggestionService = {
     create: async (workspace, input, key) => {
       calls++;
@@ -43,7 +44,11 @@ test("suggestion HTTP authenticates mutations, validates inputs and retains the 
     getRepository: async (): Promise<MealRepository> => assert.fail("Suggestion must not acquire a meal repository"),
     environment: { AUTH_URL: origin },
   };
-  const api = createMealHandlers({ ...dependencies, getSuggestions: async () => service });
+  const api = createMealHandlers({ ...dependencies, getSuggestions: async (_user, mode) => {
+    requestedModes.push(mode);
+    if (mode === "gateway") throw new SuggestionDomainError(409, "MODE_CHANGED", "画面を再読み込みしてください。");
+    return service;
+  } });
   const create = (value: Request) => api.createSuggestion(value, "workspace-1");
   const foreign = new Headers({ Origin: "https://other.example.test", "Content-Type": "application/json", "Idempotency-Key": sendKey });
   const missingKey = new Headers({ Origin: origin, "Content-Type": "application/json" });
@@ -62,6 +67,18 @@ test("suggestion HTTP authenticates mutations, validates inputs and retains the 
   assert.equal(response.headers.get("vary"), "Cookie");
   assert.deepEqual(await response.json(), { suggestion });
   assert.equal(calls, 1);
+  assert.deepEqual(requestedModes, ["sample"]);
+
+  const gateway = new Headers({ Origin: origin, "Content-Type": "application/json", "Idempotency-Key": sendKey,
+    [suggestionModeHeader]: "gateway" });
+  const modeChanged = await create(request(conditions, gateway));
+  assert.equal(modeChanged.status, 409);
+  assert.equal((await modeChanged.json()).code, "MODE_CHANGED");
+  assert.deepEqual(requestedModes, ["sample", "gateway"]);
+  assert.equal(calls, 1);
+  gateway.set(suggestionModeHeader, "unexpected");
+  assert.equal((await create(request(conditions, gateway))).status, 400);
+  assert.deepEqual(requestedModes, ["sample", "gateway"]);
 
   const conflict = await api.reviseSuggestion(request({ expectedVersion: 1, message: "時短で" }), "workspace-1", suggestion.id);
   assert.equal(conflict.status, 409);

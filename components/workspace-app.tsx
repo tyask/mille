@@ -92,13 +92,14 @@ function InviteDialog({ workspace, busy, error, onClose, mutate }: { workspace: 
   return <Dialog title="メンバーを招待" busy={busy} error={error} onClose={onClose} testId="workspace-invite-dialog"><p className="ws-dialog-description">「{workspace.name}」に、一緒に使う相手を招待します。指定したメールアドレスでログインした方だけが参加できます。</p><form onSubmit={submit}><label className="ws-label" htmlFor="ws-invite-email">相手のメールアドレス</label><input className="ws-input" id="ws-invite-email" data-testid="workspace-invite-email" type="email" value={email} onChange={(event) => { setEmail(event.target.value); setIssued(null); }} required maxLength={254} placeholder="partner@example.com" disabled={busy} autoFocus /><p className="ws-hint">同じ宛先に再発行すると、以前のリンクは無効になります。</p>{!issued && <button className="ws-button ws-button-primary ws-button-full" disabled={busy || !email.trim()} data-testid="workspace-invite-submit"><Icon name="link" />招待リンクを発行</button>}</form>{issued && <div className="ws-invite-result"><p className="ws-success-label"><Icon name="check" />招待リンクを発行しました</p><label className="ws-sr-only" htmlFor="ws-invitation-link">招待リンク</label><input className="ws-input" id="ws-invitation-link" data-testid="workspace-invitation-link" value={issued.url} readOnly onFocus={(event) => event.target.select()} /><button className="ws-button ws-button-primary ws-button-full" type="button" onClick={() => void copy()}><Icon name={copied ? "check" : "copy"} />{copied ? "コピーしました" : "リンクをコピー"}</button><p className="ws-hint">有効期限：{workspaceDate(issued.expiresAt)}（日本時間）</p>{copyError && <p className="ws-inline-error" role="alert">コピーできませんでした。リンクを選択してコピーしてください。</p>}</div>}<div className="ws-quiet-note"><Icon name="mail" /><p>メールは自動送信されません。リンクをコピーして、相手に送ってください。</p></div></Dialog>;
 }
 
-export default function WorkspaceApp({ user, initialState, initialWorkspaceId, initialLocation, suggestionsEnabled }: {
+export default function WorkspaceApp({ user, initialState, initialWorkspaceId, initialLocation, suggestionMode }: {
   user: AppUser;
   initialState: WorkspaceState;
   initialWorkspaceId?: string;
   initialLocation: ReturnType<typeof readMealLocation>;
-  suggestionsEnabled: boolean;
+  suggestionMode: "sample" | "gateway" | null;
 }) {
+  const suggestionsEnabled = suggestionMode !== null;
   const [state, setState] = useState(initialState);
   const [activeId, setActiveId] = useState(initialState.workspaces.find(workspace => workspace.id === initialWorkspaceId)?.id
     ?? initialState.workspaces[0]?.id ?? "");
@@ -298,6 +299,7 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
         </section>}
         </> : active && preferencesReady && (suggestions
           ? <SuggestionPanel key={`${active.id}:${mealEpoch}`} workspaceId={active.id} selection={location.selection}
+            sample={suggestionMode === "sample"}
             onAdopt={showAdoptedMeal} onBlockChange={block => { mealBlock.current = block; }} />
           : <MealApp key={`${active.id}:${mealEpoch}`} workspaceId={active.id} selection={location.selection}
             refresh={mealRefresh} onSelection={selectMeal} onBlockChange={block => { mealBlock.current = block; }}

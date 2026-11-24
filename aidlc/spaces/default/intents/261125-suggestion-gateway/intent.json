@@ -1,0 +1,25 @@
+{
+  "id": "261125-suggestion-gateway",
+  "issue": "https://github.com/tyask/mille/issues/74",
+  "branch": "codex/issue-74-gateway-suggestions",
+  "baseSha": "21d0b8441015c7677fa4dbd2dd1b2ee87c83d3fa",
+  "state": "frozen",
+  "approvedIssueSha256": "41c340d52410986b61ba5a1c712588c4968912b59014751f09ed6056eeb45ada",
+  "implementationPlanSha256": "b72146df397064370cc2b38ed44cf0ca2b33995580973d9f0eae37efcb948370",
+  "approvalEvidence": "approvals.json",
+  "postMerge": {
+    "completesIssue": true,
+    "manualPostMerge": false
+  },
+  "frozenAt": "2026-11-24T15:15:03Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "高速検査",
+      "提案と移行の関連テスト37件",
+      "専用DBの対象照合と予約上限の追補テスト",
+      "差分の自己レビュー",
+      "レビュー対応後の提案HTTP・Gatewayテスト7件と差分検査"
+    ]
+  }
+}

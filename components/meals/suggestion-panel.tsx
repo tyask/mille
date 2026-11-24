@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { MEAL_TYPES, type MealDetail, type MealType } from "@/lib/shared/meal-types";
 import { reviseSuggestionSchema, suggestionConditionsSchema } from "@/lib/shared/suggestion-schemas";
-import type { Suggestion, SuggestionCandidate } from "@/lib/shared/suggestion-types";
+import { suggestionModeHeader, type Suggestion, type SuggestionCandidate } from "@/lib/shared/suggestion-types";
 import type { MealNavigationBlock, MealSelection } from "./meal-app";
 import { MealApiError, mealRequest, mealWrite, mealWriteExpired, readMealSlot, type MealWrite } from "./meal-client";
 import { formatMealDate, MEAL_TYPE_LABELS } from "./meal-dates";
@@ -112,9 +112,10 @@ function failureMessage(request: Suggestion["request"]) {
   return "提案を作成できませんでした。もう一度お試しください。";
 }
 
-export function SuggestionPanel({ workspaceId, selection, onAdopt, onBlockChange }: {
+export function SuggestionPanel({ workspaceId, selection, sample, onAdopt, onBlockChange }: {
   workspaceId: string;
   selection: MealSelection;
+  sample: boolean;
   onAdopt: (meal: MealDetail) => void;
   onBlockChange: (block: MealNavigationBlock) => void;
 }) {
@@ -220,7 +221,9 @@ export function SuggestionPanel({ workspaceId, selection, onAdopt, onBlockChange
         onAdopt(meal);
         return;
       }
-      const { suggestion: next } = await mealRequest<{ suggestion: Suggestion }>(action.write.url, signal, action.write);
+      const { suggestion: next } = await mealRequest<{ suggestion: Suggestion }>(action.write.url, signal, action.write, {
+        [suggestionModeHeader]: sample ? "sample" : "gateway",
+      });
       if (signal.aborted) return;
       receive(next, action);
       setRetry(null);
@@ -309,7 +312,7 @@ export function SuggestionPanel({ workspaceId, selection, onAdopt, onBlockChange
 
   return <section className="meal-app" data-testid="suggestion-panel" aria-label="献立の提案">
     <header className="meal-app-header"><h2>献立の提案</h2></header>
-    <p className="meal-hint suggestion-sample-notice">テスト用の献立提案です。</p>
+    <p className="meal-hint suggestion-sample-notice">{sample ? "テスト用の献立提案です。" : "この画面ではAIが献立案を生成します。採用前に内容を確認してください。"}</p>
     <ConditionsForm draft={draft} disabled={locked} onChange={next => {
       dirty.current.conditions = true;
       setDraft(next);

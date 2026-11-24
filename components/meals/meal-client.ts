@@ -27,11 +27,13 @@ export function mealWriteExpired(write: MealWrite): boolean {
   return Date.now() - write.createdAt >= 24 * 60 * 60 * 1_000;
 }
 
-export async function mealRequest<T>(url: string, signal?: AbortSignal, write?: MealWrite): Promise<T> {
+export async function mealRequest<T>(
+  url: string, signal?: AbortSignal, write?: MealWrite, headers?: Readonly<Record<string, string>>,
+): Promise<T> {
   const response = await fetch(url, {
     method: write?.method ?? "GET",
     body: write?.json,
-    headers: write && { "Content-Type": "application/json", "Idempotency-Key": write.key },
+    headers: write ? { ...headers, "Content-Type": "application/json", "Idempotency-Key": write.key } : headers,
     cache: "no-store",
     credentials: "same-origin",
     signal,

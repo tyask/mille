@@ -5,8 +5,8 @@ import {
   mealIdempotencyKeySchema, mealRangeSchema, updateMealSchema,
 } from "../shared/meal-schemas";
 import { adoptSuggestionSchema, reviseSuggestionSchema, suggestionConditionsSchema } from "../shared/suggestion-schemas";
+import { suggestionModeHeader, type SuggestionMode } from "../shared/suggestion-types";
 import type { AppUser } from "../shared/types";
-import { isTestAuthEnabled } from "./auth/auth-mode";
 import { getMealRepository, MealDomainError, type MealRepository } from "./meals";
 import { getSuggestionService, SuggestionDomainError, type SuggestionService } from "./suggestions";
 import { assertWorkspaceSameOrigin, privateApiHeaders, readWorkspaceJson } from "./workspace-http";
@@ -23,7 +23,7 @@ const requestErrorCodes: Readonly<Record<number, string>> = {
 type MealApiDependencies = {
   getCurrentUser: () => Promise<AppUser | null>;
   getRepository: (user: AppUser) => Promise<MealRepository>;
-  getSuggestions?: (user: AppUser) => Promise<SuggestionService>;
+  getSuggestions?: (user: AppUser, expectedMode?: SuggestionMode) => Promise<SuggestionService>;
   environment?: Readonly<Record<string, string | undefined>>;
 };
 
@@ -62,13 +62,16 @@ function suggestionsUnavailable() {
   return new SuggestionDomainError(404, "NOT_FOUND", "献立提案を利用できません。");
 }
 
+function requestedSuggestionMode(request: Request): SuggestionMode {
+  const mode = request.headers.get(suggestionModeHeader) ?? "sample";
+  if (mode !== "sample" && mode !== "gateway") throw new DomainError(400, "提案の試験設定を確認してください。");
+  return mode;
+}
+
 export function createMealHandlers(dependencies: MealApiDependencies = {
   getCurrentUser: async () => (await import("./auth/current-user")).getCurrentUser(),
   getRepository: getMealRepository,
-  getSuggestions: user => {
-    if (!isTestAuthEnabled()) throw suggestionsUnavailable();
-    return getSuggestionService(user);
-  },
+  getSuggestions: getSuggestionService,
 }) {
   async function handle(
     request: Request,
@@ -111,19 +114,20 @@ export function createMealHandlers(dependencies: MealApiDependencies = {
     }, true);
   }
 
-  function getSuggestions(user: AppUser) {
+  function getSuggestions(user: AppUser, expectedMode?: SuggestionMode) {
     if (!dependencies.getSuggestions) throw suggestionsUnavailable();
-    return dependencies.getSuggestions(user);
+    return dependencies.getSuggestions(user, expectedMode);
   }
 
   function writeSuggestion<T>(
     request: Request,
     schema: z.ZodType<T>,
     operation: (service: SuggestionService, input: T, key: string) => Promise<Response>,
+    generation = false,
   ) {
     return handle(request, async user => {
-      const service = await getSuggestions(user);
       const { input, key } = await readMutation(request, schema, suggestionBodyLimit);
+      const service = await getSuggestions(user, generation ? requestedSuggestionMode(request) : undefined);
       return operation(service, input, key);
     }, true);
   }
@@ -155,7 +159,7 @@ export function createMealHandlers(dependencies: MealApiDependencies = {
       writeSuggestion(request, suggestionConditionsSchema, async (service, input, key) => {
         const { status, data } = await service.create(workspaceId, input, key);
         return jsonResponse({ suggestion: data }, status);
-      }),
+      }, true),
     getSuggestion: (request: Request, workspaceId: string, suggestionId: string) =>
       handle(request, async user => {
         const service = await getSuggestions(user);
@@ -165,7 +169,7 @@ export function createMealHandlers(dependencies: MealApiDependencies = {
       writeSuggestion(request, reviseSuggestionSchema, async (service, input, key) => {
         const { status, data } = await service.revise(workspaceId, suggestionId, input, key);
         return jsonResponse({ suggestion: data }, status);
-      }),
+      }, true),
     adoptSuggestion: (request: Request, workspaceId: string, suggestionId: string) =>
       writeSuggestion(request, adoptSuggestionSchema, async (service, input, key) =>
         jsonResponse({ meal: await service.adopt(workspaceId, suggestionId, input, key) }, 200)),
