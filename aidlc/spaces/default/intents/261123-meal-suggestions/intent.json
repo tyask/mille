@@ -1,0 +1,25 @@
+{
+  "id": "261123-meal-suggestions",
+  "issue": "https://github.com/tyask/mille/issues/70",
+  "branch": "codex/issue-70-meal-suggestions",
+  "baseSha": "46c9108e2b1e6ba57be4cae9e93d291b85c991cf",
+  "state": "frozen",
+  "approvedIssueSha256": "a7e0fba5692f1775e316fb21378b2a588a7e450f1f2349ccd5e263b77d1fd49a",
+  "implementationPlanSha256": "2f3aba2de575fd7479b7f37e23f1605ebbf8bd645e4c6702708d70112f6d6697",
+  "approvalEvidence": "approvals.json",
+  "postMerge": {
+    "completesIssue": true,
+    "manualPostMerge": true
+  },
+  "frozenAt": "2026-11-23T13:28:55Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "高速検査",
+      "355テスト",
+      "PC・スマホ × 架空A/Bのブラウザ操作4件",
+      "自己レビュー",
+      "レビュー修正後の高速検査と予定DB回帰テスト3件"
+    ]
+  }
+}

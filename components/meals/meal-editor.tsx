@@ -19,6 +19,7 @@ type MealEditorProps = {
   copyNotice?: string;
   confirmCopyServings?: boolean;
   lockSlot?: boolean;
+  saveLabel?: string;
 };
 
 type DishEditorProps = {
@@ -144,7 +145,7 @@ function copiedServingsLabel(dish: DishDraft, mealServings: string): string {
   return "人数を未入力のまま保存する";
 }
 
-export function MealEditor({ initial, busy, saveDisabled, fieldsDisabled, onDirty, onSave, onCancel, copyNotice, confirmCopyServings, lockSlot }: MealEditorProps) {
+export function MealEditor({ initial, busy, saveDisabled, fieldsDisabled, onDirty, onSave, onCancel, copyNotice, confirmCopyServings, lockSlot, saveLabel = "保存" }: MealEditorProps) {
   const [draft, setDraft] = useState(initial);
   const [error, setError] = useState<{ path: string; message: string }>();
   const [copyConfirmed, setCopyConfirmed] = useState(false);
@@ -238,7 +239,7 @@ export function MealEditor({ initial, busy, saveDisabled, fieldsDisabled, onDirt
           キャンセル
         </button>
         <button className="meal-button meal-button-primary" type="submit" disabled={busy || saveDisabled} data-testid="meal-editor-save">
-          {busy ? "保存中…" : "保存"}
+          {busy ? "保存中…" : saveLabel}
         </button>
       </div>
     </form>

@@ -1,6 +1,7 @@
 export const MEAL_TYPES = ["BREAKFAST", "LUNCH", "DINNER"] as const;
 
 export type MealType = typeof MEAL_TYPES[number];
+export type MealStatus = "RECORDED" | "PLANNED";
 
 export interface MealDishSummary {
   id: string;
@@ -28,7 +29,7 @@ interface MealHeader {
   mealDate: string;
   mealType: MealType;
   servings: number | null;
-  status: "RECORDED";
+  status: MealStatus;
   version: number;
   updatedBy: { id: string; name: string };
   updatedAt: string;

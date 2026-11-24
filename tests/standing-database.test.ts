@@ -78,7 +78,7 @@ test("照合済み常設と違う URI または SQL 設定の注入を資格情�
   }
 });
 
-test("001・002 と利用者を保持し、003・004 だけを既存ランナーで適用して後続実行は読み取りになる", async t => {
+test("001・002 と利用者を保持し、未適用の003〜006を既存ランナーで適用して後続実行は読み取りになる", async t => {
   const { request } = providerFixture();
   const { query } = await fixtureDatabase(t);
   const history = () => query("SELECT * FROM schema_migrations ORDER BY name");
@@ -102,7 +102,9 @@ test("001・002 と利用者を保持し、003・004 だけを既存ランナー
   assert.equal(exactChecks, 2);
   const after = await history();
   assert.deepEqual(after.slice(0, 2), before);
-  assert.deepEqual(after.slice(2).map(item => item.name), ["003_meals.sql", "004_meal_api.sql"]);
+  assert.deepEqual(after.slice(2).map(item => item.name), [
+    "003_meals.sql", "004_meal_api.sql", "005_meal_plans.sql", "006_meal_suggestions.sql",
+  ]);
   assert.deepEqual(await users(), existing);
   await readOnly();
   assert.deepEqual(await history(), after);

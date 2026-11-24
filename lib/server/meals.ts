@@ -23,6 +23,7 @@ import { DomainError } from "./workspaces";
 
 const mealErrorCodes = [
   "UNAUTHENTICATED", "NOT_FOUND", "INVALID_INPUT", "SLOT_OCCUPIED", "VERSION_CONFLICT", "IDEMPOTENCY_KEY_REUSED",
+  "NOT_PLANNED", "NOT_RECORDED",
 ] as const;
 type MealErrorCode = typeof mealErrorCodes[number];
 
@@ -41,6 +42,7 @@ export interface MealRepository {
   get(workspaceId: string, mealId: string): Promise<MealDetail>;
   create(workspaceId: string, input: CreateMealInput, idempotencyKey?: string): Promise<MealDetail>;
   update(workspaceId: string, mealId: string, input: UpdateMealInput, idempotencyKey?: string): Promise<MealDetail>;
+  record(workspaceId: string, mealId: string, input: UpdateMealInput, idempotencyKey: string): Promise<MealDetail>;
   delete(workspaceId: string, mealId: string, input: DeleteMealInput, idempotencyKey?: string): Promise<void>;
   copy(workspaceId: string, mealId: string, input: CopyMealInput, idempotencyKey: string): Promise<MealDetail>;
   search(workspaceId: string, input: DishSearchInput): Promise<DishSearchPage>;
@@ -51,7 +53,7 @@ const changeMeal = "SELECT mille_meal_command($1,$2,$3,$4::jsonb) AS result";
 const changeMealIdempotently = "SELECT mille_meal_command_idempotent($1,$2,$3,$4::jsonb,$5,$6) AS result";
 const searchDishes = "SELECT mille_meal_dish_search($1,$2,$3::jsonb) AS result";
 
-type MealMutation = "create" | "update" | "delete" | "copy";
+type MealMutation = "create" | "update" | "record" | "delete" | "copy";
 type DishSearchPosition = ReturnType<typeof dishSearchPositionSchema.parse>;
 type DishSearchResult = Omit<DishSearchPage, "nextCursor"> & { nextCursor: DishSearchPosition | null };
 
@@ -96,7 +98,9 @@ export function createMealRepository(query: Query, user: AppUser): MealRepositor
 
   function mutate<T>(operation: MealMutation, workspaceId: string, input: Record<string, unknown>, idempotencyKey?: string) {
     const payload = mealPayload(workspaceId, input);
-    if (idempotencyKey === undefined) return execute<T>(changeMeal, operation, payload);
+    if (idempotencyKey === undefined && operation !== "record" && operation !== "copy") {
+      return execute<T>(changeMeal, operation, payload);
+    }
     const key = mealIdempotencyKeySchema.parse(idempotencyKey);
     // Each operation identifies its HTTP method and route. The normalized payload includes the target IDs.
     const hash = createHash("sha256").update(JSON.stringify([operation, payload])).digest("hex");
@@ -108,6 +112,10 @@ export function createMealRepository(query: Query, user: AppUser): MealRepositor
     get: async (workspaceId, mealId) => execute<MealDetail>(readMeal, "get", mealPayload(workspaceId, { mealId: mealIdSchema.parse(mealId) })),
     create: async (workspaceId, input, key) => mutate<MealDetail>("create", workspaceId, createMealSchema.parse(input), key),
     update: async (workspaceId, mealId, input, key) => mutate<MealDetail>("update", workspaceId, {
+      ...updateMealSchema.parse(input),
+      mealId: mealIdSchema.parse(mealId),
+    }, key),
+    record: async (workspaceId, mealId, input, key) => mutate<MealDetail>("record", workspaceId, {
       ...updateMealSchema.parse(input),
       mealId: mealIdSchema.parse(mealId),
     }, key),

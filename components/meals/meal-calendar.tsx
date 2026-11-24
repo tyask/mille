@@ -22,7 +22,11 @@ type CalendarProps = {
 function slotText(status: CalendarStatus, meal: MealSummary | undefined) {
   if (status === "loading") return "読込中";
   if (status === "error") return "取得できません";
-  return meal ? "記録済み" : "未記録";
+  return meal?.status === "RECORDED" ? "記録済み" : meal?.status === "PLANNED" ? "予定" : "未記録";
+}
+
+function statusClass(meal: MealSummary | undefined) {
+  return meal?.status === "RECORDED" ? " is-recorded" : meal?.status === "PLANNED" ? " is-planned" : "";
 }
 
 function DateButton({ date, today, selected, variant, status, records, onDate }: {
@@ -38,6 +42,8 @@ function DateButton({ date, today, selected, variant, status, records, onDate }:
   const summary = status === "loaded"
     ? slots.map(({ type, record }) => `${MEAL_TYPE_LABELS[type]} ${slotText(status, record)}`).join("、")
     : slotText(status, undefined);
+  const planned = slots.filter(({ record }) => record?.status === "PLANNED").length;
+  const recorded = slots.filter(({ record }) => record?.status === "RECORDED").length;
   return (
     <button
       type="button"
@@ -52,12 +58,12 @@ function DateButton({ date, today, selected, variant, status, records, onDate }:
       {variant !== "month" && <span className="meal-date-weekday">{weekdays[mealWeekday(date)]}</span>}
       <span className="meal-date-number">{Number(date.slice(8))}</span>
       {status === "loaded" && variant === "overview" && (
-        <span className="meal-date-count">{slots.filter(({ record }) => record).length}食</span>
+        <span className="meal-date-count" aria-hidden="true">{planned ? <>予定{planned}{recorded > 0 && <><br />記録{recorded}</>}</> : `${recorded}食`}</span>
       )}
       {status === "loaded" && variant === "month" && (
         <span className="meal-month-markers" aria-hidden="true">
           {slots.map(({ type, record }) => (
-            <span key={type} className={`meal-marker meal-marker-${type}${record ? " is-recorded" : ""}`} />
+            <span key={type} className={`meal-marker meal-marker-${type}${statusClass(record)}`} />
           ))}
         </span>
       )}
@@ -79,7 +85,7 @@ function SlotButton({ date, type, record, selected, status, daySummary = false, 
   return (
     <button
       type="button"
-      className={`meal-slot${daySummary ? " meal-day-slot" : ""}${selected ? " is-selected" : ""}${record ? " is-recorded" : ""}`}
+      className={`meal-slot${daySummary ? " meal-day-slot" : ""}${selected ? " is-selected" : ""}${statusClass(record)}`}
       data-testid={daySummary ? "meal-day-slot" : "meal-week-slot"}
       data-date={date}
       data-meal-type={type}
@@ -168,7 +174,7 @@ export function MealCalendar({ date, view, meal, meals, status, onDate, onView, 
             {Array.from({ length: mealWeekday(days[0]) }, (_, index) => <span key={`blank-${index}`} aria-hidden="true" />)}
             {days.map(day => <div key={day}>{dateButton(day, "month")}</div>)}
           </div>
-          <p className="meal-month-legend">左から 朝・昼・夕。塗りつぶしは記録済み。</p>
+          <p className="meal-month-legend">左から 朝・昼・夕。<span><i className="meal-marker is-planned" aria-hidden="true" /> 予定</span><span><i className="meal-marker is-recorded" aria-hidden="true" /> 記録済み</span></p>
         </>
       )}
       <section className="meal-day-slots" aria-label="選択した日の献立">

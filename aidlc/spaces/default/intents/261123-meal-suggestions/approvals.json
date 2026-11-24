@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/70",
+  "recordedAt": "2026-11-23T13:14:55Z",
+  "planApproval": {
+    "reply": "承認します",
+    "sequence": 1,
+    "scope": "チャットで提示したP2の最初の実装計画と検証範囲。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "GitHubから再取得してチャットに全文を提示した保存済みIssue #70の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-23T13:04:53Z",
+    "sha256": "a7e0fba5692f1775e316fb21378b2a588a7e450f1f2349ccd5e263b77d1fd49a"
+  }
+}

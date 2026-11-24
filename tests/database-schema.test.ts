@@ -9,7 +9,10 @@ import type { DatabaseConfiguration } from "../lib/server/database/environment";
 const preview: DatabaseConfiguration = { mode: "hosted", url: "", host: "", environment: "preview", environmentId: "mille-preview" };
 const production: DatabaseConfiguration = { ...preview, environment: "production", environmentId: "mille-production" };
 type MigrationRow = { name: string; sha256: string; applied_at: Date };
-const migrationNames = ["001_auth.sql", "002_workspaces.sql", "003_meals.sql", "004_meal_api.sql"];
+const migrationNames = [
+  "001_auth.sql", "002_workspaces.sql", "003_meals.sql", "004_meal_api.sql",
+  "005_meal_plans.sql", "006_meal_suggestions.sql",
+];
 
 test("auth, workspace and meal schemas initialize atomically without changing disabled users or creating workspace data", async t => {
   const database = new PGlite(); t.after(() => database.close());

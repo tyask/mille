@@ -1,5 +1,6 @@
 import type { Page, Response, Route } from "playwright";
-import type { MealDetail, MealSummary, MealType } from "../../lib/shared/meal-types";
+import type { DishSearchPage, MealDetail, MealSummary, MealType } from "../../lib/shared/meal-types";
+import type { Suggestion } from "../../lib/shared/suggestion-types";
 
 type MealCase = { page: Page; checks: string[] };
 type SharedMealCases = {
@@ -57,15 +58,18 @@ async function readDish(page: Page, name: string) {
   await page.getByTestId("meal-detail").getByText(name, { exact: true }).waitFor();
 }
 
+function mealSlot(page: Page, date: string, type: MealType) {
+  return page.locator(
+    `[data-testid="meal-week-slot"][data-date="${date}"][data-meal-type="${type}"], [data-testid="meal-day-slot"][data-date="${date}"][data-meal-type="${type}"]`,
+  ).filter({ visible: true });
+}
+
 async function chooseSlot(page: Page, date: string, type: MealType) {
   const dateButton = page.locator(
     `[data-testid="meal-week-date"][data-date="${date}"], [data-testid="meal-overview-date"][data-date="${date}"], [data-testid="meal-month-date"][data-date="${date}"]`,
   ).filter({ visible: true });
   await dateButton.click();
-  const slot = page.locator(
-    `[data-testid="meal-week-slot"][data-date="${date}"][data-meal-type="${type}"], [data-testid="meal-day-slot"][data-date="${date}"][data-meal-type="${type}"]`,
-  ).filter({ visible: true });
-  await slot.click();
+  await mealSlot(page, date, type).click();
 }
 
 async function chooseCopyDestination(page: Page, date: string, type: MealType) {
@@ -407,4 +411,162 @@ export async function verifySharedMeals({ owner, member, workspaceId, personalId
   await readDish(ownerPage, originalDish);
   await verifyLateWorkspaceResponse(ownerPage, workspaceId, personalId);
   owner.checks.push("meal-switch-ignores-late-workspace-response");
+}
+
+async function readSuggestion(response: Pick<Response, "json" | "headers">) {
+  const { suggestion } = await response.json() as { suggestion: Suggestion };
+  requireCondition(suggestion?.id && suggestion.request.status === "SUCCEEDED"
+    && suggestion.candidates.length > 1 && response.headers()["cache-control"]?.includes("no-store"));
+  return suggestion;
+}
+
+async function searchForDish(page: Page, workspaceId: string, name: string) {
+  await page.getByTestId("meal-search-input").fill(name);
+  const response = await expectResponse(page, "GET", `/api/workspaces/${workspaceId}/dish-search`, 200,
+    () => page.getByTestId("meal-search-submit").click());
+  return await response.json() as DishSearchPage;
+}
+
+export async function verifyMealSuggestions({ owner, member, workspaceId, onStage }: Omit<SharedMealCases, "personalId">) {
+  const ownerPage = owner.page;
+  const memberPage = member.page;
+  const suggestionsPath = `/api/workspaces/${workspaceId}/suggestions`;
+  const mealsPath = mealListPath(workspaceId);
+  const actualDish = "実際に作った豆腐料理";
+
+  onStage("suggestion-generate", "owner");
+  await chooseSlot(ownerPage, secondDate, "DINNER");
+  await ownerPage.getByTestId("meal-detail-suggest").click();
+  const panel = ownerPage.getByTestId("suggestion-panel");
+  await panel.waitFor();
+  requireCondition(await panel.getByTestId("suggestion-date").inputValue() === secondDate
+    && await panel.getByTestId("suggestion-type").inputValue() === "DINNER");
+  await panel.getByTestId("suggestion-servings").fill("4");
+  await panel.getByTestId("suggestion-ingredients").fill("豆腐、しめじ");
+  await panel.getByTestId("suggestion-minutes").fill("35");
+  await panel.getByTestId("suggestion-cuisine").fill("和食");
+  await panel.getByTestId("suggestion-request").fill("辛くしないでください");
+  const generate = () => panel.getByTestId("suggestion-generate").click();
+  const initial = await readSuggestion(await expectResponse(ownerPage, "POST", suggestionsPath, 201, generate));
+  const candidates = panel.getByTestId("suggestion-candidate");
+  await candidates.nth(1).waitFor();
+  const conditions = panel.getByTestId("suggestion-conditions");
+  await conditions.getByText(/豆腐/).first().waitFor();
+  requireCondition((await conditions.textContent())?.includes("和食"));
+  owner.checks.push("suggestion-input-and-multiple-candidates-ui");
+
+  onStage("suggestion-revise", "owner");
+  const additional = "副菜を変えてください";
+  const revisePath = `${suggestionsPath}/${initial.id}/messages`;
+  const messageField = panel.getByTestId("suggestion-message");
+  await messageField.fill(additional);
+  const matchesRevision = (url: URL) => url.pathname === revisePath;
+  let committed: { key: string; body: string; suggestion: Suggestion } | undefined;
+  await ownerPage.route(matchesRevision, async route => {
+    const request = route.request();
+    const key = request.headers()["idempotency-key"];
+    const body = request.postData();
+    try {
+      // Lose only the browser response after the disposable workspace has committed one revision.
+      const upstream = await route.fetch({ maxRedirects: 0 });
+      if (upstream.status() === 200 && key && body) committed = { key, body, suggestion: await readSuggestion(upstream) };
+    } catch {
+      // The case verifies the upstream commit after the browser shows its retry control.
+    } finally {
+      await route.abort("connectionreset");
+    }
+  }, { times: 1 });
+  await panel.getByTestId("suggestion-revise").click();
+  const retry = panel.getByTestId("suggestion-retry");
+  await retry.waitFor();
+  const initialSide = initial.candidates[0].dishes[1].name;
+  requireCondition(committed && await messageField.inputValue() === additional);
+  await candidates.first().getByText(initialSide, { exact: true }).first().waitFor();
+
+  // Replay first sees a simulated in-progress response for that exact committed request.
+  const pending: Suggestion = { ...initial, request: { ...committed.suggestion.request, status: "RUNNING" } };
+  await ownerPage.route(matchesRevision, route => route.fulfill({
+    status: 202, json: { suggestion: pending }, headers: { "cache-control": "no-store" },
+  }), { times: 1 });
+  const pendingResponse = await expectResponse(ownerPage, "POST", revisePath, 202, () => retry.click());
+  requireCondition(pendingResponse.request().headers()["idempotency-key"] === committed.key
+    && pendingResponse.request().postData() === committed.body);
+  const confirmResult = panel.getByRole("button", { name: "提案結果を確認", exact: true });
+  await confirmResult.waitFor();
+  requireCondition(await messageField.inputValue() === additional);
+  await candidates.first().getByText(initialSide, { exact: true }).first().waitFor();
+  const revisedResponse = await expectResponse(ownerPage, "POST", revisePath, 200, () => confirmResult.click());
+  const revised = await readSuggestion(revisedResponse);
+  requireCondition(revisedResponse.request().headers()["idempotency-key"] === committed.key
+    && revisedResponse.request().postData() === committed.body && revised.request.id === committed.suggestion.request.id
+    && JSON.stringify(revised.candidates.map(candidate => candidate.id))
+      === JSON.stringify(committed.suggestion.candidates.map(candidate => candidate.id))
+    && revised.version === committed.suggestion.version && revised.version === initial.version + 1
+    && revised.candidates[0].dishes[1].name !== initialSide);
+  await panel.getByTestId("suggestion-messages").getByText(additional, { exact: true }).waitFor();
+  await candidates.first().getByText(revised.candidates[0].dishes[1].name, { exact: true }).first().waitFor();
+  await confirmResult.waitFor({ state: "hidden" });
+  owner.checks.push("suggestion-revision-ui", "suggestion-revision-retry-retains-input-and-candidates");
+  owner.checks.push("suggestion-pending-replays-write");
+
+  onStage("suggestion-adopt", "owner");
+  const adopted = await readDetail(await expectResponse(ownerPage, "POST", `${suggestionsPath}/${revised.id}/adoptions`, 200,
+    () => candidates.first().getByTestId("suggestion-adopt").click()));
+  requireCondition(adopted.status === "PLANNED" && adopted.mealDate === secondDate && adopted.mealType === "DINNER" && adopted.servings === 4);
+  await ownerPage.getByTestId("meal-detail").getByText("予定", { exact: true }).waitFor();
+  await readDish(ownerPage, adopted.dishes[0].name);
+  owner.checks.push("suggestion-adoption-visible-as-planned");
+
+  onStage("suggestion-replace-plan", "owner");
+  await ownerPage.getByTestId("meal-detail-suggest").click();
+  await panel.getByTestId("suggestion-ingredients").fill("ピーマン");
+  const newSuggestion = await readSuggestion(await expectResponse(ownerPage, "POST", suggestionsPath, 201, generate));
+  const replaceCandidate = candidates.nth(1).getByTestId("suggestion-adopt");
+  await replaceCandidate.click();
+  const replaceDialog = panel.getByTestId("suggestion-replace");
+  await replaceDialog.getByRole("button", { name: "キャンセル", exact: true }).click();
+  await replaceDialog.waitFor({ state: "hidden" });
+  await replaceCandidate.and(ownerPage.locator(":focus")).waitFor();
+  await replaceCandidate.click();
+  const confirm = replaceDialog.getByTestId("suggestion-replace-confirm");
+  await confirm.waitFor();
+  const beforeReplacement = await get<{ meal: MealDetail }>(ownerPage, `${mealsPath}/${adopted.id}`);
+  requireCondition(beforeReplacement.status === 200 && beforeReplacement.body.meal.version === adopted.version);
+  const replacement = await readDetail(await expectResponse(ownerPage, "POST", `${suggestionsPath}/${newSuggestion.id}/adoptions`, 200,
+    () => confirm.click()));
+  requireCondition(replacement.status === "PLANNED" && replacement.id === adopted.id && replacement.version === adopted.version + 1);
+  await readDish(ownerPage, replacement.dishes[0].name);
+  owner.checks.push("suggestion-replace-plan-requires-confirmation", "suggestion-replace-cancel-restores-focus");
+
+  onStage("planned-meal-member-and-search", "member");
+  await memberPage.goto(ownerPage.url(), { waitUntil: "networkidle" });
+  await memberPage.getByTestId("meal-detail").getByText("予定", { exact: true }).waitFor();
+  await mealSlot(memberPage, secondDate, "DINNER").getByText("予定", { exact: true }).waitFor();
+  await readDish(memberPage, replacement.dishes[0].name);
+  const whilePlanned = await searchForDish(memberPage, workspaceId, replacement.dishes[0].name);
+  requireCondition(!whilePlanned.items.some(item => item.mealId === replacement.id));
+  member.checks.push("planned-meal-shared-and-excluded-from-search");
+
+  onStage("planned-meal-record-edit", "member");
+  await memberPage.getByTestId("meal-detail-record").click();
+  const editor = memberPage.getByTestId("meal-editor");
+  const dishName = editor.getByTestId("meal-editor-dish-name").first();
+  await dishName.waitFor();
+  requireCondition(await dishName.inputValue() === replacement.dishes[0].name);
+  await dishName.fill(actualDish);
+  const recorded = await readDetail(await expectResponse(memberPage, "POST", `${mealsPath}/${replacement.id}/recordings`, 200,
+    () => editor.getByTestId("meal-editor-save").click()));
+  requireCondition(recorded.status === "RECORDED" && recorded.id === replacement.id
+    && recorded.version === replacement.version + 1 && recorded.dishes[0].name === actualDish);
+  await memberPage.getByTestId("meal-detail").getByText("記録済み", { exact: true }).waitFor();
+  await mealSlot(memberPage, secondDate, "DINNER").getByText("記録済み", { exact: true }).waitFor();
+  member.checks.push("planned-meal-records-edited-content");
+
+  onStage("recorded-plan-shared-search", "owner");
+  await ownerPage.reload({ waitUntil: "networkidle" });
+  await readDish(ownerPage, actualDish);
+  const results = await searchForDish(ownerPage, workspaceId, actualDish);
+  requireCondition(results.items.some(item => item.mealId === recorded.id && item.dishName === actualDish));
+  await ownerPage.getByTestId("meal-search-result").getByText(actualDish, { exact: true }).waitFor();
+  owner.checks.push("recorded-plan-shared-and-searchable");
 }

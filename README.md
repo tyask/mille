@@ -26,6 +26,9 @@ Auth.js **5.0.0-beta.32** / Neon PostgreSQL / Vercel。
 外部 DB・Google・Vercel の秘密値は不要です。Node を `.node-version` に合わせて実行します。
 作業開始時の Git 確認は [開発手順](docs/development.md) に従います。
 
+架空 A/B でログインする環境では、献立の条件入力、候補への追加要望、予定への採用、作った内容の記録を試せます。
+提案にはサンプル応答を使います。実際の LLM への接続は後続工程です。
+
 ```bash
 npm run setup:cloud
 npm run dev:cloud
