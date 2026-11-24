@@ -4,10 +4,10 @@ import { migrationFileName, migrationSql, repositoryMigrationSources, seedSql, t
 
 const migrationDirectory = "db/migrations/";
 
-export function previewMigrationSources(files: readonly { file: string; data: Buffer }[]): MigrationSource[] {
+export function migrationSourcesFromFiles(files: readonly { file: string; data: Buffer }[]): MigrationSource[] {
   const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
   const entries = files.filter(({ file }) => file.startsWith(migrationDirectory) && /\.sql$/i.test(file));
-  const sources = entries.map(({ file, data }) => {
+  return entries.map(({ file, data }) => {
     const name = file.slice(migrationDirectory.length);
     if (!migrationFileName.test(name)) throw new Error("PR の migration ファイル名が無効です。");
     let source: string;
@@ -16,6 +16,10 @@ export function previewMigrationSources(files: readonly { file: string; data: Bu
     if (!source.trim() || source.includes("\0")) throw new Error("PR の migration 本文が無効です。");
     return { name, source };
   }).sort((left, right) => Number(left.name.slice(0, 3)) - Number(right.name.slice(0, 3)));
+}
+
+export function previewMigrationSources(files: readonly { file: string; data: Buffer }[]): MigrationSource[] {
+  const sources = migrationSourcesFromFiles(files);
   const trusted = repositoryMigrationSources();
   if (!trusted.length
     || trusted.some(({ name, source }, index) => sources[index]?.name !== name || sources[index].source !== source)) {

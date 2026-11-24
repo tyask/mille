@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/72",
+  "recordedAt": "2026-11-24T14:02:49Z",
+  "planApproval": {
+    "reply": "承認します",
+    "sequence": 1,
+    "scope": "常設Previewのリリース時のDB移行の実装と検証計画。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "GitHubから再取得してチャットに全文を提示した保存済みIssue #72の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-24T13:57:20Z",
+    "sha256": "8d3f91709c5f55415db459992ff6813c8183f6726f893b3d1cbe65e207c2aff0"
+  }
+}

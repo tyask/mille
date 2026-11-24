@@ -1,0 +1,25 @@
+{
+  "id": "261124-standing-migrations",
+  "issue": "https://github.com/tyask/mille/issues/72",
+  "branch": "codex/issue-72-standing-migrations",
+  "baseSha": "1d70848f889dd625ecf43e080f3599ef123ce37f",
+  "state": "frozen",
+  "approvedIssueSha256": "8d3f91709c5f55415db459992ff6813c8183f6726f893b3d1cbe65e207c2aff0",
+  "implementationPlanSha256": "53419290a576088236993a895600c6ea07037abf4f0515456967e97fbe431ff0",
+  "approvalEvidence": "approvals.json",
+  "postMerge": {
+    "completesIssue": true,
+    "manualPostMerge": true
+  },
+  "frozenAt": "2026-11-24T14:09:03Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "高速検査",
+      "常設リリース・DBテスト17件",
+      "DB・本番ビルド回帰15件",
+      "自己レビュー",
+      "レビュー修正後の高速検査、常設DB 10件・リリース9件、既存配信元Git原本の取得"
+    ]
+  }
+}
