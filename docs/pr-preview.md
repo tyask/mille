@@ -9,11 +9,17 @@ Neon の PR 専用ブランチで、承認済みの適用済み SQL と原文が
 ## 有効化
 
 1. 既存の Vercel `mille`（GitHub `tyask/mille` に接続済み）と Neon `mille-preview` を確認します。常設 Preview の正確な URL、対応する Deployment ID、DB の branch・endpoint と接続先を読み取りで記録します。常設 URL が個別 Deployment の URL の場合はその Deployment を保持します。本番ブランチが `main` であることと、本番用 alias の現在の参照先を照合します。
-2. 常設 DB の接続情報と認証設定は、信頼済みの常設用 Git ブランチに適用範囲を限定します。変更前の適用先と復旧手順を確認し、既存の常設 Preview が同じ URL と DB で応答することを確かめます。接続情報の値は取得・再入力せず環境変数の適用範囲を変更します。管理ジョブは、共通または `codex/*` に適用される Preview 変数や Deployment Protection の自動化バイパスがある場合は停止します。
+2. 常設 DB の接続情報と認証設定は、信頼済みの常設用 Git ブランチに適用範囲を限定します。変更前の適用先と復旧手順を確認し、既存の常設 Preview が同じ URL と DB で応答することを確かめます。接続情報の値は取得・再入力せず環境変数の適用範囲を変更します。管理ジョブは、Preview 変数に `codex/*` や不正なブランチが指定されている場合、Deployment Protection の自動化バイパスや外部接続がある場合に停止します。
 3. 通常のブランチ push による自動デプロイを制御します。管理ジョブは、信頼済み main と現在の PR HEAD の両方に `vercel.json` の同じ Git 制御設定があることを要求します。この照合は管理ジョブ向けです。Vercel の Git 連携が実際に採用する設定を確認し、設定を含まない旧 ref や対象外の通常の push でも PR Preview が起動しないことを照合します。起動範囲を制御できない場合は有効化を止めます。
 4. 現行の管理ジョブは、`mille-preview` 内の独立した空の `mille-pr-template` から、PR ごとの子ブランチを作ります。テンプレートには標準の空 DB `neondb` と分離されたロール `neondb_owner` を用意します。空の root がなければ schema-only で独立した root を作成し、既定ブランチと異なる ID・endpoint を照合した後、その隔離先でだけ既存スキーマを除きます。テンプレートに旧ロールのパスワードが引き継がれた場合は、隔離先の資格情報を分離します。その発行が必要な場合は別途承認を得ます。ブランチと compute の利用枠を確認します。
 5. GitHub Environment `mille-pr-preview` の許可ブランチを `main` のみに限定し、既存の最小権限資格情報を Environment secrets `VERCEL_TOKEN` と `NEON_API_KEY` に登録します。Environment variables は `MILLE_PR_PREVIEW_VERCEL_TEAM_ID`、`MILLE_PR_PREVIEW_VERCEL_PROJECT_ID`、`MILLE_PR_PREVIEW_NEON_PROJECT_ID`、`MILLE_PR_PREVIEW_NEON_TEMPLATE_ID`、`MILLE_PR_PREVIEW_MAX_BRANCHES` を使用します。
 6. 導入 PR の独立レビュー、CI、初回正式 Preview での検証を済ませ、別途承認を得てマージします。すべての設定を照合した後に Repository variable `MILLE_PR_PREVIEW_ENABLED` を `true` にします。常設 URL・DB の維持や接続情報の分離が確認できない場合は切替を停止します。追加費用、永続資格情報の発行、権限拡大には別途承認が必要です。
+
+## プロジェクト共通の Preview 環境変数
+
+プロジェクト共通の Preview 環境変数を利用できる管理コードが `main` に反映された後、利用者が Vercel の `fumin1/mille` で **Settings → Environment Variables** を開きます。`OPENAI_API_KEY` を設定する場合は **Secret** として追加し、環境に **Preview** のみを選び、Git ブランチを指定せず保存します。運用記録には変数名と適用先を残します。 [Vercel の環境変数設定](https://vercel.com/fumin1/mille/settings/environment-variables) · [Vercel の登録手順](https://vercel.com/docs/environment-variables/managing-environment-variables)
+
+Vercel は保存後に作成した対象 Preview に、ビルド時と実行時の環境変数として自動で渡します。既存のデプロイは作成時の設定を使います。同じ HEAD の管理ジョブを再実行すると既存デプロイを再利用する場合があるため、すでに開いている PR に反映する場合は更新後の新しい HEAD で正式 Preview を作成します。[`status` と `verify`](#正式-preview-の状態確認と再検証) で保護付き固有 URL、現 HEAD とデプロイ、専用 DB を照合します。 [Vercel の適用範囲](https://vercel.com/docs/environment-variables#environments)
 
 ## Neon Native の準備用ビルド
 

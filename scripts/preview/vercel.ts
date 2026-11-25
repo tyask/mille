@@ -40,10 +40,9 @@ const projectEnvironment = z.object({
   gitBranch: z.string().min(1).nullish(),
 });
 
-function allowsManagedPreview(environment: z.infer<typeof projectEnvironment>): boolean {
-  return !environment.target.includes("preview")
-    || Boolean(environment.gitBranch && /^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(environment.gitBranch)
-      && !/^codex\//i.test(environment.gitBranch));
+function allowsManagedPreview({ target, gitBranch }: z.infer<typeof projectEnvironment>): boolean {
+  if (!target.includes("preview") || gitBranch == null) return true;
+  return /^[a-zA-Z0-9][a-zA-Z0-9/_.-]*$/.test(gitBranch) && !/^codex\//i.test(gitBranch);
 }
 
 const pagination = z.object({
@@ -316,7 +315,7 @@ export class VercelPreview {
     if (active) return this.ready(active.id, target, hostHash, verifyCurrent);
 
     // The Vercel CLI omits target for Preview and sends request-local runtime
-    // and build overrides as env and build.env. Preflight rejects inherited variables on the managed PR path.
+    // and build overrides as env and build.env. Project-wide Preview variables are configured in Vercel.
     await verifyCurrent();
     const { id } = parse(z.object({ id: deploymentId, target: previewTarget }), await this.api("/v13/deployments?forceNew=1", "POST", {
       name: projectName,

@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/76",
+  "recordedAt": "2026-11-25T10:33:43Z",
+  "planApproval": {
+    "reply": "ではそのチェックは外してください。",
+    "sequence": 1,
+    "scope": "説明したプロジェクト共通のPreview設定を理由とする拒否条件の削除。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "GitHubから再取得してチャットに全文を提示した保存済みIssue #76の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-25T10:29:05Z",
+    "sha256": "d5b5cf1ef9e33aa0451b25fb49bc7e3f87eb9a1e9881465320e2d39e0e4b9acd"
+  }
+}

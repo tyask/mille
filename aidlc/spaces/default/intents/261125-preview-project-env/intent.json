@@ -1,0 +1,23 @@
+{
+  "id": "261125-preview-project-env",
+  "issue": "https://github.com/tyask/mille/issues/76",
+  "branch": "codex/issue-76-preview-project-env",
+  "baseSha": "21d0b8441015c7677fa4dbd2dd1b2ee87c83d3fa",
+  "state": "frozen",
+  "approvedIssueSha256": "d5b5cf1ef9e33aa0451b25fb49bc7e3f87eb9a1e9881465320e2d39e0e4b9acd",
+  "implementationPlanSha256": "85cd4c46d667426db578998109aebb0c0639879da35d5a43a6400d52f4b1b35a",
+  "approvalEvidence": "approvals.json",
+  "postMerge": {
+    "completesIssue": true,
+    "manualPostMerge": false
+  },
+  "frozenAt": "2026-11-25T10:34:34Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "高速検査",
+      "正式Previewの管理・状態確認テスト13件",
+      "差分の自己レビュー"
+    ]
+  }
+}
