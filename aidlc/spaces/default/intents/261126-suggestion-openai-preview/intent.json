@@ -1,0 +1,25 @@
+{
+  "id": "261126-suggestion-openai-preview",
+  "issue": "https://github.com/tyask/mille/issues/74",
+  "branch": "codex/issue-74-gateway-suggestions",
+  "baseSha": "eb8707ba2ce876d34853abad22228cbeea2e9b55",
+  "continuedFromSha": "49f42a30f0cddf0a7b33ce404aeccb68cae53c67",
+  "supersedes": "261125-suggestion-openai",
+  "state": "frozen",
+  "approvedIssueSha256": "aca8713db2a17d863d6399db6b57e86c7b9a90fb37844eb644c558c5640158e9",
+  "implementationPlanSha256": "b87c681fdfc52f960b225fe1fda2b8ede6824a11eac3088aa81140139ac15c2b",
+  "approvalEvidence": "approvals.json",
+  "postMerge": {
+    "completesIssue": true,
+    "manualPostMerge": false
+  },
+  "frozenAt": "2026-11-26T14:11:27Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "文書検査",
+      "OpenAI 送信内容の模擬テスト7件",
+      "運用手順と承認済み本文の突合"
+    ]
+  }
+}

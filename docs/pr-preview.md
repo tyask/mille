@@ -115,8 +115,8 @@ gh workflow run pr-preview.yml --repo tyask/mille --ref main \
 
 [Issue #74](https://github.com/tyask/mille/issues/74) の実モデル検証では、対象 PR の固有 URL で架空ユーザーと架空の献立を使い、標準のグローバル接続 `https://api.openai.com/v1/chat/completions` で GPT-6 Luna（`gpt-6-luna`）を試します。通常の `verify` では PC・スマホ × 架空 A/B の4ケースを確認します。
 
-1. OpenAI API の対象組織とプロジェクトで、`gpt-6-luna` の利用可否、有効な Zero Data Retention（ZDR）設定、既存のクレジット残高を確認します。リクエストには `store: false` を指定します。標準単価と最大10回の試算を照合し、新規課金、永続資格情報の発行、権限拡大が必要なら別途承認を受けます。 [GPT-6 Luna と単価](https://developers.openai.com/api/docs/models/gpt-6-luna) · [ZDR の設定](https://developers.openai.com/api/docs/guides/your-data#configuring-data-retention-controls)
-2. 対象の PR 番号と完全 HEAD を照合できる、承認済みの資格情報経路を使います。`OPENAI_API_KEY` は対象の専用デプロイのサーバー実行時に限って渡します。正式 Preview の管理ジョブには現時点でこの経路がありません。信頼済み `main` の管理手順に変更が必要な場合は別途承認を受け、経路を用意するまでは通常の正式検証を行います。プロジェクト共通やブランチ単位の Preview 環境変数で継承設定の検査を迂回することや、Deployment Protection を緩和することは試験の対象外です。 [Vercel の実行時環境変数](https://vercel.com/docs/cli/deploy#env)
+1. OpenAI API の対象組織とプロジェクトで、`gpt-6-luna` の利用可否と既存の API クレジット残高を確認します。リクエストには `store: false` を指定します。標準単価と最大10回の試算を照合し、新規課金、永続資格情報の発行、権限拡大が必要なら別途承認を受けます。 [GPT-6 Luna と単価](https://developers.openai.com/api/docs/models/gpt-6-luna)
+2. 利用者が Vercel `fumin1/mille` に Preview 専用・ブランチ指定なしで登録したプロジェクト共通 Secret `OPENAI_API_KEY` を使います。登録後に作成した対象 Preview に、ビルド時と実行時の環境変数として適用されます。保護付き専用 Preview の PR 番号・完全 HEAD・デプロイ ID・専用 DB を照合し、有効化した状態で架空データの提案を生成・修正するときに実 API を使います。 [プロジェクト共通の Preview 環境変数](#プロジェクト共通の-preview-環境変数)
 3. 試験対象のデプロイで `status` と `verify` を成功させます。PR 番号、完全 HEAD、デプロイ ID、保護付き固有 URL、Neon の専用ブランチと endpoint を証跡で照合し、GitHub で PR が開いており HEAD が同じことを再取得します。Neon の正規コネクタで照合した project、branch、endpoint と DB `mille_pr` を明示し、`mille_environment` の `tyask/mille / preview / mille-pr-<PR番号>` と適用済みの `007_suggestion_gateway_preview.sql` を確認します。下の SQL で対象を有効にし、返る1行の識別子・`enabled`・`request_count` を確認します。新規行の件数は0、同じ対象の再開時は直前の件数を引き継ぎます。別の HEAD やデプロイの行がある場合は中断します。
 
 ```sql
