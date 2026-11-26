@@ -28,10 +28,16 @@ const deployment = {
 };
 type Detail = Omit<typeof deployment, "target"> & { target: string | null };
 type ListEntry = { uid: string; projectId: string; meta?: { millePreviewPr: string } };
+type EnvironmentEntry = { target: string[]; gitBranch?: string | null };
 
 function scenario(options: {
-  project?: Partial<typeof project> & { protectionBypass?: unknown };
-  envs?: Array<{ target: string[]; gitBranch?: string | null }>;
+  project?: Partial<typeof project> & {
+    env?: EnvironmentEntry[];
+    protectionBypass?: unknown;
+    integrations?: unknown[];
+    connectBuildsEnabled?: boolean;
+  };
+  envs?: EnvironmentEntry[];
   initial?: Detail[];
   list?: ListEntry[];
   next?: number;
@@ -110,10 +116,15 @@ test("同じ SHA・DB の READY Deployment を再利用する", async () => {
   assert.equal(creates.length, 0);
 });
 
-test("既存環境変数、専用プロジェクトの相違、PR の秘密参照を拒否する", async () => {
-  for (const options of [{ envs: [{ target: ["preview"] }] }, { project: { name: "other" } }]) {
-    const { preview, creates } = scenario(options);
-    await assert.rejects(preview.deploy(target, db, files), /環境変数|所有/);
+test("専用プロジェクトの相違、外部接続、保護設定の不一致、PR の秘密参照を拒否する", async () => {
+  for (const { project, error } of [
+    { project: { name: "other" }, error: /所有/ },
+    { project: { integrations: [{}] }, error: /外部接続/ },
+    { project: { connectBuildsEnabled: true }, error: /外部接続/ },
+    { project: { ssoProtection: { deploymentType: "none" } }, error: /Deployment Protection/ },
+  ]) {
+    const { preview, creates } = scenario({ project });
+    await assert.rejects(preview.deploy(target, db, files), error);
     assert.equal(creates.length, 0);
   }
   const { preview, methods } = scenario();
@@ -177,12 +188,15 @@ test("所有の相違・不完全な一覧・再オープンを検出すると�
   assert.ok(methods.every((method) => !method.startsWith("DELETE")));
 });
 
-test("本番・常設用の変数を維持し、PR に届く共通・個別変数だけを拒否する", async () => {
+test("プロジェクト共通と本番・常設用の変数を許可し、PR 向けと不正なブランチ指定を拒否する", async () => {
   const production = { target: ["production"] };
   const standing = { target: ["preview"], gitBranch: "mille-standing-preview" };
-  await scenario({ envs: [production, standing] }).preview.preflight();
-  for (const gitBranch of [null, "codex/sample", "*"]) {
-    await assert.rejects(scenario({ envs: [production, standing, { target: ["preview"], gitBranch }] }).preview.preflight(), /引き継がれる/);
+  const envs = [production, standing, { target: ["preview"] }, { target: ["preview"], gitBranch: null }];
+  await scenario({ envs, project: { env: envs } }).preview.preflight();
+  for (const gitBranch of ["codex/sample", "*"]) {
+    const invalid = { target: ["preview"], gitBranch };
+    await assert.rejects(scenario({ envs: [...envs, invalid], project: { env: envs } }).preview.preflight(), /引き継がれる/);
+    await assert.rejects(scenario({ envs, project: { env: [...envs, invalid] } }).preview.preflight(), /引き継がれる/);
   }
   await assert.rejects(scenario({ project: { link: { ...project.link, repoId: 99 } } }).preview.preflight());
   await assert.rejects(scenario({ project: { link: { ...project.link, productionBranch: "develop" } } }).preview.preflight());
