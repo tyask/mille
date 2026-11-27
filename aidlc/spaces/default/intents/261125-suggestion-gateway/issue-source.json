@@ -1,0 +1,8 @@
+{
+  "url": "https://github.com/tyask/mille/issues/74",
+  "title": "P2 献立提案を実LLMに接続し、専用Previewで検証する",
+  "updatedAt": "2026-11-24T14:59:05Z",
+  "source": "GitHubから再取得してチャットに全文を提示し、本文の承認後に同じ内容を再確認した。",
+  "sha256": "41c340d52410986b61ba5a1c712588c4968912b59014751f09ed6056eeb45ada",
+  "bytes": 3348
+}

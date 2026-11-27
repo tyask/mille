@@ -97,6 +97,7 @@ test("request replays never rerun a provider and failed revisions preserve confi
   const complete = Promise.withResolvers<unknown>();
   let calls = 0;
   const service = createSuggestionService(query, owner, {
+    model: "fixture-original", promptVersion: "original-1",
     async generate(context) {
       calls++;
       entered.resolve(context);
@@ -119,7 +120,9 @@ test("request replays never rerun a provider and failed revisions preserve confi
   assert.deepEqual(await service.create(workspaceId, conditions, "same-creation"), original);
   assert.equal(calls, 1);
 
-  const failedService = createSuggestionService(query, member, { generate: async () => [{ title: "不完全" }] });
+  const failedService = createSuggestionService(query, member, {
+    model: "fixture-failed", promptVersion: "failed-1", generate: async () => [{ title: "不完全" }],
+  });
   const change = { expectedVersion: 1, message: "副菜だけ変えて" };
   const failed = await failedService.revise(workspaceId, original.data.id, change, "same-revision");
   assert.equal(failed.data.request.status, "FAILED");
@@ -128,6 +131,7 @@ test("request replays never rerun a provider and failed revisions preserve confi
   assert.equal(failed.data.version, 1);
   assert.deepEqual(failed.data.candidates, original.data.candidates);
   const changingService = createSuggestionService(query, member, {
+    model: "fixture-revision", promptVersion: "revision-2",
     async generate(context) {
       assert.deepEqual(context.messages, [change.message]);
       assert.deepEqual(context.previousCandidates, original.data.candidates);
@@ -141,6 +145,11 @@ test("request replays never rerun a provider and failed revisions preserve confi
   assert.equal(revised.data.candidates[0].title, "焼き魚");
   assert.deepEqual(await service.create(workspaceId, conditions, "same-creation"), original);
   await assert.rejects(service.revise(workspaceId, original.data.id, change, "stale-revision"), expectCode("VERSION_CONFLICT", 2));
+  assert.deepEqual(await query("SELECT request_key, provider_model, prompt_version FROM meal_suggestion_requests ORDER BY request_key"), [
+    { request_key: "same-creation", provider_model: "fixture-original", prompt_version: "original-1" },
+    { request_key: "same-revision", provider_model: "fixture-failed", prompt_version: "failed-1" },
+    { request_key: "successful-revision", provider_model: "fixture-revision", prompt_version: "revision-2" },
+  ]);
 
   await query("DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2", [workspaceId, member.id]);
   await assert.rejects(changingService.revise(workspaceId, original.data.id, change, "successful-revision"), expectCode("NOT_FOUND"));

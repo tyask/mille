@@ -1,0 +1,28 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/74",
+  "recordedAt": "2026-11-26T14:11:27Z",
+  "credentialScopeApproval": {
+    "reply": "許可します",
+    "scope": "Vercel のプロジェクト共通 Preview 専用 Secret を実モデル試験に使う条件への更新。"
+  },
+  "planApproval": {
+    "reply": "面倒そうなので、特に今後もZDR設定は気にしないようにしていいです。storeはfalseにしておいて",
+    "sequence": 1,
+    "scope": "今回の実モデル試験と今後の利用で ZDR を前提条件から外し、OpenAI リクエストの store: false を維持する。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "GitHub に保存した共通 Preview Secret・データ保持・試験条件を含む Issue #74 の更新本文。"
+  },
+  "confirmedPrerequisites": {
+    "reply": "利用可能、まかなえます。ZDRが有効かはどうやったらわかる?",
+    "scope": "登録した API キーで gpt-6-luna を利用でき、既存の API クレジットで試験を賄える。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-26T14:03:44Z",
+    "sha256": "aca8713db2a17d863d6399db6b57e86c7b9a90fb37844eb644c558c5640158e9"
+  }
+}

@@ -9,6 +9,7 @@ export interface RecommendationContext {
 
 export interface RecommendationProvider {
   readonly model?: string;
+  readonly promptVersion?: string;
   generate(context: RecommendationContext, signal?: AbortSignal): Promise<unknown>;
 }
 

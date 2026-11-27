@@ -3,6 +3,9 @@ import type {
   adoptSuggestionSchema, recommendationOutputSchema, reviseSuggestionSchema, suggestionConditionsSchema,
 } from "./suggestion-schemas";
 
+export const suggestionModeHeader = "X-Mille-Suggestion-Mode";
+export type SuggestionMode = "sample" | "openai";
+
 export type SuggestionConditions = z.output<typeof suggestionConditionsSchema>;
 export type ReviseSuggestionInput = z.output<typeof reviseSuggestionSchema>;
 export type AdoptSuggestionInput = z.output<typeof adoptSuggestionSchema>;

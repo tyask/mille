@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/74",
+  "recordedAt": "2026-11-24T15:06:43Z",
+  "planApproval": {
+    "reply": "承認します",
+    "sequence": 1,
+    "scope": "チャットで提示したP2の実LLM接続計画と専用PR Previewでの検証範囲。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "GitHubから再取得してチャットに全文を提示した保存済みIssue #74の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-24T14:59:05Z",
+    "sha256": "41c340d52410986b61ba5a1c712588c4968912b59014751f09ed6056eeb45ada"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/74",
+  "recordedAt": "2026-11-24T22:02:53Z",
+  "planApproval": {
+    "reply": "推論は必ずしも日本でやる必要はないです。直接繋ぐ方式にして",
+    "sequence": 1,
+    "scope": "OpenAI APIへの直接接続と日本リージョン固定の解除。変更前の試験範囲とZDRを引き継ぐ。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "GitHubから再取得してチャットに全文を提示した更新後のIssue #74の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-24T16:13:48Z",
+    "sha256": "e04b6e4256e3e54a8a2c476d15bc850dd44ce0685a7af39e6560fa4a32923598"
+  }
+}

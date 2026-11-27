@@ -55,7 +55,7 @@ FOR EACH ROW EXECUTE FUNCTION mille_reject_production_test_user();
       RAISE EXCEPTION 'Mille migration history or checksum mismatch';
     END IF;
   END IF;
-  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name NOT IN ('001_auth.sql', '002_workspaces.sql', '003_meals.sql', '004_meal_api.sql', '005_meal_plans.sql', '006_meal_suggestions.sql')) THEN
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name NOT IN ('001_auth.sql', '002_workspaces.sql', '003_meals.sql', '004_meal_api.sql', '005_meal_plans.sql', '006_meal_suggestions.sql', '007_suggestion_gateway_preview.sql')) THEN
     RAISE EXCEPTION 'Mille migration history or checksum mismatch';
   END IF;
   IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '001_auth.sql' AND sha256 <> '83d6209b267f389e166ad3b5364420f5bbb3c3a6ada1e2c549c144bdb4ce0126') THEN
@@ -74,6 +74,9 @@ FOR EACH ROW EXECUTE FUNCTION mille_reject_production_test_user();
     RAISE EXCEPTION 'Mille migration history or checksum mismatch';
   END IF;
   IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '006_meal_suggestions.sql' AND sha256 <> '210f984f9444211a81c2c82f120c38c3c9353b0ed7aceb42f5534a2be82cc857') THEN
+    RAISE EXCEPTION 'Mille migration history or checksum mismatch';
+  END IF;
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '007_suggestion_gateway_preview.sql' AND sha256 <> 'e0f6a8ea78ce0cf7d4078a503fa7cc7b0465523d8523efe2ba8fd9ea705b4f81') THEN
     RAISE EXCEPTION 'Mille migration history or checksum mismatch';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '002_workspaces.sql') THEN
@@ -1309,5 +1312,17 @@ END;
 $suggestion_command$ LANGUAGE plpgsql;
 ';
     INSERT INTO schema_migrations (name,sha256) VALUES ('006_meal_suggestions.sql','210f984f9444211a81c2c82f120c38c3c9353b0ed7aceb42f5534a2be82cc857');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '007_suggestion_gateway_preview.sql') THEN
+    EXECUTE 'CREATE TABLE mille_suggestion_gateway_preview (
+  id boolean PRIMARY KEY DEFAULT true CHECK (id),
+  environment_id text NOT NULL CHECK (environment_id COLLATE "C" ~ ''^mille-pr-[1-9][0-9]*$''),
+  source_sha text NOT NULL CHECK (source_sha COLLATE "C" ~ ''^[0-9a-f]{40}$''),
+  deployment_id text NOT NULL CHECK (deployment_id COLLATE "C" ~ ''^dpl_[A-Za-z0-9]+$''),
+  enabled boolean NOT NULL DEFAULT false,
+  request_count integer NOT NULL DEFAULT 0 CHECK (request_count BETWEEN 0 AND 10)
+);
+';
+    INSERT INTO schema_migrations (name,sha256) VALUES ('007_suggestion_gateway_preview.sql','e0f6a8ea78ce0cf7d4078a503fa7cc7b0465523d8523efe2ba8fd9ea705b4f81');
   END IF;
 END; $mille_migration$;

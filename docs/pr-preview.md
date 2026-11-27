@@ -111,6 +111,43 @@ gh workflow run pr-preview.yml --repo tyask/mille --ref main \
 
 ブラウザは、同じ Vercel プロジェクトの短期 Development OIDC を照合済みの固有 origin にだけ送信します。PC・スマホ × 架空 A/B で、実行中のアプリ SHA、ログイン、本人表示、個人ワークスペースの分離、ログアウト後の拒否を確認します。ブラウザから送る操作は読み取りとテスト認証に限定します。Vercel Toolbar の既知のスクリプトはダウンロード前に遮断し、ケース内に固定の確認結果を記録します。別 origin への通信が観測された場合は、そのスクリプトを除き検証が失敗します。新しい専用 DB を初めて開くと、アプリの既存の初期化処理で架空ユーザーの個人ワークスペースが作成される場合があります。検証の開始前と終了後に PR・デプロイ・DB を照合し、成功した実行の Summary と証跡に識別子とケース結果を保存します。結果を PR に転記する直前にも、現在の HEAD が証跡と一致することを確認します。 [Cake の正式ブラウザ検証](https://github.com/tyask/Cake/blob/5975e5f20d9eb755d991b8725840feab0b778d65/docs/development-workflow.md#L507-L555)
 
+### 献立提案の実モデル検証
+
+[Issue #74](https://github.com/tyask/mille/issues/74) の実モデル検証では、対象 PR の固有 URL で架空ユーザーと架空の献立を使い、標準のグローバル接続 `https://api.openai.com/v1/chat/completions` で GPT-6 Luna（`gpt-6-luna`）を試します。通常の `verify` では PC・スマホ × 架空 A/B の4ケースを確認します。
+
+1. OpenAI API の対象組織とプロジェクトで、`gpt-6-luna` の利用可否と既存の API クレジット残高を確認します。リクエストには `store: false` を指定します。標準単価と最大10回の試算を照合し、新規課金、永続資格情報の発行、権限拡大が必要なら別途承認を受けます。 [GPT-6 Luna と単価](https://developers.openai.com/api/docs/models/gpt-6-luna)
+2. 利用者が Vercel `fumin1/mille` に Preview 専用・ブランチ指定なしで登録したプロジェクト共通 Secret `OPENAI_API_KEY` を使います。登録後に作成した対象 Preview に、ビルド時と実行時の環境変数として適用されます。保護付き専用 Preview の PR 番号・完全 HEAD・デプロイ ID・専用 DB を照合し、有効化した状態で架空データの提案を生成・修正するときに実 API を使います。 [プロジェクト共通の Preview 環境変数](#プロジェクト共通の-preview-環境変数)
+3. 試験対象のデプロイで `status` と `verify` を成功させます。PR 番号、完全 HEAD、デプロイ ID、保護付き固有 URL、Neon の専用ブランチと endpoint を証跡で照合し、GitHub で PR が開いており HEAD が同じことを再取得します。Neon の正規コネクタで照合した project、branch、endpoint と DB `mille_pr` を明示し、`mille_environment` の `tyask/mille / preview / mille-pr-<PR番号>` と適用済みの `007_suggestion_gateway_preview.sql` を確認します。下の SQL で対象を有効にし、返る1行の識別子・`enabled`・`request_count` を確認します。新規行の件数は0、同じ対象の再開時は直前の件数を引き継ぎます。別の HEAD やデプロイの行がある場合は中断します。
+
+```sql
+INSERT INTO public.mille_suggestion_gateway_preview AS gate
+  (environment_id, source_sha, deployment_id, enabled)
+SELECT environment_id, '<PRの完全HEAD>', '<デプロイID>', true
+FROM public.mille_environment
+WHERE current_database() = 'mille_pr' AND project = 'tyask/mille'
+  AND environment = 'preview' AND environment_id = 'mille-pr-<PR番号>'
+ON CONFLICT (id) DO UPDATE SET enabled = true
+WHERE gate.environment_id = EXCLUDED.environment_id AND gate.source_sha = EXCLUDED.source_sha
+  AND gate.deployment_id = EXCLUDED.deployment_id AND gate.request_count < 10
+RETURNING environment_id, source_sha, deployment_id, enabled, request_count;
+```
+
+4. Vercel にログイン済みのブラウザで固有 URL を開き、架空ユーザー A または B でログインします。自動ブラウザを使う場合は、同じプロジェクトの短期 Development OIDC をこの origin に限って送ります。提案画面の AI 表示を確認し、例として「豆腐としめじ、4人分、35分以内の和食」で複数の日本語候補を作り、「副菜は火を使わないものに変更」を追加します。候補を空き枠に採用し、「作った内容を記録」で実績化します。初回と追加要望の2回を基本とし、試験期間の予約件数は最大10回です。
+5. Vercel Runtime Logs で同じデプロイの `mille.suggestion.openai` を照合し、成否、モデル、OpenAI のリクエスト ID、所要時間、トークン数を記録します。OpenAI の Usage Dashboard で試験のプロジェクトと UTC 時間帯を照合し、利用量と費用を確認します。反映待ちや他の利用を含む集計は、トークン単価による試算と区別します。入力・出力本文や資格情報は証跡に含めません。試験の成否にかかわらず、同じ専用 DB で下の SQL を実行して無効化し、1行を再取得して件数と `enabled = false` を確認します。PR に対象の完全 HEAD、デプロイ ID、操作結果と計測値を記録します。 [OpenAI の利用量と費用](https://help.openai.com/en/articles/10478918-reviewing-api-usage-and-costs)
+
+```sql
+UPDATE public.mille_suggestion_gateway_preview
+SET enabled = false
+WHERE id AND environment_id = 'mille-pr-<PR番号>'
+  AND source_sha = '<PRの完全HEAD>' AND deployment_id = '<デプロイID>'
+  AND current_database() = 'mille_pr';
+
+SELECT environment_id, source_sha, deployment_id, enabled, request_count
+FROM public.mille_suggestion_gateway_preview
+WHERE id AND environment_id = 'mille-pr-<PR番号>'
+  AND source_sha = '<PRの完全HEAD>' AND deployment_id = '<デプロイID>';
+```
+
 ## URL と Ready 条件
 
 GitHub CI と正式 Preview の自動作成は並行で進めます。Ready for review にする前に、次を確認します。

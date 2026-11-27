@@ -5,10 +5,12 @@ import {
   adoptSuggestionSchema, recommendationOutputSchema, reviseSuggestionSchema, suggestionConditionsSchema,
 } from "../shared/suggestion-schemas";
 import type {
-  AdoptSuggestionInput, ReviseSuggestionInput, Suggestion, SuggestionCandidate, SuggestionConditions, SuggestionFailure,
+  AdoptSuggestionInput, ReviseSuggestionInput, Suggestion, SuggestionCandidate, SuggestionConditions, SuggestionFailure, SuggestionMode,
 } from "../shared/suggestion-types";
 import type { AppUser } from "../shared/types";
 import { verifiedDatabaseQuery, type Query } from "./database/client";
+import { createOpenAIRecommendationProvider } from "./suggestion-openai";
+import { canUseSuggestions, suggestionPreviewEnabled, suggestionPreviewTarget, reserveSuggestionRequest } from "./suggestion-preview";
 import { sampleRecommendationProvider, type RecommendationProvider } from "./suggestion-provider";
 import { DomainError } from "./workspaces";
 
@@ -20,7 +22,7 @@ type SuggestionErrorCode = typeof suggestionErrorCodes[number];
 
 export class SuggestionDomainError extends DomainError {
   constructor(
-    status: number, public readonly code: SuggestionErrorCode, message: string, public readonly currentVersion?: number,
+    status: number, public readonly code: SuggestionErrorCode | "MODE_CHANGED", message: string, public readonly currentVersion?: number,
   ) {
     super(status, message);
     this.name = "SuggestionDomainError";
@@ -100,7 +102,7 @@ export function createSuggestionService(
   async function begin(operation: GenerationOperation, workspaceId: string, payload: object, key: string): Promise<GenerationResponse> {
     const result = await execute<Suggestion>(operation, workspaceId, {
       ...payload, ...idempotencyFields(operation, payload, key),
-      providerModel: provider.model ?? "unknown", promptVersion: "1",
+      providerModel: provider.model ?? "unknown", promptVersion: provider.promptVersion ?? "1",
     });
     if (result.recentDishes === undefined) {
       const status = result.data.request.status === "RUNNING" ? 202 : operation === "create" ? 201 : 200;
@@ -128,7 +130,27 @@ export function createSuggestionService(
   };
 }
 
-export async function getSuggestionService(user: AppUser): Promise<SuggestionService> {
-  const { query } = await verifiedDatabaseQuery();
-  return createSuggestionService(query, user, sampleRecommendationProvider);
+export async function getSuggestionService(user: AppUser, expectedMode?: SuggestionMode): Promise<SuggestionService> {
+  if (!canUseSuggestions(user)) throw new SuggestionDomainError(404, "NOT_FOUND", "献立提案を利用できません。");
+  const { query, configuration } = await verifiedDatabaseQuery();
+  if (expectedMode === undefined) return createSuggestionService(query, user, sampleRecommendationProvider);
+
+  const target = suggestionPreviewTarget(configuration);
+  const activeTarget = target && await suggestionPreviewEnabled(query, target) ? target : null;
+  if (expectedMode !== (activeTarget ? "openai" : "sample")) {
+    throw new SuggestionDomainError(409, "MODE_CHANGED", "提案の試験設定が変わりました。画面を再読み込みしてください。");
+  }
+  if (!activeTarget) return createSuggestionService(query, user, sampleRecommendationProvider);
+
+  const provider = createOpenAIRecommendationProvider({
+    getApiKey: () => process.env.OPENAI_API_KEY ?? "",
+    fetch: async (input, options) => {
+      options?.signal?.throwIfAborted();
+      if (!await reserveSuggestionRequest(query, activeTarget)) throw new Error("OpenAI Preview の試験枠を利用できません。");
+      options?.signal?.throwIfAborted();
+      return fetch(input, options);
+    },
+    log: event => console.info("mille.suggestion.openai", JSON.stringify(event)),
+  });
+  return createSuggestionService(query, user, provider);
 }

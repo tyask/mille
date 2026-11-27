@@ -25,7 +25,7 @@ const endpointsPath = `${branchPath}/endpoints`;
 const uriPath = `${projectPath}/connection_uri`;
 const migrations = repositoryMigrationSources();
 const futureMigration = {
-  name: "007_fixture.sql",
+  name: `${String(migrations.length + 1).padStart(3, "0")}_fixture.sql`,
   source: "CREATE TABLE standing_fixture (note text NOT NULL); INSERT INTO standing_fixture VALUES ('$mille_standing_preview$');",
 };
 const sources = [...migrations, futureMigration];
@@ -97,7 +97,7 @@ test("照合済み常設と違う URI または SQL 設定の注入を資格情�
 test("SQL原本の欠落、番号の飛び、固定済みSQLの改変を拒否する", async () => {
   const wrongSources = [
     sources.filter(({ name }) => name !== "006_meal_suggestions.sql"),
-    [...migrations, { ...futureMigration, name: "008_fixture.sql" }],
+    [...migrations, { ...futureMigration, name: `${String(migrations.length + 2).padStart(3, "0")}_fixture.sql` }],
     sources.map(source => source.name === "006_meal_suggestions.sql" ? { ...source, source: `${source.source}\n` } : source),
   ];
   for (const input of wrongSources) {
@@ -180,7 +180,7 @@ test("DBの環境識別、履歴のハッシュ・欠番・未知の適用、お
 });
 
 test("公開中のSHAが必要とする末尾の履歴が失われた場合は補完しない", async t => {
-  const { db, query, history } = await fixtureDatabase(t, 6);
+  const { db, query, history } = await fixtureDatabase(t, migrations.length);
   const { request } = providerFixture();
   let writes = 0;
   const counted: Query = async <Row extends DatabaseRow>(sql: string, params?: unknown[]) => {
@@ -189,7 +189,7 @@ test("公開中のSHAが必要とする末尾の履歴が失われた場合は�
   };
   const open = () => openStandingDatabase(apiKey, expected, sources, { request, query: counted, previousSources: migrations });
   const connection = await open();
-  await db.exec("DELETE FROM schema_migrations WHERE name = '006_meal_suggestions.sql'");
+  await db.query("DELETE FROM schema_migrations WHERE name = $1", [migrations.at(-1)?.name]);
   const incomplete = await history();
   await assert.rejects(open, standingFailure);
   await assert.rejects(connection.migrate(verifyCurrent), standingFailure);
@@ -199,7 +199,7 @@ test("公開中のSHAが必要とする末尾の履歴が失われた場合は�
 });
 
 test("DB履歴と現在の原本を同時に書き換えても従来のSHAに含まれた原本の変更は拒否する", async t => {
-  const { db, query, history } = await fixtureDatabase(t, 6);
+  const { db, query, history } = await fixtureDatabase(t, migrations.length);
   const { request, called } = providerFixture();
   await db.exec(migrationSql(configuration, false, sources));
   const changed = { ...futureMigration, source: `${futureMigration.source}\n-- changed after release` };
