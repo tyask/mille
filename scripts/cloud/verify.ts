@@ -548,7 +548,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         const reservedName = `${renamed}（共有用 1）`;
         const fixtures: Workspace[] = [];
         for (const fixture of [
-          { name: renamed, type: "PERSONAL" },
+          { name: renamed.replace("QA ", "QA  "), type: "PERSONAL" },
           { name: renamed, type: "SHARED" },
           { name: reservedName, type: "SHARED" },
         ]) {

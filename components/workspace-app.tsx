@@ -42,13 +42,15 @@ function SpaceIcon({ type }: { type: WorkspaceType }) {
 function workspaceOptionLabels(workspaces: Workspace[]) {
   const workspacesByName = new Map<string, Workspace[]>();
   for (const workspace of workspaces) {
-    const group = workspacesByName.get(workspace.name);
+    // Native option labels collapse HTML whitespace.
+    const name = workspace.name.replace(/[ \t\n\f\r]+/g, " ").trim();
+    const group = workspacesByName.get(name);
     if (group) group.push(workspace);
-    else workspacesByName.set(workspace.name, [workspace]);
+    else workspacesByName.set(name, [workspace]);
   }
 
   const labels = new Map<string, string>();
-  for (const group of workspacesByName.values()) {
+  for (const [name, group] of workspacesByName) {
     if (group.length === 1) continue;
     for (const type of ["PERSONAL", "SHARED"] as const) {
       const sameType = group.filter(workspace => workspace.type === type);
@@ -59,7 +61,7 @@ function workspaceOptionLabels(workspaces: Workspace[]) {
       for (const workspace of sameType) {
         let label: string;
         do {
-          label = `${workspace.name}（${typeLabel}${ordinal ? ` ${ordinal}` : ""}）`;
+          label = `${name}（${typeLabel}${ordinal ? ` ${ordinal}` : ""}）`;
           ordinal += 1;
         } while (workspacesByName.has(label));
         labels.set(workspace.id, label);
