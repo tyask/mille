@@ -43,7 +43,7 @@ function workspaceOptionLabels(workspaces: Workspace[]) {
   const workspacesByName = new Map<string, Workspace[]>();
   for (const workspace of workspaces) {
     // Native option labels collapse HTML whitespace.
-    const name = workspace.name.replace(/[ \t\n\f\r]+/g, " ").trim();
+    const name = workspace.name.normalize("NFC").replace(/[ \t\n\f\r]+/g, " ").trim();
     const group = workspacesByName.get(name);
     if (group) group.push(workspace);
     else workspacesByName.set(name, [workspace]);
@@ -61,7 +61,7 @@ function workspaceOptionLabels(workspaces: Workspace[]) {
       for (const workspace of sameType) {
         let label: string;
         do {
-          label = `${name}（${typeLabel}${ordinal ? ` ${ordinal}` : ""}）`;
+          label = `${typeLabel}${ordinal ? ` ${ordinal}` : ""} · ${name}`;
           ordinal += 1;
         } while (workspacesByName.has(label));
         labels.set(workspace.id, label);

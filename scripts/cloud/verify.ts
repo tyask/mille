@@ -533,7 +533,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         owner.item.checks.push("sidebar-meal-suggestion-settings-navigation", "sidebar-navigation-history", "sidebar-navigation-draft-confirmation");
 
         stage = "workspace-rename-open";
-        const renamed = `${workspaceName} 変更`;
+        const renamed = `${workspaceName} ガーデン`;
         await owner.page.getByRole("button", { name: "名前を変更", exact: true }).click();
         stage = "workspace-rename-fill";
         await owner.page.getByTestId("workspace-rename-dialog").getByLabel("ワークスペース名", { exact: true }).fill(renamed);
@@ -545,10 +545,10 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         owner.item.checks.push("workspace-rename-ui");
 
         stage = "workspace-duplicate-names";
-        const reservedName = `${renamed}（共有用 1）`;
+        const reservedName = `共有用 1 · ${renamed}`;
         const fixtures: Workspace[] = [];
         for (const fixture of [
-          { name: renamed.replace("QA ", "QA  "), type: "PERSONAL" },
+          { name: renamed.normalize("NFD").replace("QA ", "QA  "), type: "PERSONAL" },
           { name: renamed, type: "SHARED" },
           { name: reservedName, type: "SHARED" },
         ]) {
@@ -561,10 +561,10 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         await owner.page.reload({ waitUntil: "networkidle" });
         const [samePersonal, sameShared, reserved] = fixtures;
         for (const [id, label] of [
-          [samePersonal.id, `${renamed}（個人用）`],
-          [sameShared.id, `${renamed}（共有用 3）`],
+          [samePersonal.id, `個人用 · ${renamed}`],
+          [sameShared.id, `共有用 3 · ${renamed}`],
           [reserved.id, reservedName],
-          [created.id, `${renamed}（共有用 2）`],
+          [created.id, `共有用 2 · ${renamed}`],
         ]) {
           await openSidebar(owner.page);
           const [selectedId] = await select.selectOption({ label });
