@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/80",
+  "recordedAt": "2026-11-28T08:30:16Z",
+  "planApproval": {
+    "reply": "承認します",
+    "sequence": 1,
+    "scope": "チャットで提示した、ホームの左メニュー・ワークスペース切り替え・スマホ用ログインQRの実装計画。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "GitHubから再取得し、チャットで全文を提示した保存済みIssue #80の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-28T08:17:25Z",
+    "sha256": "b8b5b739d22604e92257e88d5935ee89647316726e8f37c4741fed3988bb5ea2"
+  }
+}

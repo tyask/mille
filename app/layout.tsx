@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./workspaces.css";
+import "./mobile-access-qr.css";
 import "./meals.css";
 
 export const metadata: Metadata = {

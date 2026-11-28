@@ -1,0 +1,24 @@
+{
+  "id": "261128-home-sidebar",
+  "issue": "https://github.com/tyask/mille/issues/80",
+  "branch": "codex/home-sidebar-login-qr",
+  "baseSha": "5a004fd3f149e1eeaeba2df7eb27c0ec1a7377bc",
+  "state": "frozen",
+  "approvedIssueSha256": "b8b5b739d22604e92257e88d5935ee89647316726e8f37c4741fed3988bb5ea2",
+  "implementationPlanSha256": "6ea34317b3089971b71f97d181c3b9f1eede5a9641dea43c87b4cef60098f6ef",
+  "approvalEvidence": "approvals.json",
+  "frozenAt": "2026-11-28T08:34:56Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "高速検査と差分の自己レビューを実施",
+      "全388テスト成功",
+      "依存監査で脆弱性0件",
+      "作業ツリーのCloudブラウザQAでPC・スマホの架空A/Bケース全4件が成功。cleanな最終SHAで再検証する。"
+    ]
+  },
+  "postMerge": {
+    "completesIssue": true,
+    "manualPostMerge": false
+  }
+}

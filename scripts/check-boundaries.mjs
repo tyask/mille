@@ -12,6 +12,7 @@ const sharedPackages = new Set(["zod"]);
 const browserPackages = new Set([
   ...sharedPackages, "react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom", "react-dom/client",
   "next/image", "next/link", "next/navigation", "next/dynamic", "next/script", "next-auth/react",
+  "qrcode.react",
 ]);
 
 const within = (path, directory) => path === directory || path.startsWith(`${directory}/`);
