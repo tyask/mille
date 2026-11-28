@@ -10,6 +10,7 @@ import type { IssuedInvitation, JoinedWorkspace, Workspace, WorkspaceState, Work
 import { Brand } from "./brand";
 import { MealApp, type MealNavigationBlock, type MealSelection } from "./meals/meal-app";
 import { readMealLocation, writeMealLocation, type WorkspacePane } from "./meals/meal-location";
+import { MobileAccessQr } from "./mobile-access-qr";
 import { WorkspaceIcon as Icon } from "./workspace-icons";
 
 const SuggestionPanel = dynamic(() => import("./meals/suggestion-panel").then(module => module.SuggestionPanel), {
@@ -36,6 +37,38 @@ function Avatar({ name, small = false, index = 0 }: { name: string; small?: bool
 
 function SpaceIcon({ type }: { type: WorkspaceType }) {
   return <Icon name={type === "SHARED" ? "users" : "user"} />;
+}
+
+function workspaceOptionLabels(workspaces: Workspace[]) {
+  const workspacesByName = new Map<string, Workspace[]>();
+  for (const workspace of workspaces) {
+    // Native option labels collapse HTML whitespace.
+    const name = workspace.name.normalize("NFC").replace(/[ \t\n\f\r]+/g, " ").trim();
+    const group = workspacesByName.get(name);
+    if (group) group.push(workspace);
+    else workspacesByName.set(name, [workspace]);
+  }
+
+  const labels = new Map<string, string>();
+  for (const [name, group] of workspacesByName) {
+    if (group.length === 1) continue;
+    for (const type of ["PERSONAL", "SHARED"] as const) {
+      const sameType = group.filter(workspace => workspace.type === type);
+      // The server orders by last update. Number duplicates by creation order instead.
+      sameType.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+      const typeLabel = type === "PERSONAL" ? "個人用" : "共有用";
+      let ordinal = sameType.length === 1 ? 0 : 1;
+      for (const workspace of sameType) {
+        let label: string;
+        do {
+          label = `${typeLabel}${ordinal ? ` ${ordinal}` : ""} · ${name}`;
+          ordinal += 1;
+        } while (workspacesByName.has(label));
+        labels.set(workspace.id, label);
+      }
+    }
+  }
+  return labels;
 }
 
 type Mutation = <T>(operation: () => Promise<T>, success: string, preferredId?: (result: T) => string | undefined) => Promise<T | undefined>;
@@ -123,6 +156,7 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
   const historyIndex = useRef(0);
   const restoringHistory = useRef(false);
   const active = state.workspaces.find((workspace) => workspace.id === activeId) || state.workspaces[0];
+  const optionLabels = workspaceOptionLabels(state.workspaces);
   const storageKey = `mille:workspace:${user.id}`;
   const settings = location.pane === "settings" || !active;
   const suggestions = suggestionsEnabled && location.pane === "suggestion" && !settings;
@@ -192,7 +226,7 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
   }, [active?.id, location, state.workspaces, storageKey, suggestionsEnabled]);
 
   useEffect(() => {
-    const mobileViewport = window.matchMedia("(max-width: 700px)");
+    const mobileViewport = window.matchMedia("(max-width: 700px), (max-width: 1000px) and (max-height: 500px) and (pointer: coarse)");
     function closeOnDesktop(event: MediaQueryListEvent) { if (!event.matches) setMobileOpen(false); }
     mobileViewport.addEventListener("change", closeOnDesktop);
     return () => mobileViewport.removeEventListener("change", closeOnDesktop);
@@ -224,9 +258,11 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
     writeMealLocation(active?.id ?? "", selection, location.pane, ++historyIndex.current);
   }
   function selectPane(pane: WorkspacePane) {
-    if (pane === location.pane || !allowsMealNavigation(mealBlock.current)) return;
+    if (pane === location.pane) { setMobileOpen(false); return; }
+    if (!allowsMealNavigation(mealBlock.current)) return;
     mealBlock.current = null;
     setNotice("");
+    setMobileOpen(false);
     setLocation({ ...location, pane });
     writeMealLocation(active?.id ?? "", location.selection, pane, ++historyIndex.current);
   }
@@ -274,31 +310,77 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
   }
 
   return <div className="workspace-app" data-testid="authenticated-home">
-    {mobileOpen && <button className="ws-sidebar-backdrop" aria-label="メニューを閉じる" onClick={() => setMobileOpen(false)} />}
-    <aside className={`ws-sidebar${mobileOpen ? " is-open" : ""}`} aria-label="ワークスペースメニュー" id="ws-sidebar"><Brand compact /><button id="ws-mobile-close" className="ws-icon-button ws-mobile-close" type="button" aria-label="メニューを閉じる" onClick={() => setMobileOpen(false)}><Icon name="close" /></button><div className="ws-sidebar-label">YOUR SPACES<span>{state.workspaces.length}</span></div><nav className="ws-space-nav" aria-label="ワークスペースを切り替え">{state.workspaces.map((workspace) => <button type="button" key={workspace.id} className={`ws-space-nav-item${active?.id === workspace.id ? " is-active" : ""}`} aria-current={active?.id === workspace.id ? "page" : undefined} data-testid="workspace-switch" data-workspace-id={workspace.id} onClick={() => selectWorkspace(workspace.id)}><SpaceIcon type={workspace.type} /><span>{workspace.name}</span>{active?.id === workspace.id && <i aria-hidden="true" />}</button>)}</nav><button className="ws-sidebar-create" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}><Icon name="plus" />ワークスペースを作成</button><div className="ws-sidebar-bottom"><div className="ws-sidebar-note"><Icon name="leaf" /><p>ひとりの食卓も、みんなの食卓も。<br />大切な場所を、ひとつずつ。</p></div><div className="ws-account"><Avatar name={user.name} small /><div><strong>{user.name}</strong><span data-testid="authenticated-user-email" title={user.email}>{user.email}</span></div></div><button className="ws-logout" type="button" onClick={() => void logout()} disabled={busy || refreshing || loggingOut} aria-label="ログアウト"><Icon name="logout" />{loggingOut ? "ログアウト中…" : "ログアウト"}</button></div></aside>
+    {mobileOpen && <button className="ws-sidebar-backdrop" type="button" tabIndex={-1} aria-label="メニューを閉じる" onClick={() => setMobileOpen(false)} />}
+    <aside className={`ws-sidebar${mobileOpen ? " is-open" : ""}`} aria-label="ワークスペースメニュー" id="ws-sidebar">
+      <Brand compact />
+      <button id="ws-mobile-close" className="ws-icon-button ws-mobile-close" type="button" aria-label="メニューを閉じる" onClick={() => setMobileOpen(false)}>
+        <Icon name="close" />
+      </button>
+      <div className="ws-picker">
+        <label htmlFor="ws-workspace-select">ワークスペース</label>
+        <select
+          id="ws-workspace-select"
+          data-testid="workspace-select"
+          value={active?.id ?? ""}
+          onChange={event => selectWorkspace(event.target.value)}
+          disabled={!preferencesReady || !active}
+          title={active && (optionLabels.get(active.id) ?? active.name)}
+        >
+          {!active && <option value="">ワークスペースなし</option>}
+          {state.workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{optionLabels.get(workspace.id) ?? workspace.name}</option>)}
+        </select>
+        <button className="ws-sidebar-create" data-testid="workspace-create-open" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}>
+          <Icon name="plus" />ワークスペースを作成
+        </button>
+      </div>
+      <nav className="ws-nav" aria-label="ワークスペース内の画面">
+        <button type="button" aria-current={settings || suggestions ? undefined : "page"} disabled={!active} onClick={() => selectPane("meal")}>
+          <Icon name="calendar" />献立
+        </button>
+        {suggestionsEnabled && <button data-testid="suggestion-open" type="button" aria-current={suggestions ? "page" : undefined} disabled={!active} onClick={() => selectPane("suggestion")}>
+          <Icon name="sparkles" />提案
+        </button>}
+        <button type="button" aria-current={settings ? "page" : undefined} onClick={() => selectPane("settings")}>
+          <Icon name="settings" />ワークスペース設定
+        </button>
+      </nav>
+      <div className="ws-sidebar-bottom">
+        <MobileAccessQr />
+        <div className="ws-account">
+          <Avatar name={user.name} small />
+          <div><strong>{user.name}</strong><span data-testid="authenticated-user-email" title={user.email}>{user.email}</span></div>
+        </div>
+        <button className="ws-logout" type="button" onClick={() => void logout()} disabled={busy || refreshing || loggingOut} aria-label="ログアウト">
+          <Icon name="logout" />{loggingOut ? "ログアウト中…" : "ログアウト"}
+        </button>
+      </div>
+    </aside>
     <div className="ws-main-shell" inert={mobileOpen}><header className="ws-topbar"><button className="ws-mobile-menu" type="button" aria-label="ワークスペースメニューを開く" aria-expanded={mobileOpen} aria-controls="ws-sidebar" onClick={() => setMobileOpen(!mobileOpen)}><Icon name="menu" /><span>mille.</span></button><div className="ws-breadcrumb"><span>mille</span><span aria-hidden="true">/</span><span>ワークスペース</span></div><div className="ws-topbar-right"><span className="ws-private-label"><Icon name="shield" />自分たちだけのスペース</span><button className="ws-refresh" data-testid="workspace-refresh" type="button" aria-label="最新情報に更新" onClick={() => void refresh()} disabled={busy || refreshing || loggingOut}><Icon name="refresh" className={refreshing ? "ws-spin" : ""} /><span>更新</span></button></div></header>
       <main className={`ws-main${settings ? "" : " meal-workspace-main"}`}>
         <div className="meal-workspace-header">
-          {settings ? <h1>ワークスペース</h1> : <h1 data-testid="workspace-selected-name" data-workspace-id={active?.id}>{active?.name}</h1>}
-          <nav className="meal-workspace-tabs" aria-label="ワークスペース内の画面">
-            <button className={`meal-button${settings || suggestions ? "" : " is-selected"}`} type="button" aria-current={settings || suggestions ? undefined : "page"} disabled={!active} onClick={() => selectPane("meal")}>献立</button>
-            {suggestionsEnabled && <button className={`meal-button${suggestions ? " is-selected" : ""}`} data-testid="suggestion-open" type="button" aria-current={suggestions ? "page" : undefined} disabled={!active} onClick={() => selectPane("suggestion")}>提案</button>}
-            <button className={`meal-button${settings ? " is-selected" : ""}`} type="button" aria-current={settings ? "page" : undefined} onClick={() => selectPane("settings")}>ワークスペース設定</button>
-            {!settings && <button className="meal-button meal-button-secondary" data-testid="workspace-create-open" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}>＋ ワークスペース</button>}
-          </nav>
+          {settings ? <h1 id="ws-settings-heading">ワークスペース設定</h1> : <h1 data-testid="workspace-selected-name" data-workspace-id={active?.id}>{active?.name}</h1>}
         </div>
         <div aria-live="polite" className="ws-feedback-area">{error && !dialog && <div className="ws-feedback ws-feedback-error" role="alert"><span>{error}</span><button className="ws-icon-button" type="button" aria-label="エラーを閉じる" onClick={() => setError("")}><Icon name="close" /></button></div>}{notice && <div className="ws-feedback ws-feedback-success"><Icon name="check" /><span>{notice}</span><button className="ws-icon-button" type="button" aria-label="通知を閉じる" onClick={() => setNotice("")}><Icon name="close" /></button></div>}</div>
         {state.invitations.length > 0 && <section className="ws-incoming" aria-label="届いている招待">{state.invitations.map((invitation) => <article className="ws-incoming-item" key={invitation.id}><span className="ws-incoming-icon"><Icon name="mail" /></span><div><h2>「{invitation.workspaceName}」への招待</h2><p>{invitation.inviterName}さんから · {workspaceDate(invitation.expiresAt)}まで有効</p></div><button className="ws-button ws-button-primary ws-button-small" type="button" disabled={busy || refreshing || loggingOut} onClick={() => void mutate(() => workspaceRequest<JoinedWorkspace>(`/api/invitations/${invitation.id}/join`, "POST", {}), "共有ワークスペースに参加しました。", (result) => result.workspaceId)}>参加する<Icon name="arrow" /></button></article>)}</section>}
-        {settings ? <>
-        <div className="ws-page-heading"><button className="ws-button ws-button-primary" data-testid="workspace-create-open" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}><Icon name="plus" />新しく作成</button></div>
-        <section aria-labelledby="ws-list-heading"><div className="ws-section-heading"><h2 id="ws-list-heading">あなたのワークスペース <span>{state.workspaces.length}</span></h2><p>使いたい場所を選択</p></div><div className="ws-cards">{state.workspaces.map((workspace) => <button type="button" key={workspace.id} className={`ws-card${active?.id === workspace.id ? " is-selected" : ""}`} aria-pressed={active?.id === workspace.id} data-testid="workspace-card" data-workspace-id={workspace.id} onClick={() => selectWorkspace(workspace.id)}><span className="ws-card-top"><span className={`ws-space-icon ${workspace.type === "SHARED" ? "is-shared" : ""}`}><SpaceIcon type={workspace.type} /></span><span className="ws-type-badge">{workspace.type === "SHARED" ? "共有用" : "個人用"}</span></span><strong className="ws-card-name">{workspace.name}</strong><span className="ws-card-description">{workspace.type === "SHARED" ? "大切な人と囲む、いつもの食卓" : "自分のペースで、自分らしく"}</span><span className="ws-card-bottom"><span className="ws-avatars">{workspace.members.slice(0, 3).map((member, index) => <Avatar key={member.userId} name={member.name} small index={index} />)}{workspace.members.length > 3 && <span className="ws-avatar ws-avatar-small ws-avatar-more">+{workspace.members.length - 3}</span>}</span><span>{workspace.members.length}人</span><span className="ws-card-selection">{active?.id === workspace.id ? <><Icon name="check" />選択中</> : <Icon name="arrow" />}</span></span></button>)}<button className="ws-card ws-new-card" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}><span className="ws-new-card-icon"><Icon name="plus" /></span><strong>新しい場所をつくる</strong><span>暮らしに合わせて、もうひとつ。</span></button></div></section>
-        {active && <section className="ws-details" aria-labelledby="ws-settings-heading"><div className="ws-section-heading"><h2 id="ws-settings-heading">ワークスペースの設定</h2><p>選択中の場所を整える</p></div><div className="ws-banner"><div className="ws-banner-content"><span className="ws-banner-icon"><SpaceIcon type={active.type} /></span><div><p className="ws-banner-eyebrow">{active.type === "SHARED" ? "SHARED WORKSPACE" : "PERSONAL WORKSPACE"}</p><h2 data-testid="workspace-selected-name" data-workspace-id={active.id}>{active.name}</h2><p className="ws-banner-description">{active.type === "SHARED" ? "同じ食卓から、毎日を少しずつ。" : "あなただけの、食卓の小さな拠点。"}</p></div></div><button className="ws-button ws-button-banner" data-testid="workspace-rename-open" type="button" disabled={busy || refreshing || loggingOut} onClick={() => openDialog({ kind: "rename", workspace: active })}><Icon name="edit" />名前を変更</button><div className="ws-banner-decoration" aria-hidden="true"><span /><span /><span /></div></div>
+        {settings ? (active && <section className="ws-details" aria-labelledby="ws-settings-heading">
+          <div className="ws-banner">
+            <div className="ws-banner-content">
+              <span className="ws-banner-icon"><SpaceIcon type={active.type} /></span>
+              <div>
+                <p className="ws-banner-eyebrow">{active.type === "SHARED" ? "共有用" : "個人用"}</p>
+                <h2 data-testid="workspace-selected-name" data-workspace-id={active.id}>{active.name}</h2>
+              </div>
+            </div>
+            <button className="ws-button ws-button-banner" data-testid="workspace-rename-open" type="button" disabled={busy || refreshing || loggingOut} onClick={() => openDialog({ kind: "rename", workspace: active })}>
+              <Icon name="edit" />名前を変更
+            </button>
+            <div className="ws-banner-decoration" aria-hidden="true"><span /><span /><span /></div>
+          </div>
           <section className="ws-panel" aria-labelledby="ws-members-heading"><div className="ws-panel-heading"><div><p className="ws-eyebrow">PEOPLE AROUND THE TABLE</p><h3 id="ws-members-heading">メンバー <span className="ws-count-badge" data-testid="workspace-member-count">{active.members.length}</span></h3></div>{active.type === "SHARED" && <button className="ws-button ws-button-secondary ws-button-small" type="button" disabled={busy || refreshing || loggingOut} onClick={() => openDialog({ kind: "invite", workspace: active })}><Icon name="plus" />メンバーを招待</button>}</div><div className="ws-members" data-testid="workspace-member-list">{active.members.map((member, index) => <div className="ws-member" key={member.userId}><Avatar name={member.name} index={index} /><div className="ws-member-info"><strong>{member.name}{member.userId === user.id && <span className="ws-you">あなた</span>}</strong><span>{member.email}</span></div><span className="ws-role">{member.role === "OWNER" ? "オーナー" : "メンバー"}</span></div>)}</div>
             {active.type === "SHARED" && active.members.length === 1 && <div className="ws-invite-empty"><span className="ws-invite-empty-icon"><Icon name="users" /></span><div><strong>一緒に使う相手を、招待しませんか。</strong><p>メールアドレスを指定して、招待リンクを共有できます。</p></div></div>}{active.type === "PERSONAL" && <div className="ws-personal-note"><Icon name="shield" /><p>このワークスペースにアクセスできるのは、あなただけです。<br />一緒に使う場合は、共有用ワークスペースを作成してください。</p></div>}
             {active.pendingInvitations.length > 0 && <div className="ws-pending"><h4>招待中</h4>{active.pendingInvitations.map((invitation) => <div className="ws-pending-item" key={invitation.id}><Icon name="mail" /><span>{invitation.email}<small>{workspaceDate(invitation.expiresAt)}まで有効</small></span><span className="ws-pending-badge">参加待ち</span></div>)}</div>}
           </section><section className="ws-danger-zone"><div><h3>ワークスペースの削除</h3><p>この場所と関連するすべてのデータを削除します。</p></div><button className="ws-button ws-button-danger-outline ws-button-small" data-testid="workspace-delete-open" type="button" disabled={busy || refreshing || loggingOut} onClick={() => openDialog({ kind: "delete", workspace: active })}><Icon name="trash" />削除する</button></section><div className="ws-meta"><span>作成日 {workspaceDate(active.createdAt)}</span><span>{active.type === "SHARED" ? "メンバー全員が設定を変更できます" : "自分だけのワークスペース"}</span></div>
-        </section>}
-        </> : active && preferencesReady && (suggestions
+        </section>) : active && preferencesReady && (suggestions
           ? <SuggestionPanel key={`${active.id}:${mealEpoch}`} workspaceId={active.id} selection={location.selection}
             mode={suggestionMode}
             onAdopt={showAdoptedMeal} onBlockChange={block => { mealBlock.current = block; }} />

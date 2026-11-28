@@ -80,12 +80,18 @@ async function chooseCopyDestination(page: Page, date: string, type: MealType) {
   return dialog.getByTestId("meal-copy-continue");
 }
 
-async function switchWorkspace(page: Page, id: string) {
-  const switcher = page.locator(`[data-testid="workspace-switch"][data-workspace-id="${id}"]`);
-  if (!await switcher.isVisible()) {
-    await page.getByRole("button", { name: "ワークスペースメニューを開く", exact: true }).click();
-  }
-  await switcher.click();
+export function sidebarToggle(page: Page) {
+  return page.getByRole("button", { name: "ワークスペースメニューを開く", exact: true, includeHidden: true });
+}
+
+export async function openSidebar(page: Page) {
+  const toggle = sidebarToggle(page);
+  if (await toggle.isVisible() && await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
+}
+
+export async function switchWorkspace(page: Page, id: string) {
+  await openSidebar(page);
+  await page.getByTestId("workspace-select").selectOption(id);
   await page.locator(`[data-testid="workspace-selected-name"][data-workspace-id="${id}"]`).waitFor();
 }
 

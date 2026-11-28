@@ -1,0 +1,29 @@
+.mobile-access-qr {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  padding: 10px 8px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--white);
+  text-align: center;
+}
+
+.mobile-access-qr-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mobile-access-qr-link,
+.mobile-access-qr-link svg {
+  display: block;
+}
+
+.mobile-access-qr-instructions {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}

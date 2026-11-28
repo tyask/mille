@@ -1,6 +1,6 @@
 import type { SVGProps } from "react";
 
-export type WorkspaceIconName = "user" | "users" | "plus" | "close" | "arrow" | "check" | "refresh" | "edit" | "trash" | "mail" | "link" | "copy" | "logout" | "shield" | "leaf" | "menu";
+export type WorkspaceIconName = "user" | "users" | "plus" | "close" | "arrow" | "check" | "refresh" | "edit" | "trash" | "mail" | "link" | "copy" | "logout" | "shield" | "leaf" | "menu" | "calendar" | "sparkles" | "settings";
 
 const paths: Record<WorkspaceIconName, string> = {
   user: "M19 21v-2a7 7 0 0 0-14 0v2M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0Z",
@@ -19,6 +19,9 @@ const paths: Record<WorkspaceIconName, string> = {
   shield: "m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Zm-4 9 3 3 5-6",
   leaf: "M5 20c2-7 5-12 13-15M5 17C-1 6 11 2 21 3c1 11-4 19-16 14Z",
   menu: "M4 6h16M4 12h16M4 18h16",
+  calendar: "M4 5h16v15H4zM8 3v4m8-4v4M4 10h16",
+  sparkles: "M10 3c1 5 2 6 7 7-5 1-6 2-7 7-1-5-2-6-7-7 5-1 6-2 7-7ZM18 14v7m-3.5-3.5h7",
+  settings: "M4 6h16M4 12h16M4 18h16M8 4v4m8 2v4m-6 2v4",
 };
 
 export function WorkspaceIcon({ name, ...props }: SVGProps<SVGSVGElement> & { name: WorkspaceIconName }) {

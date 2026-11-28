@@ -7,8 +7,9 @@ import type { Browser, BrowserContext, Page } from "playwright";
 import { TEST_USERS } from "../../lib/shared/test-users";
 import type { IssuedInvitation, Workspace, WorkspaceState } from "../../lib/shared/workspaces";
 import { CloudStartupError, cloudPort, isolatedEnvironment, rootDirectory, startCloudServer, type CloudServer } from "./dev";
-import { verifyMealReads, verifyMealSuggestions, verifySharedMeals } from "./meal-verify";
+import { openSidebar, sidebarToggle, switchWorkspace, verifyMealReads, verifyMealSuggestions, verifySharedMeals } from "./meal-verify";
 import { verifyMealPhotoFlow } from "./meal-photo-verify";
+import { verifyMobileAccessQr } from "./mobile-access-qr-verify";
 
 // Playwright resolves its executable registry on import, before launch({ env }) applies.
 // Keep this process's lookup aligned with setup:cloud and preserve an explicit override.
@@ -123,14 +124,63 @@ async function selectedWorkspace(page: Page, name: string) {
   await page.waitForFunction(expected => document.querySelector('[data-testid="workspace-selected-name"]')?.textContent?.trim() === expected, name);
 }
 
+async function clickSidebarMenu(page: Page, name: "献立" | "提案" | "ワークスペース設定") {
+  await openSidebar(page);
+  await page.locator("#ws-sidebar").getByRole("button", { name, exact: true }).click();
+}
+
 async function openWorkspaceSettings(page: Page) {
-  await page.getByRole("button", { name: "ワークスペース設定", exact: true }).click();
-  await page.getByTestId("workspace-create-open").waitFor();
+  await clickSidebarMenu(page, "ワークスペース設定");
+  await page.getByTestId("workspace-member-list").waitFor();
 }
 
 async function openMeals(page: Page) {
-  await page.getByRole("button", { name: "献立", exact: true }).click();
+  await clickSidebarMenu(page, "献立");
   await page.getByTestId("meal-app").waitFor();
+}
+
+async function confirmNavigation(page: Page, accept: boolean, action: () => Promise<unknown>) {
+  await Promise.all([
+    page.waitForEvent("dialog").then(async dialog => {
+      const matches = dialog.type() === "confirm" && dialog.message().includes("保存していない入力");
+      if (matches && accept) await dialog.accept();
+      else await dialog.dismiss();
+      requireCondition(matches);
+    }),
+    action(),
+  ]);
+}
+
+async function verifyHomeNavigation(page: Page, currentId: string, otherId: string) {
+  await openMeals(page);
+  await clickSidebarMenu(page, "提案");
+  const suggestions = page.getByTestId("suggestion-panel");
+  await suggestions.waitFor();
+  requireCondition(new URL(page.url()).searchParams.get("section") === "suggestion");
+  await openWorkspaceSettings(page);
+  requireCondition(new URL(page.url()).searchParams.get("section") === "settings");
+  await page.goBack();
+  await suggestions.waitFor();
+  requireCondition(new URL(page.url()).searchParams.get("section") === "suggestion");
+  await page.goForward();
+  await page.getByTestId("workspace-member-list").waitFor();
+  requireCondition(new URL(page.url()).searchParams.get("section") === "settings");
+
+  await openMeals(page);
+  await page.getByTestId("meal-register").click();
+  const dishName = page.getByTestId("meal-editor-dish-name");
+  const draft = "切り替えを取り消して保持する料理名";
+  await dishName.fill(draft);
+  await openSidebar(page);
+  const select = page.getByTestId("workspace-select");
+  await confirmNavigation(page, false, () => select.selectOption(otherId));
+  requireCondition(await dishName.inputValue() === draft && await select.inputValue() === currentId
+    && new URL(page.url()).searchParams.get("workspace") === currentId);
+  await confirmNavigation(page, false, () => clickSidebarMenu(page, "ワークスペース設定"));
+  requireCondition(await dishName.inputValue() === draft && new URL(page.url()).searchParams.get("section") === null);
+  await confirmNavigation(page, true, () => clickSidebarMenu(page, "ワークスペース設定"));
+  await page.getByTestId("workspace-member-list").waitFor();
+  await page.getByTestId("meal-editor").waitFor({ state: "hidden" });
 }
 
 export async function verifyBrowser(args: readonly string[] = [], formal?: FormalPreview): Promise<BrowserProof> {
@@ -152,6 +202,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
   let interrupted = false;
   const contexts = new Set<BrowserContext>();
   const disposableWorkspaces = new Map<string, Page>();
+  const mobileLoginUrls = new Map<string, string>();
   const interrupt = () => { interrupted = true; void browser?.close().catch(() => undefined); };
   process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
   const fail = (failureStage: string) => {
@@ -330,7 +381,8 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
           ...(formal ? [{ urlPattern: "*", resourceType: "Document" as const, requestStage: "Response" as const }] : []),
         ] });
         stage = "navigation";
-        const response = await page.goto(origin, { waitUntil: "networkidle", timeout: 60_000 });
+        const scannedUrl = mobile ? mobileLoginUrls.get(user.key) : undefined;
+        const response = await page.goto(scannedUrl ?? origin, { waitUntil: "networkidle", timeout: 60_000 });
         requireCondition(response?.status() === 200 && new URL(page.url()).origin === origin);
         stage = "runtime";
         await verifyRuntime(page, expectedSha);
@@ -344,6 +396,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         await page.getByTestId("authenticated-home").waitFor();
         requireCondition((await page.getByTestId("authenticated-user-email").textContent())?.trim() === user.email);
         item.checks.push("test-login");
+        if (scannedUrl) item.checks.push("mobile-login-from-scanned-qr");
         stage = "identity";
         const identity = await readIdentity(page), session = await readIdentity(page, "/api/auth/session");
         requireCondition(identity.status === 200 && identity.body.user?.id === user.id && identity.body.user?.email === user.email
@@ -353,12 +406,30 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         await page.reload({ waitUntil: "networkidle" }); await page.getByTestId("authenticated-home").waitFor();
         requireCondition((await readIdentity(page)).body.user?.id === user.id);
         item.checks.push("session-after-reload");
+        const sidebarLayout = proof.target.kind === "local" || Boolean(await page.getByTestId("workspace-select").count());
+        if (sidebarLayout) {
+          stage = "mobile-login-qr";
+          const loginUrl = await verifyMobileAccessQr(page, origin, mobile);
+          if (loginUrl) mobileLoginUrls.set(user.key, loginUrl);
+          item.checks.push(mobile ? "mobile-access-qr-hidden" : "mobile-access-qr-decodes-to-home");
+        }
         if (mobile) {
           stage = "mobile-menu-resize";
-          const menu = page.getByRole("button", { name: "ワークスペースメニューを開く", exact: true, includeHidden: true });
-          await menu.click();
+          const menu = sidebarToggle(page);
+          await openSidebar(page);
           await page.waitForFunction(() => document.querySelector(".ws-main-shell")?.hasAttribute("inert") === true);
+          if (proof.target.kind === "local") {
+            const filename = `${item.name}-sidebar.png`;
+            await page.screenshot({ path: resolve(directory, filename), animations: "disabled" });
+            item.screenshots.push(filename);
+          }
           await page.setViewportSize({ width: 844, height: 390 });
+          if (sidebarLayout) {
+            requireCondition(await menu.isVisible() && await menu.getAttribute("aria-expanded") === "true");
+            await verifyMobileAccessQr(page, origin, true);
+            await page.setViewportSize({ width: 1100, height: 650 });
+            item.checks.push("landscape-mobile-menu-and-hidden-qr");
+          }
           await page.waitForFunction(() => {
             const shell = document.querySelector(".ws-main-shell");
             return shell !== null && !shell.hasAttribute("inert");
@@ -371,7 +442,14 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
           await page.setViewportSize({ width: 390, height: 844 });
           requireCondition(await menu.getAttribute("aria-expanded") === "false"
             && !await page.locator(".ws-main-shell").evaluate(element => element.hasAttribute("inert")));
-          await page.getByTestId("workspace-create-open").waitFor();
+          if (sidebarLayout) {
+            await openSidebar(page);
+            await page.getByTestId("workspace-create-open").waitFor();
+            await page.keyboard.press("Escape");
+            await menu.and(page.locator('[aria-expanded="false"]')).waitFor();
+          } else {
+            await page.getByTestId("workspace-create-open").waitFor();
+          }
           if (proof.target.kind === "local") await openMeals(page);
           item.checks.push("mobile-menu-resize-restores-main");
         }
@@ -421,7 +499,8 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         stage = "workspace-create";
         await openWorkspaceSettings(owner.page);
         const workspaceName = `QA ${mobile ? "mobile" : "desktop"} ${Date.now()}`;
-        await owner.page.getByRole("button", { name: "新しく作成", exact: true }).click();
+        await openSidebar(owner.page);
+        await owner.page.locator("#ws-sidebar").getByTestId("workspace-create-open").click();
         await owner.page.getByTestId("workspace-create-dialog").getByLabel("ワークスペース名", { exact: true }).fill(workspaceName);
         await owner.page.getByTestId("workspace-create-dialog").getByRole("radio", { name: /共有用/ }).check();
         const created = await workspaceMutation<Workspace>(owner.page, "/api/workspaces", "POST", () => owner.page.getByTestId("workspace-create-submit").click());
@@ -431,17 +510,30 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         owner.item.checks.push("shared-workspace-create-ui");
 
         stage = "workspace-switch-persistence";
-        await owner.page.locator(`[data-testid="workspace-card"][data-workspace-id="${ownerPersonal.id}"]`).click();
+        await openSidebar(owner.page);
+        const select = owner.page.getByTestId("workspace-select");
+        const labelledSelect = owner.page.locator("#ws-sidebar").getByRole("combobox", { name: "ワークスペース", exact: true });
+        requireCondition(await select.count() === 1 && await select.and(labelledSelect).isVisible()
+          && await select.evaluate(element => element instanceof HTMLSelectElement && !element.multiple && element.size <= 1)
+          && await select.locator(`option[value="${ownerPersonal.id}"]`).textContent() === ownerPersonal.name
+          && await select.locator(`option[value="${created.id}"]`).textContent() === workspaceName
+          && await select.inputValue() === created.id && await owner.page.getByTestId("workspace-card").count() === 0);
+        await switchWorkspace(owner.page, ownerPersonal.id);
         await selectedWorkspace(owner.page, ownerPersonal.name);
-        await owner.page.locator(`[data-testid="workspace-card"][data-workspace-id="${created.id}"]`).click();
+        await switchWorkspace(owner.page, created.id);
         await selectedWorkspace(owner.page, workspaceName);
         await owner.page.reload({ waitUntil: "networkidle" });
         await selectedWorkspace(owner.page, workspaceName);
+        requireCondition(await select.inputValue() === created.id);
         await openWorkspaceSettings(owner.page);
-        owner.item.checks.push("workspace-switch-ui", "workspace-selection-after-reload");
+        owner.item.checks.push("workspace-single-dropdown", "workspace-switch-ui", "workspace-selection-after-reload");
+
+        stage = "home-navigation-and-unsaved-input";
+        await verifyHomeNavigation(owner.page, created.id, ownerPersonal.id);
+        owner.item.checks.push("sidebar-meal-suggestion-settings-navigation", "sidebar-navigation-history", "sidebar-navigation-draft-confirmation");
 
         stage = "workspace-rename-open";
-        const renamed = `${workspaceName} 変更`;
+        const renamed = `${workspaceName} ガーデン`;
         await owner.page.getByRole("button", { name: "名前を変更", exact: true }).click();
         stage = "workspace-rename-fill";
         await owner.page.getByTestId("workspace-rename-dialog").getByLabel("ワークスペース名", { exact: true }).fill(renamed);
@@ -449,7 +541,45 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         await workspaceMutation<Workspace>(owner.page, `/api/workspaces/${created.id}`, "PATCH", () => owner.page.getByTestId("workspace-rename-dialog").getByRole("button", { name: "変更を保存", exact: true }).click());
         stage = "workspace-rename-result";
         await selectedWorkspace(owner.page, renamed);
+        requireCondition(await select.locator(`option[value="${created.id}"]`).textContent() === renamed);
         owner.item.checks.push("workspace-rename-ui");
+
+        stage = "workspace-duplicate-names";
+        const reservedName = `共有用 1 · ${renamed}`;
+        const fixtures: Workspace[] = [];
+        for (const fixture of [
+          { name: renamed.normalize("NFD").replace("QA ", "QA  "), type: "PERSONAL" },
+          { name: renamed, type: "SHARED" },
+          { name: reservedName, type: "SHARED" },
+        ]) {
+          const { status, body } = await workspaceRequest<Workspace>(owner.page, "/api/workspaces", "POST", fixture);
+          requireCondition(status === 201 && body.id);
+          fixtures.push(body);
+          disposableWorkspaces.set(body.id, owner.page); proof.resources.workspaces = disposableWorkspaces.size;
+          requireCondition(body.name === fixture.name && body.type === fixture.type);
+        }
+        await owner.page.reload({ waitUntil: "networkidle" });
+        const [samePersonal, sameShared, reserved] = fixtures;
+        for (const [id, label] of [
+          [samePersonal.id, `個人用 · ${renamed}`],
+          [sameShared.id, `共有用 3 · ${renamed}`],
+          [reserved.id, reservedName],
+          [created.id, `共有用 2 · ${renamed}`],
+        ]) {
+          await openSidebar(owner.page);
+          const [selectedId] = await select.selectOption({ label });
+          requireCondition(selectedId === id);
+          await owner.page.locator(`[data-testid="workspace-selected-name"][data-workspace-id="${id}"]`).waitFor();
+        }
+        for (const fixture of fixtures) {
+          const removed = await workspaceRequest(owner.page, `/api/workspaces/${fixture.id}`, "DELETE", { confirmationName: fixture.name });
+          requireCondition(removed.status === 204);
+          disposableWorkspaces.delete(fixture.id); proof.resources.workspaces = disposableWorkspaces.size;
+        }
+        await owner.page.reload({ waitUntil: "networkidle" });
+        await selectedWorkspace(owner.page, renamed);
+        requireCondition(await select.locator(`option[value="${created.id}"]`).textContent() === renamed);
+        owner.item.checks.push("workspace-duplicate-names-distinguishable");
 
         stage = "workspace-invite";
         await owner.page.getByRole("button", { name: "メンバーを招待", exact: true }).click();
@@ -549,7 +679,8 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
           const fallback = state.body.workspaces[0];
           requireCondition(fallback);
           await selectedWorkspace(entry.page, fallback.name);
-          requireCondition(await entry.page.getByTestId("workspace-selected-name").getAttribute("data-workspace-id") === fallback.id);
+          requireCondition(await entry.page.getByTestId("workspace-selected-name").getAttribute("data-workspace-id") === fallback.id
+            && await entry.page.getByTestId("workspace-select").inputValue() === fallback.id);
           entry.item.checks.push("workspace-delete-ui-and-fallback");
           await openWorkspaceSettings(entry.page);
           const filename = `${entry.item.name}-workspaces.png`;
@@ -569,9 +700,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
           requireCondition((await readIdentity(entry.page)).body.user?.id === entry.user.id);
         }
         stage = "logout";
-        if (!await entry.page.getByRole("button", { name: "ログアウト", exact: true }).isVisible()) {
-          await entry.page.getByRole("button", { name: "ワークスペースメニューを開く", exact: true }).click();
-        }
+        await openSidebar(entry.page);
         await entry.page.getByRole("button", { name: "ログアウト", exact: true }).click();
         await entry.page.getByRole("button", { name: `${entry.user.name}でログイン`, exact: true }).waitFor();
         requireCondition((await readIdentity(entry.page)).status === 401);
