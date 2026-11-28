@@ -140,9 +140,12 @@ test("meal photo changes share the meal version, authorization, rollback and ide
   assert.equal(retained.dishes[0].photoId, photoId);
   await assert.rejects(meals.update(workspaceId, meal.id, edit(meal, null)), mealError(409, "VERSION_CONFLICT"));
   const privatePhoto = await upload(privateWorkspaceId);
-  await assert.rejects(meals.update(workspaceId, meal.id, edit(retained, privatePhoto)), mealError(404, "NOT_FOUND"));
+  await assert.rejects(meals.update(workspaceId, meal.id, edit(retained, privatePhoto)), mealError(400, "INVALID_INPUT"));
   const replacement = await upload();
-  await assert.rejects(memberMeals.update(workspaceId, meal.id, edit(retained, replacement)), mealError(404, "NOT_FOUND"));
+  await assert.rejects(memberMeals.update(workspaceId, meal.id, edit(retained, replacement)), mealError(400, "INVALID_INPUT"));
+  const expired = await upload();
+  await db.query("UPDATE meal_photos SET expires_at = now() - interval '1 second' WHERE id = $1", [expired]);
+  await assert.rejects(meals.update(workspaceId, meal.id, edit(retained, expired)), mealError(400, "INVALID_INPUT"));
   assert.deepEqual(await meals.get(workspaceId, meal.id), retained);
   const rewritten = await meals.update(workspaceId, meal.id, edit(retained, replacement), "photo-replace");
   assert.equal(rewritten.dishes[0].photoId, replacement);

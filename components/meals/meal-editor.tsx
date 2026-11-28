@@ -81,6 +81,7 @@ function DishEditor({ api, photoAnalysisEnabled, dish, index, invalid, onChange,
 
       <MealPhotoEditor api={api} analysisEnabled={photoAnalysisEnabled}
         photoId={dish.photoId === undefined ? dish.savedPhotoId : dish.photoId}
+        isDraft={typeof dish.photoId === "string"}
         hasDishName={Boolean(dish.name.trim())} onChange={onPhotoChange}
         onUploadActivity={onUploadActivity} onApply={applyPhotoReview} />
 

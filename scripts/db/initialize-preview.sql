@@ -79,7 +79,7 @@ FOR EACH ROW EXECUTE FUNCTION mille_reject_production_test_user();
   IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '007_suggestion_gateway_preview.sql' AND sha256 <> 'e0f6a8ea78ce0cf7d4078a503fa7cc7b0465523d8523efe2ba8fd9ea705b4f81') THEN
     RAISE EXCEPTION 'Mille migration history or checksum mismatch';
   END IF;
-  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '008_meal_photos.sql' AND sha256 <> '2d30b3a6437a0fe758491c578857ce678f3c243056c751b7185234a7497ab6b6') THEN
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '008_meal_photos.sql' AND sha256 <> '0c08231a1911ef2b413869fa439132958092836c81aaa8c2b0ddf33bd9b70e11') THEN
     RAISE EXCEPTION 'Mille migration history or checksum mismatch';
   END IF;
   IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '009_meal_ingredient_search.sql' AND sha256 <> 'b85f5eecb705ddaa490bebd249301a5ed99aa35461005eb59287853caf40b0d4') THEN
@@ -1586,7 +1586,7 @@ BEGIN
         WHERE p.id = requested_photo AND p.workspace_id = workspace AND p.bytes IS NOT NULL
           AND (p.dish_id = saved_dish OR (p.dish_id IS NULL AND p.created_by = actor_id AND p.expires_at > clock_timestamp()));
       IF NOT FOUND THEN
-        photo_error := ''NOT_FOUND'';
+        photo_error := ''INVALID_INPUT'';
         photo_error_message := ''添付する写真が見つかりません。写真を選び直してください。'';
         RAISE SQLSTATE ''P0878'';
       END IF;
@@ -1608,7 +1608,7 @@ BEGIN
 END;
 $meal_with_photos$ LANGUAGE plpgsql;
 ';
-    INSERT INTO schema_migrations (name,sha256) VALUES ('008_meal_photos.sql','2d30b3a6437a0fe758491c578857ce678f3c243056c751b7185234a7497ab6b6');
+    INSERT INTO schema_migrations (name,sha256) VALUES ('008_meal_photos.sql','0c08231a1911ef2b413869fa439132958092836c81aaa8c2b0ddf33bd9b70e11');
   END IF;
   IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '009_meal_ingredient_search.sql') THEN
     EXECUTE '-- Add recorded ingredient names to the existing dish search contract.

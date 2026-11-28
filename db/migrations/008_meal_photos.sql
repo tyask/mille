@@ -249,7 +249,7 @@ BEGIN
         WHERE p.id = requested_photo AND p.workspace_id = workspace AND p.bytes IS NOT NULL
           AND (p.dish_id = saved_dish OR (p.dish_id IS NULL AND p.created_by = actor_id AND p.expires_at > clock_timestamp()));
       IF NOT FOUND THEN
-        photo_error := 'NOT_FOUND';
+        photo_error := 'INVALID_INPUT';
         photo_error_message := '添付する写真が見つかりません。写真を選び直してください。';
         RAISE SQLSTATE 'P0878';
       END IF;

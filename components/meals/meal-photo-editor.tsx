@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { MealPhotoAnalysis } from "@/lib/shared/meal-photo-analysis";
 import { MEAL_PHOTO_MAX_BYTES } from "@/lib/shared/meal-photo-types";
 import { newIngredientDraft, type IngredientDraft, type ReviewedMealPhoto } from "./meal-draft";
-import { analyzeMealPhoto, MealPhotoRequestError, uploadMealPhoto } from "./meal-photo-client";
+import { analyzeMealPhoto, discardMealPhotoDraft, MealPhotoRequestError, uploadMealPhoto } from "./meal-photo-client";
 import { MealPhotoImage } from "./meal-photo-image";
 
 type UploadFile = { id: string; file: File };
@@ -26,10 +26,11 @@ function candidateReview(candidate: MealPhotoAnalysis["dishes"][number]): Review
   };
 }
 
-export function MealPhotoEditor({ api, analysisEnabled, photoId, hasDishName, onChange, onUploadActivity, onApply }: {
+export function MealPhotoEditor({ api, analysisEnabled, photoId, isDraft, hasDishName, onChange, onUploadActivity, onApply }: {
   api: string;
   analysisEnabled: boolean;
   photoId?: string | null;
+  isDraft: boolean;
   hasDishName: boolean;
   onChange: (photoId: string | null) => void;
   onUploadActivity: (active: boolean) => void;
@@ -53,6 +54,11 @@ export function MealPhotoEditor({ api, analysisEnabled, photoId, hasDishName, on
     setReviewError("");
   }
 
+  function discardPreviousDraft() {
+    // The server expires abandoned drafts if the client loses its connection.
+    if (isDraft && photoId) void discardMealPhotoDraft(api, photoId).catch(() => {});
+  }
+
   async function uploadFile(attempt: UploadFile) {
     if (pendingUpload.current) return;
     clearAnalysis();
@@ -63,6 +69,7 @@ export function MealPhotoEditor({ api, analysisEnabled, photoId, hasDishName, on
     try {
       await uploadMealPhoto(api, attempt.id, attempt.file, controller.signal);
       if (controller.signal.aborted) return;
+      if (photoId !== attempt.id) discardPreviousDraft();
       onChange(attempt.id);
       setUpload(null);
     } catch (cause) {
@@ -166,7 +173,7 @@ export function MealPhotoEditor({ api, analysisEnabled, photoId, hasDishName, on
         {analyzing ? "写真を解析しています…" : analysis?.status === "failed" ? "解析を再試行" : "写真から入力する"}
       </button>}
       <button type="button" className="meal-button meal-button-quiet" data-testid="meal-photo-remove" disabled={uploading}
-        onClick={() => { clearAnalysis(); setUpload(null); onChange(null); }}>写真を外す</button>
+        onClick={() => { clearAnalysis(); discardPreviousDraft(); setUpload(null); onChange(null); }}>写真を外す</button>
     </div>}
     {analyzing && <p className="meal-hint" role="status">解析中も献立を入力できます。</p>}
     {analysis?.status === "failed" && <p className="meal-feedback meal-feedback-error" role="alert">{analysis.message}{manualEntry}</p>}

@@ -11,14 +11,16 @@
     "completesIssue": true,
     "manualPostMerge": false
   },
-  "frozenAt": "2026-11-28T06:38:59Z",
+  "frozenAt": "2026-11-28T06:43:29Z",
   "preCommitValidation": {
     "node": "24.22.3",
     "checks": [
       "高速検査",
       "関連テスト20件",
       "架空写真のブラウザ添付・画像デコード",
-      "差分の自己レビュー"
+      "差分の自己レビュー",
+      "期限切れ添付の復旧と未保存の写真回収を再レビュー",
+      "DB関連テスト8件"
     ]
   }
 }

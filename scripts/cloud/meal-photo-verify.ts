@@ -20,6 +20,18 @@ async function photoResponse(page: Page, path: string) {
   }, path);
 }
 
+async function uploadPhoto(page: Page, photos: string, image: Buffer) {
+  const [complete] = await Promise.all([
+    page.waitForResponse(response => {
+      const { pathname } = new URL(response.url());
+      return response.request().method() === "POST" && pathname.startsWith(`${photos}/`) && pathname.endsWith("/complete");
+    }, { timeout: 15_000 }),
+    page.getByTestId("meal-photo-file").setInputFiles({ name: "fixture.png", mimeType: "image/png", buffer: image }),
+  ]);
+  requirePhoto(complete.status() === 200);
+  return new URL(complete.url()).pathname.slice(0, -"/complete".length);
+}
+
 export async function verifyMealPhotoFlow(
   owner: PhotoCase, member: PhotoCase, workspaceId: string, personalId: string,
   onStage: (stage: string, actor: "owner" | "member") => void,
@@ -38,15 +50,7 @@ export async function verifyMealPhotoFlow(
   await page.getByTestId("meal-editor-date").fill("2026-02-14");
   await page.getByTestId("meal-editor-type").selectOption("LUNCH");
   await page.getByTestId("meal-editor-dish-name").fill(name);
-  const [complete] = await Promise.all([
-    page.waitForResponse(response => {
-      const { pathname } = new URL(response.url());
-      return response.request().method() === "POST" && pathname.startsWith(`${photos}/`) && pathname.endsWith("/complete");
-    }, { timeout: 15_000 }),
-    page.getByTestId("meal-photo-file").setInputFiles({ name: "fixture.png", mimeType: "image/png", buffer: image }),
-  ]);
-  requirePhoto(complete.status() === 200);
-  const photoUrl = new URL(complete.url()).pathname.slice(0, -"/complete".length);
+  const photoUrl = await uploadPhoto(page, photos, image);
   const photoId = photoUrl.split("/").at(-1);
   const preview = page.getByTestId("meal-photo-preview");
   await preview.waitFor();
@@ -79,7 +83,7 @@ export async function verifyMealPhotoFlow(
   requirePhoto(await page.getByTestId("meal-editor-dish-name").inputValue() === name);
   onStage("meal-photo-save", "owner");
   const [created] = await Promise.all([
-    page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === meals),
+    page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === meals, { timeout: 15_000 }),
     page.getByTestId("meal-editor-save").click(),
   ]);
   requirePhoto(created.status() === 201);
@@ -94,13 +98,33 @@ export async function verifyMealPhotoFlow(
   owner.checks.push("meal-photo-manual-fallback-and-review", "meal-photo-confirmed-save");
   member.checks.push("meal-photo-draft-denial-and-shared-read");
 
-  onStage("meal-photo-detach", "owner");
+  onStage("meal-photo-missing-attachment", "owner");
   await page.getByTestId("meal-detail-edit").click();
-  await page.getByTestId("meal-photo-remove").click();
-  const [detached] = await Promise.all([
-    page.waitForResponse(response => response.request().method() === "PUT" && new URL(response.url()).pathname === `${meals}/${meal.id}`),
-    page.getByTestId("meal-editor-save").click(),
+  const firstDraft = await uploadPhoto(page, photos, image);
+  await page.locator(`[data-testid="meal-photo-preview"][src="${firstDraft}"]`).waitFor();
+  const [discarded, replacement] = await Promise.all([
+    page.waitForResponse(response => response.request().method() === "DELETE" && new URL(response.url()).pathname === firstDraft,
+      { timeout: 15_000 }),
+    uploadPhoto(page, photos, image),
   ]);
+  requirePhoto(discarded.status() === 204 && await photoResponse(page, firstDraft).then(response => response.status) === 404);
+  await page.locator(`[data-testid="meal-photo-preview"][src="${replacement}"]`).waitFor();
+  requirePhoto(await page.evaluate(async path => (await fetch(path, { method: "DELETE" })).status, replacement) === 204);
+  const revisedName = "手入力を保持した鮭料理";
+  await page.getByTestId("meal-editor-dish-name").fill(revisedName);
+  const editPath = `${meals}/${meal.id}`;
+  const saved = () => page.waitForResponse(response =>
+    response.request().method() === "PUT" && new URL(response.url()).pathname === editPath, { timeout: 15_000 });
+  const save = page.getByTestId("meal-editor-save");
+  const [missing] = await Promise.all([saved(), save.click()]);
+  requirePhoto(missing.status() === 400);
+  await page.getByText("添付する写真が見つかりません。写真を選び直してください。").waitFor();
+  requirePhoto(await page.getByTestId("meal-editor-dish-name").inputValue() === revisedName && await save.isEnabled());
+  owner.checks.push("meal-photo-expired-attachment-retains-edits");
+
+  onStage("meal-photo-detach", "owner");
+  await page.getByTestId("meal-photo-remove").click();
+  const [detached] = await Promise.all([saved(), save.click()]);
   requirePhoto(detached.status() === 200 && await photoResponse(member.page, photoUrl)
     .then(response => response.status) === 404);
   owner.checks.push("meal-photo-detach-and-reclaim");

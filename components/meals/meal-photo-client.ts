@@ -56,3 +56,7 @@ export async function analyzeMealPhoto(api: string, photoId: string, signal: Abo
     sample: response.headers.get("X-Mille-Photo-Analysis") === "sample",
   };
 }
+
+export async function discardMealPhotoDraft(api: string, photoId: string) {
+  await photoRequest(mealPhotoUrl(api, photoId), { method: "DELETE", signal: AbortSignal.timeout(5_000) });
+}
