@@ -182,12 +182,12 @@
 @media (min-width: 1500px) { .ws-main { padding-top: 55px; } }
 @media (max-width: 1100px) { .workspace-app { --ws-sidebar-width: 221px; } .ws-sidebar { padding-inline: 15px; } .ws-main { padding: 35px 28px 0; } .ws-topbar { padding-inline: 28px; } .ws-private-label { display: none; } .ws-banner { padding: 24px; } }
 @media (max-width: 850px) { .workspace-app { --ws-sidebar-width: 205px; } .ws-sidebar { padding-inline: 11px; } .ws-main, .ws-topbar { padding-inline: 23px; } .ws-banner { gap: 15px; padding: 22px 20px; } .ws-banner-content { gap: 13px; } .ws-banner-icon { width: 43px; height: 43px; flex-basis: 43px; } .ws-banner h2 { font-size: 18px; } .ws-panel { padding: 22px 20px; } }
-@media (max-width: 700px) {
+@media (max-width: 700px), (max-width: 1000px) and (max-height: 500px) and (pointer: coarse) {
   .workspace-app { display: block; font-size: 14px; }
   .ws-sidebar { inset: 0 auto 0 0; width: min(310px, calc(100% - 45px)); transform: translateX(-100%); visibility: hidden; transition: transform .2s; padding: 27px 20px 24px; box-shadow: none; z-index: 45; }
   .ws-sidebar.is-open { transform: translateX(0); visibility: visible; box-shadow: 15px 0 80px #25341d35; }
-  .ws-mobile-close { display: inline-grid; position: absolute; top: 24px; right: 12px; }
-  .ws-sidebar .brand, .ws-invite-brand .brand { min-height: 44px; }
+  .ws-mobile-close { display: inline-grid; position: absolute; top: 24px; right: 12px; min-width: 44px; min-height: 44px; }
+  .ws-sidebar .brand { min-height: 44px; }
   .ws-picker select { font-size: 16px; }
   .ws-nav button, .ws-sidebar-create { font-size: 14px; }
   .ws-account { padding-top: 19px; }
@@ -203,6 +203,10 @@
   .ws-mobile-menu > span { font: 700 27px/1 Georgia, serif; letter-spacing: -.06em; }
   .ws-refresh { min-height: 44px; padding-inline: 8px; font-size: 13px; }
   .ws-refresh svg { width: 18px; height: 18px; }
+  .ws-sidebar .mobile-access-qr { display: none; }
+}
+@media (max-width: 700px) {
+  .ws-invite-brand .brand { min-height: 44px; }
   .ws-icon-button { min-width: 44px; min-height: 44px; }
   .ws-main { padding: 32px 22px 0; }
   .ws-button, .ws-button-small { font-size: 13px; min-height: 44px; padding: 10px 13px; }

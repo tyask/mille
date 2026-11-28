@@ -418,7 +418,18 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
           const menu = sidebarToggle(page);
           await openSidebar(page);
           await page.waitForFunction(() => document.querySelector(".ws-main-shell")?.hasAttribute("inert") === true);
+          if (proof.target.kind === "local") {
+            const filename = `${item.name}-sidebar.png`;
+            await page.screenshot({ path: resolve(directory, filename), animations: "disabled" });
+            item.screenshots.push(filename);
+          }
           await page.setViewportSize({ width: 844, height: 390 });
+          if (sidebarLayout) {
+            requireCondition(await menu.isVisible() && await menu.getAttribute("aria-expanded") === "true");
+            await verifyMobileAccessQr(page, origin, true);
+            await page.setViewportSize({ width: 1100, height: 650 });
+            item.checks.push("landscape-mobile-menu-and-hidden-qr");
+          }
           await page.waitForFunction(() => {
             const shell = document.querySelector(".ws-main-shell");
             return shell !== null && !shell.hasAttribute("inert");
@@ -532,6 +543,43 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         await selectedWorkspace(owner.page, renamed);
         requireCondition(await select.locator(`option[value="${created.id}"]`).textContent() === renamed);
         owner.item.checks.push("workspace-rename-ui");
+
+        stage = "workspace-duplicate-names";
+        const reservedName = `${renamed}（共有用 1）`;
+        const fixtures: Workspace[] = [];
+        for (const fixture of [
+          { name: renamed, type: "PERSONAL" },
+          { name: renamed, type: "SHARED" },
+          { name: reservedName, type: "SHARED" },
+        ]) {
+          const { status, body } = await workspaceRequest<Workspace>(owner.page, "/api/workspaces", "POST", fixture);
+          requireCondition(status === 201 && body.id);
+          fixtures.push(body);
+          disposableWorkspaces.set(body.id, owner.page); proof.resources.workspaces = disposableWorkspaces.size;
+          requireCondition(body.name === fixture.name && body.type === fixture.type);
+        }
+        await owner.page.reload({ waitUntil: "networkidle" });
+        const [samePersonal, sameShared, reserved] = fixtures;
+        for (const [id, label] of [
+          [samePersonal.id, `${renamed}（個人用）`],
+          [sameShared.id, `${renamed}（共有用 3）`],
+          [reserved.id, reservedName],
+          [created.id, `${renamed}（共有用 2）`],
+        ]) {
+          await openSidebar(owner.page);
+          const [selectedId] = await select.selectOption({ label });
+          requireCondition(selectedId === id);
+          await owner.page.locator(`[data-testid="workspace-selected-name"][data-workspace-id="${id}"]`).waitFor();
+        }
+        for (const fixture of fixtures) {
+          const removed = await workspaceRequest(owner.page, `/api/workspaces/${fixture.id}`, "DELETE", { confirmationName: fixture.name });
+          requireCondition(removed.status === 204);
+          disposableWorkspaces.delete(fixture.id); proof.resources.workspaces = disposableWorkspaces.size;
+        }
+        await owner.page.reload({ waitUntil: "networkidle" });
+        await selectedWorkspace(owner.page, renamed);
+        requireCondition(await select.locator(`option[value="${created.id}"]`).textContent() === renamed);
+        owner.item.checks.push("workspace-duplicate-names-distinguishable");
 
         stage = "workspace-invite";
         await owner.page.getByRole("button", { name: "メンバーを招待", exact: true }).click();

@@ -39,6 +39,36 @@ function SpaceIcon({ type }: { type: WorkspaceType }) {
   return <Icon name={type === "SHARED" ? "users" : "user"} />;
 }
 
+function workspaceOptionLabels(workspaces: Workspace[]) {
+  const workspacesByName = new Map<string, Workspace[]>();
+  for (const workspace of workspaces) {
+    const group = workspacesByName.get(workspace.name);
+    if (group) group.push(workspace);
+    else workspacesByName.set(workspace.name, [workspace]);
+  }
+
+  const labels = new Map<string, string>();
+  for (const group of workspacesByName.values()) {
+    if (group.length === 1) continue;
+    for (const type of ["PERSONAL", "SHARED"] as const) {
+      const sameType = group.filter(workspace => workspace.type === type);
+      // The server orders by last update. Number duplicates by creation order instead.
+      sameType.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+      const typeLabel = type === "PERSONAL" ? "個人用" : "共有用";
+      let ordinal = sameType.length === 1 ? 0 : 1;
+      for (const workspace of sameType) {
+        let label: string;
+        do {
+          label = `${workspace.name}（${typeLabel}${ordinal ? ` ${ordinal}` : ""}）`;
+          ordinal += 1;
+        } while (workspacesByName.has(label));
+        labels.set(workspace.id, label);
+      }
+    }
+  }
+  return labels;
+}
+
 type Mutation = <T>(operation: () => Promise<T>, success: string, preferredId?: (result: T) => string | undefined) => Promise<T | undefined>;
 type DialogState = { kind: "create" } | { kind: "rename" | "delete" | "invite"; workspace: Workspace };
 
@@ -124,6 +154,7 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
   const historyIndex = useRef(0);
   const restoringHistory = useRef(false);
   const active = state.workspaces.find((workspace) => workspace.id === activeId) || state.workspaces[0];
+  const optionLabels = workspaceOptionLabels(state.workspaces);
   const storageKey = `mille:workspace:${user.id}`;
   const settings = location.pane === "settings" || !active;
   const suggestions = suggestionsEnabled && location.pane === "suggestion" && !settings;
@@ -193,7 +224,7 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
   }, [active?.id, location, state.workspaces, storageKey, suggestionsEnabled]);
 
   useEffect(() => {
-    const mobileViewport = window.matchMedia("(max-width: 700px)");
+    const mobileViewport = window.matchMedia("(max-width: 700px), (max-width: 1000px) and (max-height: 500px) and (pointer: coarse)");
     function closeOnDesktop(event: MediaQueryListEvent) { if (!event.matches) setMobileOpen(false); }
     mobileViewport.addEventListener("change", closeOnDesktop);
     return () => mobileViewport.removeEventListener("change", closeOnDesktop);
@@ -291,10 +322,10 @@ export default function WorkspaceApp({ user, initialState, initialWorkspaceId, i
           value={active?.id ?? ""}
           onChange={event => selectWorkspace(event.target.value)}
           disabled={!preferencesReady || !active}
-          title={active?.name}
+          title={active && (optionLabels.get(active.id) ?? active.name)}
         >
           {!active && <option value="">ワークスペースなし</option>}
-          {state.workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{workspace.name}</option>)}
+          {state.workspaces.map(workspace => <option key={workspace.id} value={workspace.id}>{optionLabels.get(workspace.id) ?? workspace.name}</option>)}
         </select>
         <button className="ws-sidebar-create" data-testid="workspace-create-open" type="button" onClick={() => openDialog({ kind: "create" })} disabled={busy || refreshing || loggingOut}>
           <Icon name="plus" />ワークスペースを作成
