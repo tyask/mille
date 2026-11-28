@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { DishSearchBy } from "@/lib/shared/meal-schemas";
 import type { DishSearchItem, DishSearchPage } from "@/lib/shared/meal-types";
 import { DishSearch } from "./dish-search";
 import { mealRequest, useMealResource } from "./meal-client";
@@ -12,10 +13,10 @@ export function MealSearchPanel({ api, revision, onSelect }: {
   revision: number;
   onSelect: (item: DishSearchItem) => void;
 }) {
-  const [query, setQuery] = useState({ text: "", attempt: 0 });
+  const [query, setQuery] = useState<{ text: string; by: DishSearchBy; attempt: number }>({ text: "", by: "name", attempt: 0 });
   const [extra, setExtra] = useState<ExtraResults | null>(null);
   const loadMoreRequest = useRef<AbortController | null>(null);
-  const url = query.text ? `${api}/dish-search?${new URLSearchParams({ q: query.text })}` : null;
+  const url = query.text ? `${api}/dish-search?${new URLSearchParams({ q: query.text, by: query.by })}` : null;
   const result = useMealResource<DishSearchPage>(url, revision + query.attempt);
   const initial = result.status === "loaded" ? result.data : null;
   const additional = extra?.base === initial ? extra : null;
@@ -23,9 +24,9 @@ export function MealSearchPanel({ api, revision, onSelect }: {
 
   useEffect(() => () => loadMoreRequest.current?.abort(), [url, revision, query.attempt]);
 
-  function search(value: string) {
+  function search(value: string, by: DishSearchBy) {
     loadMoreRequest.current?.abort();
-    setQuery(previous => ({ text: value.trim(), attempt: previous.attempt + 1 }));
+    setQuery(previous => ({ text: value, by, attempt: previous.attempt + 1 }));
   }
 
   async function more() {
@@ -47,6 +48,7 @@ export function MealSearchPanel({ api, revision, onSelect }: {
 
   return <DishSearch
     onSearch={search}
+    onRetry={() => additional?.status === "error" ? void more() : search(query.text, query.by)}
     onMore={() => void more()}
     onSelect={onSelect}
     items={page?.items ?? []}

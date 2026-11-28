@@ -506,17 +506,14 @@
 }
 
 .meal-search-form {
-  display: flex;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
   gap: 8px;
   align-items: center;
 }
 
-.meal-search-form label {
-  font-weight: 600;
-}
-
 .meal-search-form input {
-  flex: 1;
+  width: 100%;
 }
 
 .meal-search-results {
@@ -605,6 +602,48 @@
   justify-content: space-between;
   align-items: center;
   gap: 8px;
+}
+
+.meal-photo-editor,
+.meal-photo-review,
+.meal-photo-failure {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.meal-photo-editor,
+.meal-photo-review {
+  padding: 12px;
+  border: 1px solid var(--meal-border);
+  border-radius: 10px;
+  background: var(--meal-cream);
+}
+
+.meal-photo-review h5 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.meal-photo-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.meal-photo-failure > button,
+.meal-photo-editor > button {
+  justify-self: start;
+}
+
+.meal-photo-image {
+  display: block;
+  width: min(100%, 320px);
+  height: auto;
+  max-height: 240px;
+  border-radius: 8px;
+  object-fit: scale-down;
+  background: var(--meal-cream);
 }
 
 .meal-ingredient-editor {

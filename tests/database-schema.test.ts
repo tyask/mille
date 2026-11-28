@@ -12,6 +12,7 @@ type MigrationRow = { name: string; sha256: string; applied_at: Date };
 const migrationNames = [
   "001_auth.sql", "002_workspaces.sql", "003_meals.sql", "004_meal_api.sql",
   "005_meal_plans.sql", "006_meal_suggestions.sql", "007_suggestion_gateway_preview.sql",
+  "008_meal_photos.sql", "009_meal_ingredient_search.sql", "010_meal_photo_analysis.sql",
 ];
 
 test("auth, workspace and meal schemas initialize atomically without changing disabled users or creating workspace data", async t => {

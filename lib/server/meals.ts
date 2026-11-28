@@ -130,11 +130,13 @@ export function createMealRepository(query: Query, user: AppUser): MealRepositor
       mealId: mealIdSchema.parse(mealId),
     }, key),
     async search(workspaceId, input) {
-      const { q, limit, cursor } = dishSearchSchema.parse(input);
+      const { q, by, limit, cursor } = dishSearchSchema.parse(input);
       const workspace = mealIdSchema.parse(workspaceId);
-      const binding = createHash("sha256").update(JSON.stringify([workspace, q])).digest("base64url");
+      // Existing name-search cursors keep their binding.
+      const scope = by === "name" ? [workspace, q] : [workspace, q, by];
+      const binding = createHash("sha256").update(JSON.stringify(scope)).digest("base64url");
       const position = cursor === undefined ? undefined : decodeDishCursor(cursor, binding);
-      const result = await execute<DishSearchResult>(searchDishes, mealPayload(workspace, { q, limit, cursor: position }));
+      const result = await execute<DishSearchResult>(searchDishes, mealPayload(workspace, { q, by, limit, cursor: position }));
       return {
         items: result.items,
         nextCursor: result.nextCursor === null

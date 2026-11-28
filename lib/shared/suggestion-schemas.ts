@@ -32,7 +32,7 @@ export const adoptSuggestionSchema = z.strictObject({
 const recommendationCandidateSchema = z.strictObject({
   title: textWithin(120).refine(Boolean),
   estimatedMinutes: z.number().int().min(1).max(240).nullable(),
-  dishes: dishes.refine(items => items.every(dish => dish.recipeUrl === null)),
+  dishes: dishes.refine(items => items.every(dish => dish.recipeUrl === null && dish.photoId === undefined)),
   reasons: z.array(textWithin(200).refine(Boolean)).max(4),
 });
 

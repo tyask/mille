@@ -4,11 +4,14 @@ import { useState, type FormEvent } from "react";
 import { MEAL_TYPES, type MealType } from "@/lib/shared/meal-types";
 import { MEAL_TYPE_LABELS } from "./meal-dates";
 import {
-  newDishDraft, newIngredientDraft, validateMealDraft,
-  type DishDraft, type MealDraft, type MealDraftPayload,
+  newDishDraft, newIngredientDraft, validateMealDraft, withReviewedMealPhoto,
+  type DishDraft, type MealDraft, type MealDraftPayload, type ReviewedMealPhoto,
 } from "./meal-draft";
+import { MealPhotoEditor } from "./meal-photo-editor";
 
 type MealEditorProps = {
+  api: string;
+  photoAnalysisEnabled: boolean;
   initial: MealDraft;
   busy: boolean;
   saveDisabled?: boolean;
@@ -23,15 +26,26 @@ type MealEditorProps = {
 };
 
 type DishEditorProps = {
+  api: string;
+  photoAnalysisEnabled: boolean;
   dish: DishDraft;
   index: number;
   invalid?: string;
   onChange: (dish: DishDraft) => void;
   onRemove?: () => void;
+  onPhotoChange: (photoId: string | null) => void;
+  onUploadActivity: (active: boolean) => void;
 };
 
-function DishEditor({ dish, index, invalid, onChange, onRemove }: DishEditorProps) {
+function DishEditor({ api, photoAnalysisEnabled, dish, index, invalid, onChange, onRemove, onPhotoChange, onUploadActivity }: DishEditorProps) {
   const path = `dishes.${index}`;
+
+  function applyPhotoReview(review: ReviewedMealPhoto) {
+    const next = withReviewedMealPhoto(dish, review);
+    if (next.ingredients.length > 100) return false;
+    onChange(next);
+    return true;
+  }
 
   function setIngredient(key: string, values: Partial<Pick<DishDraft["ingredients"][number], "name" | "amountText" | "unit">>) {
     onChange({
@@ -64,6 +78,11 @@ function DishEditor({ dish, index, invalid, onChange, onRemove }: DishEditorProp
             onChange={event => onChange({ ...dish, servings: event.target.value })} />
         </label>
       </div>
+
+      <MealPhotoEditor api={api} analysisEnabled={photoAnalysisEnabled}
+        photoId={dish.photoId === undefined ? dish.savedPhotoId : dish.photoId}
+        hasDishName={Boolean(dish.name.trim())} onChange={onPhotoChange}
+        onUploadActivity={onUploadActivity} onApply={applyPhotoReview} />
 
       <div className="meal-ingredients-editor">
         <h4>材料と分量</h4>
@@ -145,10 +164,11 @@ function copiedServingsLabel(dish: DishDraft, mealServings: string): string {
   return "人数を未入力のまま保存する";
 }
 
-export function MealEditor({ initial, busy, saveDisabled, fieldsDisabled, onDirty, onSave, onCancel, copyNotice, confirmCopyServings, lockSlot, saveLabel = "保存" }: MealEditorProps) {
+export function MealEditor({ api, photoAnalysisEnabled, initial, busy, saveDisabled, fieldsDisabled, onDirty, onSave, onCancel, copyNotice, confirmCopyServings, lockSlot, saveLabel = "保存" }: MealEditorProps) {
   const [draft, setDraft] = useState(initial);
   const [error, setError] = useState<{ path: string; message: string }>();
   const [copyConfirmed, setCopyConfirmed] = useState(false);
+  const [uploadingDishKeys, setUploadingDishKeys] = useState<string[]>([]);
   const [copiedDishKey] = useState(() => confirmCopyServings ? initial.dishes.at(-1)?.key : undefined);
   const copiedDish = draft.dishes.find(dish => dish.key === copiedDishKey);
 
@@ -162,9 +182,25 @@ export function MealEditor({ initial, busy, saveDisabled, fieldsDisabled, onDirt
     onDirty();
   }
 
+  function changePhoto(dishKey: string, photoId: string | null) {
+    setDraft(current => ({
+      ...current,
+      dishes: current.dishes.map(dish => dish.key === dishKey ? { ...dish, photoId } : dish),
+    }));
+    setError(undefined);
+    onDirty();
+  }
+
+  function setPhotoUploading(dishKey: string, active: boolean) {
+    setUploadingDishKeys(keys => active ? [...keys, dishKey] : keys.filter(key => key !== dishKey));
+    if (active) onDirty();
+  }
+
+  const uploading = uploadingDishKeys.length > 0;
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy || saveDisabled) return;
+    if (busy || uploading || saveDisabled) return;
     const result = validateMealDraft(draft);
     if (!result.success) {
       const issue = result.error.issues[0];
@@ -212,10 +248,15 @@ export function MealEditor({ initial, busy, saveDisabled, fieldsDisabled, onDirt
           </label>
         </div>
         {draft.dishes.map((dish, index) => (
-          <DishEditor key={dish.key} dish={dish} index={index} invalid={error?.path}
+          <DishEditor key={dish.key} api={api} photoAnalysisEnabled={photoAnalysisEnabled} dish={dish} index={index} invalid={error?.path}
             onChange={next => change({ ...draft, dishes: draft.dishes.map(item => item.key === dish.key ? next : item) })}
+            onPhotoChange={photoId => changePhoto(dish.key, photoId)}
+            onUploadActivity={active => setPhotoUploading(dish.key, active)}
             onRemove={draft.dishes.length > 1
-              ? () => change({ ...draft, dishes: draft.dishes.filter(item => item.key !== dish.key) })
+              ? () => {
+                change({ ...draft, dishes: draft.dishes.filter(item => item.key !== dish.key) });
+                setPhotoUploading(dish.key, false);
+              }
               : undefined} />
         ))}
         <button className="meal-button" type="button" disabled={draft.dishes.length >= 20} data-testid="meal-editor-add-dish"
@@ -238,7 +279,7 @@ export function MealEditor({ initial, busy, saveDisabled, fieldsDisabled, onDirt
         <button className="meal-button" type="button" disabled={busy} data-testid="meal-editor-cancel" onClick={onCancel}>
           キャンセル
         </button>
-        <button className="meal-button meal-button-primary" type="submit" disabled={busy || saveDisabled} data-testid="meal-editor-save">
+        <button className="meal-button meal-button-primary" type="submit" disabled={busy || uploading || saveDisabled} data-testid="meal-editor-save">
           {busy ? "保存中…" : saveLabel}
         </button>
       </div>
