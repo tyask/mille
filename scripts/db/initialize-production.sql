@@ -55,7 +55,7 @@ FOR EACH ROW EXECUTE FUNCTION mille_reject_production_test_user();
       RAISE EXCEPTION 'Mille migration history or checksum mismatch';
     END IF;
   END IF;
-  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name NOT IN ('001_auth.sql', '002_workspaces.sql', '003_meals.sql', '004_meal_api.sql', '005_meal_plans.sql', '006_meal_suggestions.sql', '007_suggestion_gateway_preview.sql')) THEN
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name NOT IN ('001_auth.sql', '002_workspaces.sql', '003_meals.sql', '004_meal_api.sql', '005_meal_plans.sql', '006_meal_suggestions.sql', '007_suggestion_gateway_preview.sql', '008_meal_photos.sql', '009_meal_ingredient_search.sql', '010_meal_photo_analysis.sql')) THEN
     RAISE EXCEPTION 'Mille migration history or checksum mismatch';
   END IF;
   IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '001_auth.sql' AND sha256 <> '83d6209b267f389e166ad3b5364420f5bbb3c3a6ada1e2c549c144bdb4ce0126') THEN
@@ -77,6 +77,15 @@ FOR EACH ROW EXECUTE FUNCTION mille_reject_production_test_user();
     RAISE EXCEPTION 'Mille migration history or checksum mismatch';
   END IF;
   IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '007_suggestion_gateway_preview.sql' AND sha256 <> 'e0f6a8ea78ce0cf7d4078a503fa7cc7b0465523d8523efe2ba8fd9ea705b4f81') THEN
+    RAISE EXCEPTION 'Mille migration history or checksum mismatch';
+  END IF;
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '008_meal_photos.sql' AND sha256 <> '0c08231a1911ef2b413869fa439132958092836c81aaa8c2b0ddf33bd9b70e11') THEN
+    RAISE EXCEPTION 'Mille migration history or checksum mismatch';
+  END IF;
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '009_meal_ingredient_search.sql' AND sha256 <> 'b85f5eecb705ddaa490bebd249301a5ed99aa35461005eb59287853caf40b0d4') THEN
+    RAISE EXCEPTION 'Mille migration history or checksum mismatch';
+  END IF;
+  IF EXISTS (SELECT 1 FROM schema_migrations WHERE name = '010_meal_photo_analysis.sql' AND sha256 <> '2f9be918b94291dfba67679aac29f405cdfd570fdad2118ae8dee903b0b915ce') THEN
     RAISE EXCEPTION 'Mille migration history or checksum mismatch';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '002_workspaces.sql') THEN
@@ -1324,5 +1333,454 @@ $suggestion_command$ LANGUAGE plpgsql;
 );
 ';
     INSERT INTO schema_migrations (name,sha256) VALUES ('007_suggestion_gateway_preview.sql','e0f6a8ea78ce0cf7d4078a503fa7cc7b0465523d8523efe2ba8fd9ea705b4f81');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '008_meal_photos.sql') THEN
+    EXECUTE '-- Store only sanitized derivatives for attached images. Workspace and dish deletions
+-- remove bytes, pending chunks and dependent records in the same transaction.
+CREATE TABLE meal_photos (
+  id uuid PRIMARY KEY,
+  workspace_id text NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  dish_id text UNIQUE REFERENCES meal_dishes(id) ON DELETE CASCADE,
+  created_by text NOT NULL REFERENCES app_users(id),
+  generation uuid NOT NULL DEFAULT gen_random_uuid(),
+  source_size integer NOT NULL CHECK (source_size BETWEEN 1 AND 8388608),
+  bytes bytea CHECK (octet_length(bytes) BETWEEN 1 AND 2097152),
+  width integer CHECK (width BETWEEN 1 AND 1600),
+  height integer CHECK (height BETWEEN 1 AND 1600),
+  expires_at timestamptz,
+  CHECK ((bytes IS NULL AND width IS NULL AND height IS NULL)
+    OR (bytes IS NOT NULL AND width IS NOT NULL AND height IS NOT NULL)),
+  CHECK ((dish_id IS NULL AND expires_at IS NOT NULL)
+    OR (dish_id IS NOT NULL AND expires_at IS NULL AND bytes IS NOT NULL))
+);
+
+CREATE INDEX meal_photos_workspace_expiry_idx ON meal_photos (workspace_id, expires_at);
+
+CREATE TABLE meal_photo_upload_chunks (
+  photo_id uuid NOT NULL REFERENCES meal_photos(id) ON DELETE CASCADE,
+  chunk_index smallint NOT NULL CHECK (chunk_index BETWEEN 0 AND 7),
+  bytes bytea NOT NULL CHECK (octet_length(bytes) BETWEEN 1 AND 1048576),
+  PRIMARY KEY (photo_id, chunk_index)
+);
+
+CREATE FUNCTION mille_meal_photo_json(photo meal_photos) RETURNS jsonb AS $photo_json$
+  SELECT jsonb_build_object(''id'', (photo).id, ''dishId'', (photo).dish_id,
+    ''ready'', (photo).bytes IS NOT NULL, ''width'', (photo).width, ''height'', (photo).height);
+$photo_json$ LANGUAGE sql STABLE;
+
+CREATE FUNCTION mille_meal_photo_error(code text) RETURNS jsonb AS $photo_error$
+  SELECT CASE code
+    WHEN ''PHOTO_CONFLICT'' THEN jsonb_build_object(''ok'', false, ''code'', code, ''status'', 409,
+      ''error'', ''写真の送信状態が変わりました。写真を確認してからやり直してください。'')
+    WHEN ''PHOTO_LIMIT'' THEN jsonb_build_object(''ok'', false, ''code'', code, ''status'', 409,
+      ''error'', ''保存できる写真の上限に達しました。'')
+    ELSE mille_meal_error(code)
+  END;
+$photo_error$ LANGUAGE sql IMMUTABLE;
+
+CREATE FUNCTION mille_meal_photo_read(
+  actor_id text, actor_email text, operation text, target_workspace text, target_photo uuid
+) RETURNS jsonb AS $photo_read$
+DECLARE
+  photo meal_photos%ROWTYPE;
+  source bytea;
+  result jsonb;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM app_users u WHERE u.id = actor_id AND u.email = lower(btrim(actor_email))
+    AND mille_meal_actor_allowed(u)) THEN
+    RETURN mille_meal_error(''UNAUTHENTICATED'');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = target_workspace AND m.user_id = actor_id) THEN
+    RETURN mille_meal_error(''NOT_FOUND'');
+  END IF;
+  SELECT p.* INTO photo FROM meal_photos p
+    WHERE p.id = target_photo AND p.workspace_id = target_workspace
+      AND (p.dish_id IS NOT NULL OR (p.created_by = actor_id AND p.expires_at > statement_timestamp()));
+  IF NOT FOUND THEN RETURN mille_meal_error(''NOT_FOUND''); END IF;
+
+  IF operation = ''read'' THEN
+    IF photo.bytes IS NULL THEN RETURN mille_meal_error(''NOT_FOUND''); END IF;
+    result := to_jsonb(encode(photo.bytes, ''base64''));
+  ELSIF operation = ''assemble'' THEN
+    IF photo.created_by <> actor_id THEN RETURN mille_meal_error(''NOT_FOUND''); END IF;
+    IF photo.bytes IS NULL THEN
+      SELECT string_agg(c.bytes, ''''::bytea ORDER BY c.chunk_index) INTO source
+        FROM meal_photo_upload_chunks c WHERE c.photo_id = photo.id;
+      IF octet_length(source) IS DISTINCT FROM photo.source_size THEN
+        RETURN mille_meal_photo_error(''PHOTO_CONFLICT'');
+      END IF;
+    END IF;
+    result := jsonb_build_object(''photo'', mille_meal_photo_json(photo),
+      ''generation'', photo.generation, ''source'', encode(source, ''base64''));
+  ELSE
+    RETURN mille_meal_error(''INVALID_INPUT'');
+  END IF;
+  RETURN jsonb_build_object(''ok'', true, ''data'', result);
+END;
+$photo_read$ LANGUAGE plpgsql STABLE;
+
+CREATE FUNCTION mille_meal_photo_write(
+  actor_id text, actor_email text, operation text, target_workspace text, target_photo uuid, payload jsonb
+) RETURNS jsonb AS $photo_write$
+DECLARE
+  actor app_users%ROWTYPE;
+  workspace text;
+  photo meal_photos%ROWTYPE;
+  supplied_bytes bytea;
+  previous_bytes bytea;
+  upload_index integer;
+BEGIN
+  -- Take locks in the same order as meal and workspace writes.
+  SELECT u.* INTO actor FROM app_users u WHERE u.id = actor_id AND u.email = lower(btrim(actor_email)) FOR UPDATE;
+  IF NOT FOUND OR NOT mille_meal_actor_allowed(actor) THEN RETURN mille_meal_error(''UNAUTHENTICATED''); END IF;
+  SELECT w.id INTO workspace FROM workspaces w WHERE w.id = target_workspace FOR UPDATE;
+  IF NOT FOUND OR NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = workspace AND m.user_id = actor.id) THEN
+    RETURN mille_meal_error(''NOT_FOUND'');
+  END IF;
+  IF operation IS NULL OR operation NOT IN (''create'', ''chunk'', ''finish'', ''discard'')
+    OR target_photo IS NULL OR jsonb_typeof(payload) IS DISTINCT FROM ''object'' THEN
+    RETURN mille_meal_error(''INVALID_INPUT'');
+  END IF;
+
+  IF operation = ''create'' THEN
+    IF NOT mille_meal_number_valid(payload->''size'', 1, 8388608, 0) THEN RETURN mille_meal_error(''INVALID_INPUT''); END IF;
+    DELETE FROM meal_photos p WHERE p.workspace_id = workspace AND p.expires_at <= clock_timestamp();
+    SELECT p.* INTO photo FROM meal_photos p WHERE p.id = target_photo AND p.workspace_id = workspace
+      AND p.created_by = actor.id;
+    IF FOUND THEN
+      IF photo.source_size <> (payload->>''size'')::integer THEN RETURN mille_meal_photo_error(''PHOTO_CONFLICT''); END IF;
+      RETURN jsonb_build_object(''ok'', true, ''data'', mille_meal_photo_json(photo));
+    END IF;
+    IF (SELECT count(*) FROM meal_photos p WHERE p.workspace_id = workspace AND p.dish_id IS NULL) >= 10 THEN
+      RETURN mille_meal_photo_error(''PHOTO_LIMIT'');
+    END IF;
+    INSERT INTO meal_photos (id, workspace_id, created_by, source_size, expires_at)
+      VALUES (target_photo, workspace, actor.id, (payload->>''size'')::integer, clock_timestamp() + interval ''24 hours'')
+      ON CONFLICT (id) DO NOTHING RETURNING * INTO photo;
+    IF NOT FOUND THEN RETURN mille_meal_photo_error(''PHOTO_CONFLICT''); END IF;
+    RETURN jsonb_build_object(''ok'', true, ''data'', mille_meal_photo_json(photo));
+  END IF;
+
+  SELECT p.* INTO photo FROM meal_photos p
+    WHERE p.id = target_photo AND p.workspace_id = workspace AND p.created_by = actor.id
+      AND (p.dish_id IS NOT NULL OR p.expires_at > clock_timestamp());
+  IF operation = ''discard'' THEN
+    -- A late cleanup can only remove the generation that it intended to remove.
+    IF FOUND AND photo.dish_id IS NULL
+      AND (NOT (payload ? ''generation'')
+        OR (photo.generation::text = payload->>''generation'' AND photo.bytes IS NULL)) THEN
+      DELETE FROM meal_photos p WHERE p.id = photo.id;
+    END IF;
+    RETURN jsonb_build_object(''ok'', true, ''data'', NULL);
+  END IF;
+  IF NOT FOUND THEN RETURN mille_meal_error(''NOT_FOUND''); END IF;
+
+  IF operation = ''chunk'' THEN
+    IF photo.bytes IS NOT NULL THEN RETURN mille_meal_photo_error(''PHOTO_CONFLICT''); END IF;
+    IF NOT mille_meal_number_valid(payload->''index'', 0, 7, 0)
+      OR jsonb_typeof(payload->''bytes'') IS DISTINCT FROM ''string''
+      OR char_length(payload->>''bytes'') > 1398104 THEN RETURN mille_meal_error(''INVALID_INPUT''); END IF;
+    upload_index := (payload->>''index'')::integer;
+    supplied_bytes := decode(payload->>''bytes'', ''base64'');
+    IF upload_index * 1048576 >= photo.source_size
+      OR octet_length(supplied_bytes) <> least(1048576, photo.source_size - upload_index * 1048576) THEN
+      RETURN mille_meal_error(''INVALID_INPUT'');
+    END IF;
+    SELECT c.bytes INTO previous_bytes FROM meal_photo_upload_chunks c
+      WHERE c.photo_id = photo.id AND c.chunk_index = upload_index;
+    IF FOUND THEN
+      IF previous_bytes IS DISTINCT FROM supplied_bytes THEN RETURN mille_meal_photo_error(''PHOTO_CONFLICT''); END IF;
+    ELSE
+      INSERT INTO meal_photo_upload_chunks (photo_id, chunk_index, bytes) VALUES (photo.id, upload_index, supplied_bytes);
+    END IF;
+    RETURN jsonb_build_object(''ok'', true, ''data'', NULL);
+  END IF;
+
+  IF photo.generation::text IS DISTINCT FROM payload->>''generation'' THEN
+    RETURN mille_meal_photo_error(''PHOTO_CONFLICT'');
+  END IF;
+  IF photo.bytes IS NOT NULL THEN RETURN jsonb_build_object(''ok'', true, ''data'', mille_meal_photo_json(photo)); END IF;
+  IF NOT mille_meal_number_valid(payload->''width'', 1, 1600, 0)
+    OR NOT mille_meal_number_valid(payload->''height'', 1, 1600, 0)
+    OR jsonb_typeof(payload->''bytes'') IS DISTINCT FROM ''string'' OR char_length(payload->>''bytes'') > 2796204 THEN
+    RETURN mille_meal_error(''INVALID_INPUT'');
+  END IF;
+  supplied_bytes := decode(payload->>''bytes'', ''base64'');
+  IF octet_length(supplied_bytes) NOT BETWEEN 12 AND 2097152
+    OR substring(supplied_bytes FROM 1 FOR 4) <> ''RIFF''::bytea
+    OR substring(supplied_bytes FROM 9 FOR 4) <> ''WEBP''::bytea THEN
+    RETURN mille_meal_error(''INVALID_INPUT'');
+  END IF;
+  UPDATE meal_photos p SET bytes = supplied_bytes, width = (payload->>''width'')::integer, height = (payload->>''height'')::integer
+    WHERE p.id = photo.id RETURNING * INTO photo;
+  DELETE FROM meal_photo_upload_chunks c WHERE c.photo_id = photo.id;
+  RETURN jsonb_build_object(''ok'', true, ''data'', mille_meal_photo_json(photo));
+EXCEPTION WHEN invalid_parameter_value OR invalid_text_representation THEN
+  RETURN mille_meal_error(''INVALID_INPUT'');
+END;
+$photo_write$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION mille_meal_json(meal meals, include_details boolean) RETURNS jsonb AS $meal_json$
+  SELECT jsonb_build_object(
+    ''id'', (meal).id, ''workspaceId'', (meal).workspace_id, ''mealDate'', to_char((meal).meal_date, ''YYYY-MM-DD''),
+    ''mealType'', (meal).meal_type, ''status'', (meal).status, ''servings'', (meal).servings, ''version'', (meal).version,
+    ''updatedBy'', jsonb_build_object(''id'', updater.id, ''name'', updater.name),
+    ''updatedAt'', to_char((meal).updated_at AT TIME ZONE ''UTC'', ''YYYY-MM-DD"T"HH24:MI:SS.MS"Z"''),
+    ''dishes'', COALESCE((SELECT jsonb_agg(
+      jsonb_build_object(''id'', d.id, ''position'', d.position, ''name'', d.name)
+      || CASE WHEN include_details THEN jsonb_build_object(
+        ''servings'', d.servings, ''recipeText'', d.recipe_text, ''recipeUrl'', d.recipe_url,
+        ''ingredients'', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+          ''id'', i.id, ''name'', i.name, ''amountText'', i.amount_text, ''unit'', i.unit
+        ) ORDER BY i.position) FROM dish_ingredients i WHERE i.dish_id = d.id), ''[]''::jsonb)
+      ) || COALESCE((SELECT jsonb_build_object(''photoId'', p.id) FROM meal_photos p WHERE p.dish_id = d.id), ''{}''::jsonb)
+      ELSE ''{}''::jsonb END ORDER BY d.position)
+      FROM meal_dishes d WHERE d.meal_id = (meal).id), ''[]''::jsonb)
+  ) FROM app_users updater WHERE updater.id = (meal).updated_by;
+$meal_json$ LANGUAGE sql STABLE;
+
+ALTER FUNCTION mille_meal_command(text, text, text, jsonb) RENAME TO mille_meal_command_without_photos;
+
+CREATE FUNCTION mille_meal_command(actor_id text, actor_email text, operation text, payload jsonb)
+RETURNS jsonb AS $meal_with_photos$
+DECLARE
+  result jsonb;
+  dish record;
+  saved_dish text;
+  requested_photo uuid;
+  photo meal_photos%ROWTYPE;
+  workspace text;
+  photo_error text;
+  photo_error_message text;
+BEGIN
+  IF operation IS NULL OR operation NOT IN (''create'', ''record'', ''update'')
+    OR jsonb_typeof(payload->''dishes'') IS DISTINCT FROM ''array'' THEN
+    RETURN mille_meal_command_without_photos(actor_id, actor_email, operation, payload);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(payload->''dishes'') AS d(value) WHERE d.value ? ''photoId'') THEN
+    RETURN mille_meal_command_without_photos(actor_id, actor_email, operation, payload);
+  END IF;
+
+  -- A binding failure rolls back both the underlying meal write and every photo change.
+  -- The caller records the finalized result for idempotent replays only after this returns.
+  BEGIN
+    result := mille_meal_command_without_photos(actor_id, actor_email, operation, payload);
+    IF NOT (result->>''ok'')::boolean THEN RETURN result; END IF;
+    workspace := result->''data''->>''workspaceId'';
+
+    FOR dish IN SELECT value, ordinality::integer - 1 AS position
+      FROM jsonb_array_elements(payload->''dishes'') WITH ORDINALITY
+      WHERE value ? ''photoId'' LOOP
+      saved_dish := result->''data''->''dishes''->dish.position->>''id'';
+      IF dish.value->''photoId'' = ''null''::jsonb THEN
+        DELETE FROM meal_photos p WHERE p.dish_id = saved_dish;
+        CONTINUE;
+      END IF;
+      IF jsonb_typeof(dish.value->''photoId'') IS DISTINCT FROM ''string''
+        OR (dish.value->>''photoId'') COLLATE "C" !~ ''^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'' THEN
+        photo_error := ''INVALID_INPUT'';
+        RAISE SQLSTATE ''P0878'';
+      END IF;
+      requested_photo := (dish.value->>''photoId'')::uuid;
+      SELECT p.* INTO photo FROM meal_photos p
+        WHERE p.id = requested_photo AND p.workspace_id = workspace AND p.bytes IS NOT NULL
+          AND (p.dish_id = saved_dish OR (p.dish_id IS NULL AND p.created_by = actor_id AND p.expires_at > clock_timestamp()));
+      IF NOT FOUND THEN
+        photo_error := ''INVALID_INPUT'';
+        photo_error_message := ''添付する写真が見つかりません。写真を選び直してください。'';
+        RAISE SQLSTATE ''P0878'';
+      END IF;
+      IF photo.dish_id = saved_dish THEN CONTINUE; END IF;
+      DELETE FROM meal_photos p WHERE p.dish_id = saved_dish;
+      UPDATE meal_photos p SET dish_id = saved_dish, expires_at = NULL WHERE p.id = requested_photo;
+    END LOOP;
+    IF (SELECT count(*) FROM meal_photos p WHERE p.workspace_id = workspace AND p.dish_id IS NOT NULL) > 200 THEN
+      photo_error := ''INVALID_INPUT'';
+      photo_error_message := ''保存できる写真の上限に達しました。'';
+      RAISE SQLSTATE ''P0878'';
+    END IF;
+    SELECT jsonb_build_object(''ok'', true, ''data'', mille_meal_json(m, true)) INTO result
+      FROM meals m WHERE m.id = result->''data''->>''id'' AND m.workspace_id = workspace;
+    RETURN result;
+  EXCEPTION WHEN SQLSTATE ''P0878'' THEN
+    RETURN mille_meal_error(photo_error) || jsonb_strip_nulls(jsonb_build_object(''error'', photo_error_message));
+  END;
+END;
+$meal_with_photos$ LANGUAGE plpgsql;
+';
+    INSERT INTO schema_migrations (name,sha256) VALUES ('008_meal_photos.sql','0c08231a1911ef2b413869fa439132958092836c81aaa8c2b0ddf33bd9b70e11');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '009_meal_ingredient_search.sql') THEN
+    EXECUTE '-- Add recorded ingredient names to the existing dish search contract.
+CREATE OR REPLACE FUNCTION mille_meal_dish_search(actor_id text, actor_email text, payload jsonb)
+RETURNS jsonb AS $meal_dish_search$
+DECLARE
+  target_workspace text;
+  search_term text;
+  search_by text;
+  search_pattern text;
+  page_limit integer;
+  after_date date;
+  after_meal text;
+  after_position integer;
+  after_dish text;
+  result jsonb;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM app_users u WHERE u.id = actor_id AND u.email = lower(btrim(actor_email))
+    AND mille_meal_actor_allowed(u)) THEN
+    RETURN mille_meal_error(''UNAUTHENTICATED'');
+  END IF;
+  IF jsonb_typeof(payload) IS DISTINCT FROM ''object'' OR jsonb_typeof(payload->''workspaceId'') IS DISTINCT FROM ''string'' THEN
+    RETURN mille_meal_error(''INVALID_INPUT'');
+  END IF;
+  target_workspace := payload->>''workspaceId'';
+  IF NOT EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = target_workspace AND m.user_id = actor_id) THEN
+    RETURN mille_meal_error(''NOT_FOUND'');
+  END IF;
+  search_term := payload->>''q'';
+  search_by := COALESCE(payload->>''by'', ''name'');
+  IF payload ? ''by'' AND (jsonb_typeof(payload->''by'') IS DISTINCT FROM ''string''
+    OR search_by NOT IN (''name'', ''ingredient'')) THEN
+    RETURN mille_meal_error(''INVALID_INPUT'');
+  END IF;
+  IF jsonb_typeof(payload->''q'') IS DISTINCT FROM ''string'' OR char_length(search_term) NOT BETWEEN 1 AND 100
+    OR NOT mille_meal_number_valid(payload->''limit'', 1, 50, 0) THEN
+    RETURN mille_meal_error(''INVALID_INPUT'');
+  END IF;
+  page_limit := (payload->>''limit'')::numeric::integer;
+  IF payload ? ''cursor'' THEN
+    after_date := mille_meal_date(payload->''cursor''->>''mealDate'');
+    IF jsonb_typeof(payload->''cursor'') IS DISTINCT FROM ''object'' OR after_date IS NULL
+      OR jsonb_typeof(payload->''cursor''->''mealId'') IS DISTINCT FROM ''string''
+      OR jsonb_typeof(payload->''cursor''->''dishId'') IS DISTINCT FROM ''string''
+      OR NOT mille_meal_number_valid(payload->''cursor''->''position'', 0, 19, 0) THEN
+      RETURN mille_meal_error(''INVALID_INPUT'');
+    END IF;
+    after_meal := payload->''cursor''->>''mealId'';
+    after_dish := payload->''cursor''->>''dishId'';
+    after_position := (payload->''cursor''->>''position'')::numeric::integer;
+  END IF;
+
+  search_pattern := ''%'' || replace(replace(replace(search_term, chr(92), chr(92) || chr(92)),
+    ''%'', chr(92) || ''%''), ''_'', chr(92) || ''_'') || ''%'';
+  WITH page AS (
+    SELECT m.meal_date, m.meal_type, m.id AS meal_id, d.id AS dish_id, d.position, d.name
+    FROM meals m JOIN meal_dishes d ON d.meal_id = m.id
+    WHERE m.workspace_id = target_workspace AND m.status = ''RECORDED''
+      AND CASE WHEN search_by = ''ingredient'' THEN EXISTS (
+        SELECT 1 FROM dish_ingredients i WHERE i.dish_id = d.id
+          AND i.name ILIKE search_pattern ESCAPE chr(92)
+      ) ELSE d.name ILIKE search_pattern ESCAPE chr(92) END
+      AND (after_date IS NULL OR (m.meal_date, m.id) < (after_date, after_meal)
+        OR (m.meal_date = after_date AND m.id = after_meal AND (d.position, d.id) > (after_position, after_dish)))
+    ORDER BY m.meal_date DESC, m.id DESC, d.position, d.id
+    LIMIT page_limit + 1
+  ), numbered AS (
+    SELECT page.*, row_number() OVER (ORDER BY meal_date DESC, meal_id DESC, position, dish_id) AS row_index FROM page
+  ), encoded AS (
+    SELECT row_index, jsonb_build_object(''mealDate'', to_char(meal_date, ''YYYY-MM-DD''),
+      ''mealId'', meal_id, ''position'', position, ''dishId'', dish_id) AS cursor_values, meal_type, name
+    FROM numbered
+  )
+  SELECT jsonb_build_object(
+    ''items'', COALESCE(jsonb_agg(cursor_values || jsonb_build_object(''mealType'', meal_type, ''dishName'', name)
+      ORDER BY row_index) FILTER (WHERE row_index <= page_limit), ''[]''::jsonb),
+    ''nextCursor'', CASE WHEN count(*) > page_limit
+      THEN jsonb_agg(cursor_values) FILTER (WHERE row_index = page_limit)->0 ELSE NULL END
+  ) INTO result FROM encoded;
+  RETURN jsonb_build_object(''ok'', true, ''data'', result);
+END;
+$meal_dish_search$ LANGUAGE plpgsql STABLE;
+';
+    INSERT INTO schema_migrations (name,sha256) VALUES ('009_meal_ingredient_search.sql','b85f5eecb705ddaa490bebd249301a5ed99aa35461005eb59287853caf40b0d4');
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE name = '010_meal_photo_analysis.sql') THEN
+    EXECUTE 'CREATE TABLE meal_photo_analyses (
+  photo_id uuid NOT NULL REFERENCES meal_photos(id) ON DELETE CASCADE,
+  model text NOT NULL CHECK (model IN (''sample'', ''gpt-6-luna'')),
+  prompt_version text NOT NULL,
+  image_sha256 text NOT NULL CHECK (image_sha256 ~ ''^[0-9a-f]{64}$''),
+  meal_version integer,
+  lease uuid NOT NULL,
+  lease_expires_at timestamptz NOT NULL,
+  result jsonb CHECK (result IS NULL OR jsonb_typeof(result) = ''object''),
+  PRIMARY KEY (photo_id, model, prompt_version)
+);
+
+CREATE TABLE mille_meal_photo_preview (
+  id boolean PRIMARY KEY DEFAULT true CHECK (id),
+  enabled boolean NOT NULL DEFAULT false,
+  environment_id text NOT NULL CHECK (environment_id ~ ''^mille-pr-[1-9][0-9]*$''),
+  source_sha text NOT NULL CHECK (source_sha ~ ''^[0-9a-f]{40}$''),
+  deployment_id text NOT NULL CHECK (deployment_id ~ ''^dpl_[A-Za-z0-9]+$''),
+  request_count integer NOT NULL DEFAULT 0 CHECK (request_count BETWEEN 0 AND 10)
+);
+
+CREATE FUNCTION mille_meal_photo_analysis(actor_id text, actor_email text, operation text,
+  target_workspace text, target_photo uuid, target_model text, target_prompt text,
+  target_lease uuid, payload jsonb)
+RETURNS jsonb AS $analysis$
+DECLARE
+  actor app_users%ROWTYPE;
+  photo meal_photos%ROWTYPE;
+  job meal_photo_analyses%ROWTYPE;
+BEGIN
+  SELECT u.* INTO actor FROM app_users u WHERE u.id = actor_id AND u.email = lower(btrim(actor_email)) FOR UPDATE;
+  IF NOT FOUND OR NOT mille_meal_actor_allowed(actor) THEN
+    RETURN jsonb_build_object(''status'', ''unauthenticated'');
+  END IF;
+  PERFORM 1 FROM workspaces w WHERE w.id = target_workspace FOR UPDATE;
+  IF NOT FOUND OR NOT EXISTS (
+    SELECT 1 FROM workspace_members w WHERE w.workspace_id = target_workspace AND w.user_id = actor_id
+  ) THEN
+    RETURN jsonb_build_object(''status'', ''missing'');
+  END IF;
+  SELECT p.* INTO photo FROM meal_photos p
+    WHERE p.id = target_photo AND p.workspace_id = target_workspace AND p.bytes IS NOT NULL
+      AND (p.dish_id IS NOT NULL OR (p.created_by = actor_id AND p.expires_at > clock_timestamp()))
+    FOR UPDATE;
+  IF NOT FOUND THEN RETURN jsonb_build_object(''status'', ''missing''); END IF;
+  SELECT a.* INTO job FROM meal_photo_analyses a
+    WHERE a.photo_id = target_photo AND a.model = target_model AND a.prompt_version = target_prompt;
+
+  IF operation = ''start'' THEN
+    IF encode(sha256(photo.bytes), ''hex'') IS DISTINCT FROM payload->>''imageSha256'' THEN
+      RETURN jsonb_build_object(''status'', ''missing'');
+    END IF;
+    IF job.result IS NOT NULL THEN RETURN jsonb_build_object(''status'', ''ready'', ''result'', job.result); END IF;
+    IF job.lease_expires_at > clock_timestamp() THEN RETURN jsonb_build_object(''status'', ''pending''); END IF;
+    IF target_model = ''gpt-6-luna'' THEN
+      UPDATE mille_meal_photo_preview SET request_count = request_count + 1
+        WHERE id AND enabled AND environment_id = payload->>''environmentId''
+          AND source_sha = payload->>''sourceSha'' AND deployment_id = payload->>''deploymentId''
+          AND request_count < 10;
+      IF NOT FOUND THEN RETURN jsonb_build_object(''status'', ''limited''); END IF;
+    END IF;
+    INSERT INTO meal_photo_analyses (photo_id, model, prompt_version, image_sha256, meal_version, lease, lease_expires_at)
+      VALUES (target_photo, target_model, target_prompt, payload->>''imageSha256'',
+        (SELECT m.version FROM meal_dishes d JOIN meals m ON m.id = d.meal_id WHERE d.id = photo.dish_id),
+        target_lease, clock_timestamp() + interval ''45 seconds'')
+      ON CONFLICT (photo_id, model, prompt_version) DO UPDATE SET image_sha256 = EXCLUDED.image_sha256,
+        meal_version = EXCLUDED.meal_version, lease = EXCLUDED.lease, lease_expires_at = EXCLUDED.lease_expires_at;
+    RETURN jsonb_build_object(''status'', ''started'');
+  END IF;
+
+  IF job.lease IS DISTINCT FROM target_lease OR job.result IS NOT NULL
+    OR job.lease_expires_at <= clock_timestamp() THEN RETURN jsonb_build_object(''status'', ''pending''); END IF;
+  IF operation = ''finish'' THEN
+    UPDATE meal_photo_analyses a SET result = payload
+      WHERE a.photo_id = target_photo AND a.model = target_model AND a.prompt_version = target_prompt;
+    RETURN jsonb_build_object(''status'', ''ready'', ''result'', payload);
+  END IF;
+  IF operation = ''fail'' THEN
+    DELETE FROM meal_photo_analyses a
+      WHERE a.photo_id = target_photo AND a.model = target_model AND a.prompt_version = target_prompt;
+    RETURN jsonb_build_object(''status'', ''released'');
+  END IF;
+  RAISE EXCEPTION ''Unknown meal photo analysis operation'';
+END;
+$analysis$ LANGUAGE plpgsql;
+';
+    INSERT INTO schema_migrations (name,sha256) VALUES ('010_meal_photo_analysis.sql','2f9be918b94291dfba67679aac29f405cdfd570fdad2118ae8dee903b0b915ce');
   END IF;
 END; $mille_migration$;

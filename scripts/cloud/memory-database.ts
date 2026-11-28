@@ -11,7 +11,8 @@ async function readBody(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     const buffer = Buffer.from(chunk);
     length += buffer.length;
-    if (length > 1_000_000) throw new Error("Request too large");
+    // A verified 2 MiB photo derivative takes up to 2,796,204 bytes in base64.
+    if (length > 3_000_000) throw new Error("Request too large");
     chunks.push(buffer);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));

@@ -8,6 +8,7 @@ import { TEST_USERS } from "../../lib/shared/test-users";
 import type { IssuedInvitation, Workspace, WorkspaceState } from "../../lib/shared/workspaces";
 import { CloudStartupError, cloudPort, isolatedEnvironment, rootDirectory, startCloudServer, type CloudServer } from "./dev";
 import { verifyMealReads, verifyMealSuggestions, verifySharedMeals } from "./meal-verify";
+import { verifyMealPhotoFlow } from "./meal-photo-verify";
 
 // Playwright resolves its executable registry on import, before launch({ env }) applies.
 // Keep this process's lookup aligned with setup:cloud and preserve an explicit override.
@@ -518,6 +519,7 @@ export async function verifyBrowser(args: readonly string[] = [], formal?: Forma
         };
         await verifySharedMeals({ ...mealCases, personalId: ownerPersonal.id });
         await verifyMealSuggestions(mealCases);
+        await verifyMealPhotoFlow(mealCases.owner, mealCases.member, created.id, ownerPersonal.id, mealCases.onStage);
         stage = "meal-screenshot";
         const mealFilename = `${owner.item.name}-meals.png`;
         await owner.page.screenshot({ path: resolve(directory, mealFilename), fullPage: true });

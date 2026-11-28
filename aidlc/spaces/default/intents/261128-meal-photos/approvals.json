@@ -1,0 +1,20 @@
+{
+  "issue": "https://github.com/tyask/mille/issues/78",
+  "recordedAt": "2026-11-28T06:29:58Z",
+  "planApproval": {
+    "reply": "承認します",
+    "sequence": 1,
+    "scope": "チャットに提示したP3 写真による入力支援の実装計画。"
+  },
+  "issueApproval": {
+    "reply": "承認します",
+    "sequence": 2,
+    "scope": "GitHubから再取得してチャットに全文を提示した保存済みIssue #78の本文。"
+  },
+  "approvedIssueSnapshot": {
+    "path": "issue.md",
+    "sourceMetadata": "issue-source.json",
+    "updatedAt": "2026-11-28T06:19:50Z",
+    "sha256": "131c96db052da73715e3c9f687d8fd207563de8a6b31b557b2d2fc756fcc088e"
+  }
+}

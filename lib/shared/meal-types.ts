@@ -17,6 +17,7 @@ export interface MealIngredient {
 }
 
 export interface MealDish extends MealDishSummary {
+  photoId?: string | null;
   servings: number | null;
   recipeText: string | null;
   recipeUrl: string | null;

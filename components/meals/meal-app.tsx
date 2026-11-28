@@ -297,13 +297,14 @@ export function MealApp({ workspaceId, selection, refresh, onSelection, onBlockC
     {notice && <p role="status" className="meal-feedback">{notice}</p>}
     {editor ? <>
       {feedback}
-      <MealEditor key={editor.key} initial={editor.draft} busy={busy} lockSlot={Boolean(editor.recording || (editor.copied && editor.original))}
+      <MealEditor key={editor.key} api={api} photoAnalysisEnabled={Boolean(onSuggest)}
+        initial={editor.draft} busy={busy} lockSlot={Boolean(editor.recording || (editor.copied && editor.original))}
         saveDisabled={Boolean(retry || conflict?.byVersion)} fieldsDisabled={Boolean(retry)} onDirty={markDirty} onSave={submitEditor} onCancel={closeEditor}
         copyNotice={editor.copied?.notice} confirmCopyServings={editor.copied?.confirmServings} saveLabel={editor.recording ? "記録済みにする" : undefined} />
     </> : <div className="meal-main-grid">
         <MealCalendar date={date} view={view} meal={meal} meals={meals} status={list.status} onDate={value => choose(value, meal)}
           onView={value => onSelection({ ...selection, view: value })} onSelect={choose} onRetry={refreshMeals} />
-        <MealDetails date={date} meal={meal} detail={detail} status={detailStatus} onRetry={refreshMeals}
+        <MealDetails api={api} date={date} meal={meal} detail={detail} status={detailStatus} onRetry={refreshMeals}
           onAdd={() => startEditor(newMealDraft(date, meal))} onEdit={() => { if (detail) startEditor(editMealDraft(detail), detail); }}
           onDelete={() => { if (detail) setDeletion(detail); }} onCopy={dishId => { if (detail?.status === "RECORDED") setCopy({ source: detail, dishId, date, type: meal }); }}
           onRecord={() => { if (detail?.status === "PLANNED") startEditor(editMealDraft(detail), detail, undefined, true); }} onSuggest={onSuggest} />

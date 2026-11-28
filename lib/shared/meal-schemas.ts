@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { mealPhotoIdSchema } from "./meal-photo-types";
 import { MEAL_TYPES } from "./meal-types";
 
 const databaseText = z.string().refine(
@@ -39,6 +40,7 @@ const newIngredient = z.strictObject({
 const updatedIngredient = z.strictObject({ ...ingredientFields, id: mealIdSchema.optional() });
 
 const dishFields = { name, servings, recipeText: nullableText(10_000), recipeUrl };
+const photoId = mealPhotoIdSchema.nullable().optional();
 function hasSingleRecipe(dish: { recipeText: string | null; recipeUrl: string | null }) {
   return dish.recipeText === null || dish.recipeUrl === null;
 }
@@ -46,6 +48,7 @@ const recipeError = { path: ["recipeUrl"], message: "レシピの本文または
 
 const newDish = z.strictObject({
   ...dishFields,
+  photoId,
   servings: dishFields.servings.default(null),
   recipeText: dishFields.recipeText.default(null),
   recipeUrl: dishFields.recipeUrl.default(null),
@@ -54,6 +57,7 @@ const newDish = z.strictObject({
 
 const updatedDish = z.strictObject({
   ...dishFields,
+  photoId,
   id: mealIdSchema.optional(),
   ingredients: z.array(updatedIngredient).max(100),
 }).refine(hasSingleRecipe, recipeError);
@@ -95,7 +99,8 @@ export const mealRangeSchema = z.strictObject({ from: mealDate, to: z.union([mea
   }, { path: ["to"], message: "取得する日付の範囲を1〜62日にしてください。" });
 
 export const dishSearchSchema = z.strictObject({
-  q: textWithin(100).refine(value => value.length > 0, "料理名を入力してください。"),
+  q: textWithin(100).refine(value => value.length > 0, "検索語を入力してください。"),
+  by: z.enum(["name", "ingredient"]).default("name"),
   limit: z.number().int().min(1).max(50).default(20),
   cursor: z.string().regex(/^[A-Za-z0-9_-]{1,2048}$/).optional(),
 });
@@ -113,3 +118,4 @@ export type DeleteMealInput = z.input<typeof deleteMealSchema>;
 export type CopyMealInput = z.input<typeof copyMealSchema>;
 export type MealRangeInput = z.input<typeof mealRangeSchema>;
 export type DishSearchInput = z.input<typeof dishSearchSchema>;
+export type DishSearchBy = z.output<typeof dishSearchSchema>["by"];

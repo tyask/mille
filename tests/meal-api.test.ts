@@ -103,6 +103,7 @@ test("meal HTTP rejects inactive sessions, disallowed origins and invalid input 
   }
   await expectError(await api.list(get(workspaceId, "meals?from=2026-01-01&to=2026-03-05"), workspaceId), 400, "INVALID_INPUT");
   await expectError(await api.search(get(workspaceId, "dish-search?q=鮭&q=塩"), workspaceId), 400, "INVALID_INPUT");
+  await expectError(await api.search(get(workspaceId, "dish-search?q=鮭&by=recipe"), workspaceId), 400, "INVALID_INPUT");
   await expectError(await api.search(get(workspaceId, "dish-search?q=鮭&limit=51"), workspaceId), 400, "INVALID_INPUT");
   assert.equal(calls, 0);
 });
@@ -254,6 +255,10 @@ test("meal HTTP through PGlite", async t => {
     const second = await secondResponse.json() as DishSearchPage;
     assert.deepEqual(second.items.map(item => item.dishId), [source.dishes[0].id]);
     assert.equal(second.nextCursor, null);
+    const explicitName = await memberApi.search(get(id, `${searchPath}&by=name&cursor=${cursor}`), id);
+    assertPrivate(explicitName, 200);
+    assert.deepEqual(await explicitName.json(), second);
+    await expectError(await memberApi.search(get(id, `${searchPath}&by=ingredient&cursor=${cursor}`), id), 400, "INVALID_INPUT");
     const badCursor = Buffer.from("[]").toString("base64url");
     await expectError(await memberApi.search(get(id, `${searchPath}&cursor=${badCursor}`), id), 400, "INVALID_INPUT");
     await expectError(await memberApi.search(get(id, `dish-search?q=鮭&cursor=${cursor}`), id), 400, "INVALID_INPUT");
@@ -263,6 +268,49 @@ test("meal HTTP through PGlite", async t => {
 
     await database.query("DELETE FROM workspace_members WHERE workspace_id = $1 AND user_id = $2", [id, member.id]);
     await expectError(await memberApi.copy(write(id, path, "POST", copyInput, { key }), id, source.id), 404, "NOT_FOUND");
+  });
+
+  await t.test("ingredient search returns one result per recorded dish and keeps pagination scoped", async () => {
+    const id = await sharedWorkspace("食材の検索");
+    const other = await workspaces.create({ name: "別の食材", type: "PERSONAL" });
+    const keyword = "ねぎ%_\\";
+    const input = {
+      ...minimalMeal,
+      dishes: [
+        { name: "冷ややっこ", ingredients: [{ name: `青${keyword}` }, { name: `青${keyword}の葉` }] },
+        { name: `名前だけ${keyword}` },
+        { name: "野菜炒め", ingredients: [{ name: "青ねぎABC" }] },
+      ],
+    };
+    async function create(workspace: string, mealDate: string) {
+      return expectMeal(await api.create(write(workspace, "meals", "POST", { ...input, mealDate }), workspace), 201);
+    }
+    const older = await create(id, "2026-11-10");
+    const newer = await create(id, "2026-11-11");
+    const plan = await create(id, "2026-11-12");
+    await database.query("UPDATE meals SET status = 'PLANNED' WHERE id = $1", [plan.id]);
+    await create(other.id, "2026-11-13");
+
+    const ingredientPath = `dish-search?${new URLSearchParams({ q: keyword, by: "ingredient", limit: "1" })}`;
+    const firstResponse = await memberApi.search(get(id, ingredientPath), id);
+    assertPrivate(firstResponse, 200);
+    const first = await firstResponse.json() as DishSearchPage;
+    assert.deepEqual(first.items.map(({ dishId, mealDate }) => [dishId, mealDate]), [[newer.dishes[0].id, newer.mealDate]]);
+    assert.ok(first.nextCursor);
+    const pageTwo = `${ingredientPath}&cursor=${encodeURIComponent(first.nextCursor)}`;
+    const secondResponse = await memberApi.search(get(id, pageTwo), id);
+    assertPrivate(secondResponse, 200);
+    const second = await secondResponse.json() as DishSearchPage;
+    assert.deepEqual(second.items.map(({ dishId, mealDate }) => [dishId, mealDate]), [[older.dishes[0].id, older.mealDate]]);
+    assert.equal(second.nextCursor, null);
+
+    const namePath = pageTwo.replace("by=ingredient", "by=name");
+    await expectError(await memberApi.search(get(id, namePath), id), 400, "INVALID_INPUT");
+    await expectError(await api.search(get(other.id, pageTwo), other.id), 400, "INVALID_INPUT");
+    await expectError(await memberApi.search(get(other.id, ingredientPath), other.id), 404, "NOT_FOUND");
+    const names = await memberApi.search(get(id, ingredientPath.replace("by=ingredient", "by=name")), id);
+    assertPrivate(names, 200);
+    assert.deepEqual((await names.json() as DishSearchPage).items.map(item => item.dishId), [newer.dishes[1].id]);
   });
 
   await t.test("failed storage rolls back child writes and keeps the retry key available", async () => {

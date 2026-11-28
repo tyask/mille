@@ -1,11 +1,13 @@
 import type { MealDetail, MealDish, MealType } from "@/lib/shared/meal-types";
 import { formatMealDate, MEAL_TYPE_LABELS } from "./meal-dates";
+import { MealPhotoImage } from "./meal-photo-image";
 
 const updatedAtFormat = new Intl.DateTimeFormat("ja-JP", {
   dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Tokyo",
 });
 
 type MealDetailsProps = {
+  api: string;
   date: string;
   meal: MealType;
   detail: MealDetail | null;
@@ -19,7 +21,7 @@ type MealDetailsProps = {
   onSuggest?: () => void;
 };
 
-function DishDetails({ dish, mealServings, onCopy }: { dish: MealDish; mealServings: number | null; onCopy?: () => void }) {
+function DishDetails({ api, dish, mealServings, onCopy }: { api?: string; dish: MealDish; mealServings: number | null; onCopy?: () => void }) {
   const servings = dish.servings ?? mealServings;
   const recipeUrl = dish.recipeUrl && /^https?:\/\//i.test(dish.recipeUrl) ? dish.recipeUrl : null;
   return (
@@ -28,6 +30,8 @@ function DishDetails({ dish, mealServings, onCopy }: { dish: MealDish; mealServi
         <h3>{dish.name}</h3>
         {servings !== null && <span>{servings}人分</span>}
       </div>
+      {api && dish.photoId && <MealPhotoImage key={dish.photoId} api={api} photoId={dish.photoId}
+        alt={`「${dish.name}」の写真`} testId="meal-detail-photo" />}
       {dish.ingredients.length > 0 && (
         <>
           <h4>食材</h4>
@@ -48,7 +52,7 @@ function DishDetails({ dish, mealServings, onCopy }: { dish: MealDish; mealServi
   );
 }
 
-export function MealRecord({ detail, onCopy }: { detail: MealDetail; onCopy?: (dishId: string) => void }) {
+export function MealRecord({ api, detail, onCopy }: { api?: string; detail: MealDetail; onCopy?: (dishId: string) => void }) {
   const recorded = detail.status === "RECORDED";
   return <>
     <div className="meal-detail-meta">
@@ -57,12 +61,12 @@ export function MealRecord({ detail, onCopy }: { detail: MealDetail; onCopy?: (d
       <span>{detail.updatedBy.name}が <time dateTime={detail.updatedAt}>{updatedAtFormat.format(new Date(detail.updatedAt))}</time> に更新</span>
     </div>
     <ol className="meal-detail-dishes">
-      {detail.dishes.map(dish => <DishDetails key={dish.id} dish={dish} mealServings={detail.servings} onCopy={onCopy && (() => onCopy(dish.id))} />)}
+      {detail.dishes.map(dish => <DishDetails key={dish.id} api={api} dish={dish} mealServings={detail.servings} onCopy={onCopy && (() => onCopy(dish.id))} />)}
     </ol>
   </>;
 }
 
-export function MealDetails({ date, meal, detail, status, onRetry, onAdd, onEdit, onDelete, onCopy, onRecord, onSuggest }: MealDetailsProps) {
+export function MealDetails({ api, date, meal, detail, status, onRetry, onAdd, onEdit, onDelete, onCopy, onRecord, onSuggest }: MealDetailsProps) {
   return (
     <section className="meal-detail" data-testid="meal-detail" aria-label={`${MEAL_TYPE_LABELS[meal]}の詳細`}>
       <div className="meal-detail-header">
@@ -85,7 +89,7 @@ export function MealDetails({ date, meal, detail, status, onRetry, onAdd, onEdit
       )}
       {status === "loaded" && detail && (
         <>
-          <MealRecord detail={detail} onCopy={detail.status === "RECORDED" ? onCopy : undefined} />
+          <MealRecord api={api} detail={detail} onCopy={detail.status === "RECORDED" ? onCopy : undefined} />
           <div className="meal-detail-actions">
             {detail.status === "PLANNED" && <button type="button" className="meal-button meal-button-primary" data-testid="meal-detail-record" onClick={onRecord}>作った内容を記録</button>}
             <button type="button" className={`meal-button meal-button-${detail.status === "PLANNED" ? "secondary" : "primary"}`} data-testid="meal-detail-edit" onClick={onEdit}>編集する</button>

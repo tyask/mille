@@ -1,7 +1,7 @@
 import { updateMealSchema, type UpdateMealInput } from "@/lib/shared/meal-schemas";
 import type { MealDetail, MealDish, MealIngredient, MealType } from "@/lib/shared/meal-types";
 
-type IngredientDraft = {
+export type IngredientDraft = {
   key: string;
   id?: string;
   name: string;
@@ -12,6 +12,8 @@ type IngredientDraft = {
 export type DishDraft = {
   key: string;
   id?: string;
+  savedPhotoId?: string;
+  photoId?: string | null;
   name: string;
   servings: string;
   recipeMode: "text" | "url";
@@ -19,6 +21,8 @@ export type DishDraft = {
   recipeUrl: string;
   ingredients: IngredientDraft[];
 };
+
+export type ReviewedMealPhoto = { name: string; ingredients: IngredientDraft[] };
 
 export type MealDraft = {
   mealDate: string;
@@ -56,6 +60,7 @@ function dishDraft(dish: MealDish, servings: number | null, preserveIds: boolean
   return {
     key: id ?? crypto.randomUUID(),
     id,
+    ...(preserveIds && dish.photoId ? { savedPhotoId: dish.photoId } : {}),
     name: dish.name,
     servings: servings === null ? "" : String(servings),
     recipeMode: dish.recipeUrl ? "url" : "text",
@@ -76,7 +81,23 @@ export function editMealDraft(meal: MealDetail): MealDraft {
 
 function isBlankDish(dish: DishDraft): boolean {
   return !dish.id && !dish.name.trim() && !dish.servings.trim() && !dish.recipeText.trim()
-    && !dish.recipeUrl.trim() && dish.ingredients.length === 0;
+    && !dish.recipeUrl.trim() && !dish.photoId && dish.ingredients.length === 0;
+}
+
+export function withReviewedMealPhoto(dish: DishDraft, review: ReviewedMealPhoto): DishDraft {
+  const nameKey = (name: string) => name.normalize("NFKC").trim().toLowerCase();
+  const names = new Set(dish.ingredients.map(ingredient => nameKey(ingredient.name)));
+  const added = review.ingredients.filter(ingredient => {
+    const name = nameKey(ingredient.name);
+    if (names.has(name)) return false;
+    names.add(name);
+    return true;
+  });
+  return {
+    ...dish,
+    name: dish.name.trim() ? dish.name : review.name,
+    ingredients: [...dish.ingredients, ...added],
+  };
 }
 
 export function appendCopiedDish(destination: MealDraft, source: MealDetail, dishId: string): {
@@ -111,6 +132,7 @@ export function validateMealDraft(draft: MealDraft) {
     servings: servingCount(draft.servings),
     dishes: draft.dishes.map(dish => ({
       ...(dish.id ? { id: dish.id } : {}),
+      ...(dish.photoId !== undefined ? { photoId: dish.photoId } : {}),
       name: dish.name,
       servings: servingCount(dish.servings),
       recipeText: dish.recipeMode === "text" ? dish.recipeText : null,

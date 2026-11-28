@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { editMealDraft, validateMealDraft, withReviewedMealPhoto } from "../components/meals/meal-draft";
 import { createMealSchema, deleteMealSchema, mealRangeSchema, updateMealSchema } from "../lib/shared/meal-schemas";
+import type { MealDetail } from "../lib/shared/meal-types";
 
 const draft = { mealDate: "2028-02-29", mealType: "DINNER", dishes: [{ name: " 鮭 " }] };
 
@@ -81,4 +83,42 @@ test("replacement and deletion require valid versions and ranges are at most 62 
   for (const to of ["2025-12-31", "2026-01-01", "2026-03-05"]) {
     assert.equal(mealRangeSchema.safeParse({ from: "2026-01-01", to }).success, false, to);
   }
+});
+
+test("dish photo writes distinguish unchanged, attach, and detach", () => {
+  const photoId = "d3143ec4-2c17-417e-b894-7a27ae825844";
+  assert.equal(Object.hasOwn(createMealSchema.parse(draft).dishes[0], "photoId"), false);
+  assert.equal(createMealSchema.parse({ ...draft, dishes: [{ name: "鮭", photoId: photoId.toUpperCase() }] }).dishes[0].photoId, photoId);
+  assert.equal(createMealSchema.safeParse({ ...draft, dishes: [{ name: "鮭", photoId: "wrong" }] }).success, false);
+
+  const meal: MealDetail = {
+    id: "meal", workspaceId: "workspace", version: 1, mealDate: draft.mealDate, mealType: "DINNER", status: "RECORDED",
+    servings: null, updatedAt: "2028-02-29T12:00:00.000Z", updatedBy: { id: "person", name: "あき" },
+    dishes: [{ id: "dish", position: 0, name: "鮭", photoId, servings: null, ingredients: [], recipeText: null, recipeUrl: null }],
+  };
+  const editor = editMealDraft(meal);
+  assert.equal(editor.dishes[0].savedPhotoId, photoId);
+  assert.equal(Object.hasOwn(validateMealDraft(editor).data!.dishes[0], "photoId"), false);
+  editor.dishes[0].photoId = null;
+  assert.equal(validateMealDraft(editor).data!.dishes[0].photoId, null);
+});
+
+test("confirming a photo review preserves manual values and saves unknown amounts as null", () => {
+  const existing = { key: "manual", id: "manual", name: "たまねぎ", amountText: "2", unit: "個" };
+  const base = {
+    key: "dish", name: "手入力の料理", servings: "", recipeMode: "text" as const,
+    recipeText: "蒸す", recipeUrl: "", ingredients: [existing],
+  };
+  const dish = withReviewedMealPhoto(base, {
+    name: "写真で推定した料理",
+    ingredients: [
+      { key: "duplicate", name: "たまねぎ", amountText: "1", unit: "個" },
+      { key: "confirmed", name: "塩", amountText: "", unit: "" },
+    ],
+  });
+  assert.equal(dish.name, base.name);
+  assert.equal(dish.recipeText, base.recipeText);
+  assert.deepEqual(dish.ingredients, [existing, { key: "confirmed", name: "塩", amountText: "", unit: "" }]);
+  const parsed = validateMealDraft({ mealDate: draft.mealDate, mealType: "DINNER", servings: "", dishes: [dish] });
+  assert.deepEqual(parsed.data!.dishes[0].ingredients[1], { name: "塩", amountText: null, unit: null });
 });

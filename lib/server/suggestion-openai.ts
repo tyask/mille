@@ -1,15 +1,12 @@
 import { z } from "zod";
 import { recommendationOutputSchema } from "../shared/suggestion-schemas";
+import { openAIApiKeyPattern, openAIChatEndpoint, openAIRequestIdPattern, parseJson, readChatResponseJson } from "./openai-chat";
 import type { RecommendationContext, RecommendationProvider } from "./suggestion-provider";
 
 export const OPENAI_RECOMMENDATION_MODEL = "gpt-6-luna";
 export const OPENAI_RECOMMENDATION_PROMPT_VERSION = "openai-ja-1";
 
-const endpoint = "https://api.openai.com/v1/chat/completions";
-const requestIdPattern = /^req_[A-Za-z0-9_-]{1,96}$/u;
-const apiKeyPattern = /^sk-[A-Za-z0-9_-]{1,4093}$/u;
 const outputTokenLimit = 2_000;
-const responseByteLimit = 64 * 1024;
 const prompt = [
   "家庭向けの献立を日本語で2〜3案作成してください。料理、材料と分量の目安、調理時間、提案理由を簡潔に記載してください。",
   "食事区分、人数、希望する食材・系統・時間を尊重し、最近の料理との重複をできるだけ避けてください。",
@@ -123,34 +120,6 @@ function recommendationRequest(context: RecommendationContext) {
   };
 }
 
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-async function readResponseJson(response: Response): Promise<unknown> {
-  const reader = response.body?.getReader();
-  if (!reader) return undefined;
-  const decoder = new TextDecoder("utf-8", { fatal: true });
-  let bytes = 0;
-  let text = "";
-  try {
-    for (;;) {
-      const chunk = await reader.read();
-      if (chunk.done) return parseJson(text + decoder.decode());
-      bytes += chunk.value.byteLength;
-      if (bytes > responseByteLimit) return undefined;
-      text += decoder.decode(chunk.value, { stream: true });
-    }
-  } finally {
-    void reader.cancel().catch(() => {});
-    reader.releaseLock();
-  }
-}
-
 function parseRecommendationOutput(value: unknown, event: OpenAIRecommendationMetrics) {
   const usage = usageSchema.safeParse(value);
   if (usage.success) {
@@ -193,8 +162,8 @@ export function createOpenAIRecommendationProvider({
         signal?.throwIfAborted();
         const apiKey = await getApiKey();
         signal?.throwIfAborted();
-        if (!apiKeyPattern.test(apiKey)) throw new Error();
-        const response = await request(endpoint, {
+        if (!openAIApiKeyPattern.test(apiKey)) throw new Error();
+        const response = await request(openAIChatEndpoint, {
           method: "POST",
           headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
           cache: "no-store",
@@ -204,12 +173,12 @@ export function createOpenAIRecommendationProvider({
         });
         event.httpStatus = response.status;
         const requestId = response.headers.get("x-request-id");
-        if (requestId && requestIdPattern.test(requestId)) event.requestId = requestId;
+        if (requestId && openAIRequestIdPattern.test(requestId)) event.requestId = requestId;
         if (!response.ok) {
           void response.body?.cancel().catch(() => {});
           throw new Error();
         }
-        const value = await readResponseJson(response);
+        const value = await readChatResponseJson(response);
         signal?.throwIfAborted();
         const result = parseRecommendationOutput(value, event);
         event.result = result ? "success" : "invalid_output";

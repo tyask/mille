@@ -14,6 +14,7 @@ type SharedMealCases = {
 const firstDate = "2026-02-05";
 const secondDate = "2026-02-06";
 const originalDish = "焦がし玉ねぎのスープ";
+const searchIngredient = "赤玉ねぎ";
 const secondDish = "じゃがいものロースト";
 const revisedDish = "温野菜のロースト";
 const unusedDraft = "更新競合で保持する料理名";
@@ -90,11 +91,15 @@ async function switchWorkspace(page: Page, id: string) {
 
 export async function verifyMealReads(entry: MealCase, workspaceId: string, otherWorkspaceId: string) {
   const { page, checks } = entry;
-  const own = await get<{ meals: MealSummary[] }>(page, rangePath(workspaceId));
-  const other = await get<{ code: string }>(page, rangePath(otherWorkspaceId));
-  const search = await get<{ code: string }>(page, `/api/workspaces/${otherWorkspaceId}/dish-search?q=QA`);
+  const [own, other, search, ingredientSearch] = await Promise.all([
+    get<{ meals: MealSummary[] }>(page, rangePath(workspaceId)),
+    get<{ code: string }>(page, rangePath(otherWorkspaceId)),
+    get<{ code: string }>(page, `/api/workspaces/${otherWorkspaceId}/dish-search?q=QA`),
+    get<{ code: string }>(page, `/api/workspaces/${otherWorkspaceId}/dish-search?q=QA&by=ingredient`),
+  ]);
   requireCondition(own.status === 200 && Array.isArray(own.body.meals) && own.cacheControl?.includes("no-store")
-    && other.status === 404 && other.body.code === "NOT_FOUND" && search.status === 404 && search.body.code === "NOT_FOUND");
+    && other.status === 404 && other.body.code === "NOT_FOUND" && search.status === 404 && search.body.code === "NOT_FOUND"
+    && ingredientSearch.status === 404 && ingredientSearch.body.code === "NOT_FOUND");
   checks.push("meal-read-membership-isolation");
 
   const location = new URL("/", page.url());
@@ -117,7 +122,12 @@ export async function verifyMealReads(entry: MealCase, workspaceId: string, othe
   await day.filter({ visible: true }).first().waitFor();
   await page.getByTestId("meal-search-input").fill("QA");
   await expectResponse(page, "GET", `/api/workspaces/${workspaceId}/dish-search`, 200, () => page.getByTestId("meal-search-submit").click());
-  checks.push("meal-calendar-week-month", "meal-search-read");
+  await page.getByTestId("meal-search-by").selectOption("ingredient");
+  const ingredientResponse = await expectResponse(page, "GET", `/api/workspaces/${workspaceId}/dish-search`, 200,
+    () => page.getByTestId("meal-search-submit").click());
+  requireCondition(new URL(ingredientResponse.url()).searchParams.get("by") === "ingredient");
+  await page.getByTestId("meal-search-by").selectOption("name");
+  checks.push("meal-calendar-week-month", "meal-search-read", "meal-ingredient-search-read");
 }
 
 async function retryCommittedCreate(page: Page, path: string, malformedResponse: boolean) {
@@ -186,7 +196,7 @@ async function verifyMealHistory(page: Page) {
 
 async function addRecipeAndIngredients(page: Page) {
   await page.getByTestId("meal-editor-add-ingredient").first().click();
-  await page.getByTestId("meal-editor-ingredient-name").fill("玉ねぎ");
+  await page.getByTestId("meal-editor-ingredient-name").fill(searchIngredient);
   await page.getByTestId("meal-editor-ingredient-amount").fill("1/2");
   await page.getByTestId("meal-editor-ingredient-unit").fill("個");
   await page.getByTestId("meal-editor-recipe-mode").first().selectOption("text");
@@ -223,6 +233,23 @@ async function verifySearch(page: Page) {
   await source.waitFor();
   await results.and(page.locator(`[data-date="${secondDate}"]`)).waitFor();
   requireCondition(await results.count() === 2);
+  await input.fill(searchIngredient);
+  await page.getByTestId("meal-search-submit").click();
+  await page.getByTestId("meal-search").getByText("該当する料理はありません。").waitFor();
+  await page.getByTestId("meal-search-by").selectOption("ingredient");
+  const request = page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname.endsWith("/dish-search") && url.searchParams.get("by") === "ingredient"
+      && url.searchParams.get("q") === searchIngredient;
+  });
+  await page.getByTestId("meal-search-submit").click();
+  const response = await request;
+  requireCondition(response.status() === 200);
+  const { items } = await response.json() as DishSearchPage;
+  requireCondition(items.length === 2 && items.every(item => item.dishName === originalDish)
+    && items[0].mealDate === secondDate && items[1].mealDate === firstDate);
+  await source.waitFor();
+  await page.getByTestId("meal-search-by").selectOption("name");
   await source.click();
   await readDish(page, originalDish);
   requireCondition(new URL(page.url()).searchParams.get("date") === firstDate);
@@ -344,7 +371,7 @@ export async function verifySharedMeals({ owner, member, workspaceId, personalId
 
   onStage("meal-search-different-dates", "owner");
   await verifySearch(ownerPage);
-  owner.checks.push("meal-search-results-distinct-dates");
+  owner.checks.push("meal-search-results-distinct-dates", "meal-ingredient-search-results-distinct-dates");
 
   onStage("meal-copy-dish-to-existing", "owner");
   await ownerPage.locator(`[data-testid="meal-detail-copy-dish"][data-dish-id="${source.dishes[0].id}"]`).click();

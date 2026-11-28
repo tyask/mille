@@ -1,0 +1,26 @@
+{
+  "id": "261128-meal-photos",
+  "issue": "https://github.com/tyask/mille/issues/78",
+  "branch": "codex/issue-78-meal-photos",
+  "baseSha": "dc3f059f1c697f4c6f2dce213024c7af15cc62d2",
+  "state": "frozen",
+  "approvedIssueSha256": "131c96db052da73715e3c9f687d8fd207563de8a6b31b557b2d2fc756fcc088e",
+  "implementationPlanSha256": "71bd8ab43e38c13a3f7eeec21c0daaf34f2eb275d71426298bb7bfa80a3174d6",
+  "approvalEvidence": "approvals.json",
+  "postMerge": {
+    "completesIssue": true,
+    "manualPostMerge": false
+  },
+  "frozenAt": "2026-11-28T06:43:29Z",
+  "preCommitValidation": {
+    "node": "24.22.3",
+    "checks": [
+      "高速検査",
+      "関連テスト20件",
+      "架空写真のブラウザ添付・画像デコード",
+      "差分の自己レビュー",
+      "期限切れ添付の復旧と未保存の写真回収を再レビュー",
+      "DB関連テスト8件"
+    ]
+  }
+}
